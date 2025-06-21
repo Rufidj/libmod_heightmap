@@ -45,19 +45,32 @@ void __bgdexport(libmod_heightmap, module_initialize)()
     next_heightmap_id = 1;
 }
 
-void __bgdexport(libmod_heightmap, module_finalize)()
-{
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].heightmap)
-        {
-            if (heightmaps[i].height_cache)
-            {
-                free(heightmaps[i].height_cache);
-            }
-        }
-    }
-    memset(heightmaps, 0, sizeof(heightmaps));
+void __bgdexport(libmod_heightmap, module_finalize)()  
+{  
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++)  
+    {  
+        if (heightmaps[i].heightmap)  
+        {  
+            if (heightmaps[i].height_cache)  
+            {  
+                free(heightmaps[i].height_cache);  
+                heightmaps[i].height_cache = NULL;  
+            }  
+              
+            if (heightmaps[i].heightmap)  
+            {  
+                bitmap_destroy(heightmaps[i].heightmap);  
+                heightmaps[i].heightmap = NULL;  
+            }  
+              
+            if (heightmaps[i].texturemap)  
+            {  
+                bitmap_destroy(heightmaps[i].texturemap);  
+                heightmaps[i].texturemap = NULL;  
+            }  
+        }  
+    }  
+    memset(heightmaps, 0, sizeof(heightmaps));  
 }
 
 int64_t libmod_heightmap_set_light(INSTANCE *my, int64_t *params)
@@ -115,61 +128,81 @@ int64_t libmod_heightmap_load(INSTANCE *my, int64_t *params)
 }
 
 /* Crear mapa de altura en memoria */
-/* Crear mapa de altura en memoria */
-int64_t libmod_heightmap_create(INSTANCE *my, int64_t *params)
-{
-    int64_t width = params[0];
-    int64_t height = params[1];
-
-    GRAPH *graph = bitmap_new_syslib(width, height);
-    if (!graph)
-        return 0;
-
-    int slot = -1;
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (!heightmaps[i].heightmap)
-        {
-            slot = i;
-            break;
-        }
-    }
-
-    if (slot == -1)
-        return 0;
-
-    heightmaps[slot].id = next_heightmap_id++;
-    heightmaps[slot].heightmap = graph;
-    heightmaps[slot].texturemap = NULL;
-    heightmaps[slot].width = width;
-    heightmaps[slot].height = height;
-    heightmaps[slot].height_cache = NULL;
-    heightmaps[slot].cache_valid = 0;
-
-    // AGREGAR ESTA LÍNEA que faltaba:
-    build_height_cache(&heightmaps[slot]);
-
-    return heightmaps[slot].id;
-}
+int64_t libmod_heightmap_create(INSTANCE *my, int64_t *params)  
+{  
+    int64_t width = params[0];  
+    int64_t height = params[1];  
+  
+    GRAPH *graph = bitmap_new_syslib(width, height);  
+    if (!graph)  
+        return 0;  
+  
+    int slot = -1;  
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++)  
+    {  
+        if (!heightmaps[i].heightmap)  
+        {  
+            slot = i;  
+            break;  
+        }  
+    }  
+  
+    if (slot == -1)  
+        return 0;  
+  
+    heightmaps[slot].id = next_heightmap_id++;  
+    heightmaps[slot].heightmap = graph;  
+    heightmaps[slot].texturemap = NULL;  
+    heightmaps[slot].width = width;  
+    heightmaps[slot].height = height;  
+    heightmaps[slot].height_cache = NULL;  
+    heightmaps[slot].cache_valid = 0;  
+  
+    build_height_cache(&heightmaps[slot]);    
+    if (!heightmaps[slot].cache_valid)    
+    {    
+        bitmap_destroy(heightmaps[slot].heightmap);    
+        memset(&heightmaps[slot], 0, sizeof(HEIGHTMAP));    
+        return 0;    
+    }  
+  
+    return heightmaps[slot].id;  // ← Esta línea faltaba  
+}  // ← Esta llave de cierre faltaba
 
 /* Descargar mapa de altura */
-int64_t libmod_heightmap_unload(INSTANCE *my, int64_t *params)
-{
-    int64_t hm_id = params[0];
-
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            if (heightmaps[i].height_cache)
-            {
-                free(heightmaps[i].height_cache);
-            }
-            memset(&heightmaps[i], 0, sizeof(HEIGHTMAP));
-            return 1;
-        }
-    }
-    return 0;
+int64_t libmod_heightmap_unload(INSTANCE *my, int64_t *params)  
+{  
+    int64_t hm_id = params[0];  
+  
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++)  
+    {  
+        if (heightmaps[i].id == hm_id)  
+        {  
+            if (heightmaps[i].height_cache)  
+            {  
+                free(heightmaps[i].height_cache);  
+                heightmaps[i].height_cache = NULL;  
+            }  
+              
+            // Destruir correctamente la estructura GRAPH  
+            if (heightmaps[i].heightmap)  
+            {  
+                bitmap_destroy(heightmaps[i].heightmap);  
+                heightmaps[i].heightmap = NULL;  
+            }  
+              
+            // Limpiar mapa de textura si existe  
+            if (heightmaps[i].texturemap)  
+            {  
+                bitmap_destroy(heightmaps[i].texturemap);  
+                heightmaps[i].texturemap = NULL;  
+            }  
+              
+            memset(&heightmaps[i], 0, sizeof(HEIGHTMAP));  
+            return 1;  
+        }  
+    }  
+    return 0;  
 }
 
 /* Obtener altura */
@@ -416,28 +449,35 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
 }
 
 /* Funciones auxiliares */
-void build_height_cache(HEIGHTMAP *hm)
-{
-    if (!hm->heightmap)
-        return;
-    if (hm->height_cache)
-        free(hm->height_cache);
-    hm->height_cache = malloc(hm->width * hm->height * sizeof(float));
-    if (!hm->height_cache)
-        return;
-
-    for (int y = 0; y < hm->height; y++)
-    {
-        for (int x = 0; x < hm->width; x++)
-        {
-            uint32_t pixel = gr_get_pixel(hm->heightmap, x, y);
-            // Usar solo el canal rojo para altura, formato RGB estándar
-            float height = (float)((pixel >> 16) & 0xFF);
-            hm->height_cache[y * hm->width + x] = height;
-        }
-    }
-
-    hm->cache_valid = 1;
+void build_height_cache(HEIGHTMAP *hm)  
+{  
+    if (!hm->heightmap)  
+        return;  
+          
+    if (hm->height_cache)  
+    {  
+        free(hm->height_cache);  
+        hm->height_cache = NULL;  
+    }  
+      
+    hm->height_cache = malloc(hm->width * hm->height * sizeof(float));  
+    if (!hm->height_cache)  
+    {  
+        hm->cache_valid = 0;  
+        return;  
+    }  
+  
+    for (int y = 0; y < hm->height; y++)  
+    {  
+        for (int x = 0; x < hm->width; x++)  
+        {  
+            uint32_t pixel = gr_get_pixel(hm->heightmap, x, y);  
+            float height = (float)((pixel >> 16) & 0xFF);  
+            hm->height_cache[y * hm->width + x] = height;  
+        }  
+    }  
+  
+    hm->cache_valid = 1;  
 }
 
 /* Devuelve un color RGB interpolado usando funciones SDL */  
