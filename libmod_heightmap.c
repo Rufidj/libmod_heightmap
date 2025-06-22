@@ -17,13 +17,23 @@
 #define RGBA32_B(color) (color & 0xFF)
 #define RGBA32_A(color) ((color >> 24) & 0xFF)
 
+// Variables globales para configuración de renderizado
+static float max_render_distance = 800.0f;
+static int chunk_size = 96;
+static int chunk_radius = 4;
+
+// Variables globales para el color del cielo
+static Uint8 sky_color_r = 135; // Azul cielo por defecto
+static Uint8 sky_color_g = 206;
+static Uint8 sky_color_b = 235;
+static Uint8 sky_color_a = 255; // Alpha del cielo
+
 // Variables globales para el color y la transparencia del agua
 static Uint8 water_color_r = 64;
 static Uint8 water_color_g = 128;
 static Uint8 water_color_b = 255;
 static Uint8 water_color_a = 128; // Valor inicial para transparencia (0-255)
 static float water_time = 0.0f;
-
 
 // Variable global para almacenar el ID del sprite a seguir
 static int64_t camera_follow_sprite_id = 0;
@@ -359,12 +369,14 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
         }
     }
 
-    if (!hm || !hm->cache_valid) return 0;
+    if (!hm || !hm->cache_valid)
+        return 0;
 
     GRAPH *render_buffer = bitmap_new_syslib(320, 240);
-    if (!render_buffer) return 0;
+    if (!render_buffer)
+        return 0;
 
-    uint32_t background_color = SDL_MapRGB(gPixelFormat, 0, 0, 0);
+    uint32_t background_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);
     gr_clear_as(render_buffer, background_color);
 
     static float last_camera_x = 0, last_camera_y = 0, last_camera_angle = 0;
@@ -374,10 +386,8 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
     last_camera_y = camera.y;
     last_camera_angle = camera.angle;
 
-    #define CHUNK_SIZE 96
-    int chunk_radius = 4;
-    int chunk_x = (int)(camera.x / CHUNK_SIZE);
-    int chunk_y = (int)(camera.y / CHUNK_SIZE);
+    int chunk_x = (int)(camera.x / chunk_size);
+    int chunk_y = (int)(camera.y / chunk_size);
     int min_chunk_x = chunk_x - chunk_radius;
     int max_chunk_x = chunk_x + chunk_radius;
     int min_chunk_y = chunk_y - chunk_radius;
@@ -388,11 +398,20 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
     float pitch_offset = camera.pitch * 40.0f;
     float light_factor = light_intensity / 255.0f;
 
-    static float fog_table[800];
+    static float *fog_table = NULL;
+    static int fog_table_size = 0;
     static int fog_table_initialized = 0;
-    if (!fog_table_initialized) {
-        for (int i = 0; i < 800; i++) {
-            float fog = 1.0f - (i / 800.0f);
+
+    if (!fog_table_initialized || fog_table_size != (int)max_render_distance)
+    {
+        if (fog_table)
+            free(fog_table);
+        fog_table_size = (int)max_render_distance;
+        fog_table = malloc(fog_table_size * sizeof(float));
+
+        for (int i = 0; i < fog_table_size; i++)
+        {
+            float fog = 1.0f - (i / (float)fog_table_size);
             fog_table[i] = (fog < 0.6f) ? 0.6f : fog;
         }
         fog_table_initialized = 1;
@@ -405,13 +424,15 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
         float camera_fov_half = camera.fov * 0.5f;
         float min_angle = camera.angle - camera_fov_half;
         float max_angle = camera.angle + camera_fov_half;
-        if (angle < min_angle || angle > max_angle) continue;
+        if (angle < min_angle || angle > max_angle)
+            continue;
 
         float cos_angle = cosf(angle);
         float sin_angle = sinf(angle);
         int lowest_y = 240;
 
-        for (float distance = 1.0f; distance < 800.0f; distance += (distance < 50.0f ? 0.1f : distance < 200.0f ? 0.25f : 1.0f))
+        for (float distance = 1.0f; distance < max_render_distance; distance += (distance < 50.0f ? 0.1f : distance < 200.0f ? 0.25f
+                                                                                                                             : 1.0f))
         {
             float world_x = camera.x + cos_angle * distance;
             float world_y = camera.y + sin_angle * distance;
@@ -419,10 +440,11 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
             if (world_x < 0 || world_x >= hm->width - 1 || world_y < 0 || world_y >= hm->height - 1)
                 continue;
 
-            int current_chunk_x = (int)(world_x / CHUNK_SIZE);
-            int current_chunk_y = (int)(world_y / CHUNK_SIZE);
+            int current_chunk_x = (int)(world_x / chunk_size);
+            int current_chunk_y = (int)(world_y / chunk_size);
             if (current_chunk_x < min_chunk_x || current_chunk_x > max_chunk_x ||
-                current_chunk_y < min_chunk_y || current_chunk_y > max_chunk_y) {
+                current_chunk_y < min_chunk_y || current_chunk_y > max_chunk_y)
+            {
                 continue;
             }
 
@@ -430,7 +452,8 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
 
             float render_height = terrain_height;
             int render_water = 0;
-            if (water_level > 0 && terrain_height < water_level) {
+            if (water_level > 0 && terrain_height < water_level)
+            {
                 render_height = water_level;
                 render_water = 1;
             }
@@ -439,12 +462,17 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
             height_on_screen += pitch_offset;
 
             int screen_y = (int)height_on_screen;
-            if (screen_y < 0) screen_y = 0;
-            if (screen_y >= 240) continue;
+            if (screen_y < 0)
+                screen_y = 0;
+            if (screen_y >= 240)
+                continue;
 
             if (screen_y < lowest_y)
             {
-                float fog = fog_table[(int)distance];
+                int fog_index = (int)distance;
+                if (fog_index >= fog_table_size)
+                    fog_index = fog_table_size - 1;
+                float fog = fog_table[fog_index];
                 uint32_t color;
 
                 Uint8 terrain_r = 0, terrain_g = 0, terrain_b = 0;
@@ -455,10 +483,14 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
                     {
                         int tx = (int)world_x;
                         int ty = (int)world_y;
-                        while (tx >= hm->texturemap->width) tx -= hm->texturemap->width;
-                        while (ty >= hm->texturemap->height) ty -= hm->texturemap->height;
-                        while (tx < 0) tx += hm->texturemap->width;
-                        while (ty < 0) ty += hm->texturemap->height;
+                        while (tx >= hm->texturemap->width)
+                            tx -= hm->texturemap->width;
+                        while (ty >= hm->texturemap->height)
+                            ty -= hm->texturemap->height;
+                        while (tx < 0)
+                            tx += hm->texturemap->width;
+                        while (ty < 0)
+                            ty += hm->texturemap->height;
                         tex = gr_get_pixel(hm->texturemap, tx, ty);
                     }
                     SDL_GetRGB(tex, gPixelFormat, &terrain_r, &terrain_g, &terrain_b);
@@ -466,15 +498,19 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
                 else
                 {
                     int base = (int)(terrain_height * 2.5f) + 20;
-                    if (base > 255) base = 255;
-                    if (base < 0) base = 0;
+                    if (base > 255)
+                        base = 255;
+                    if (base < 0)
+                        base = 0;
 
                     int grid_x = (int)(world_x * 2.0f) % 8;
                     int grid_y = (int)(world_y * 2.0f) % 8;
                     int grid_variation = (grid_x + grid_y) % 3 - 1;
                     base += grid_variation * 15;
-                    if (base > 255) base = 255;
-                    if (base < 0) base = 0;
+                    if (base > 255)
+                        base = 255;
+                    if (base < 0)
+                        base = 0;
 
                     terrain_r = (Uint8)((base + 60));
                     terrain_g = (Uint8)((base + 30));
@@ -486,30 +522,18 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
                 terrain_g = (Uint8)(terrain_g * total_light);
                 terrain_b = (Uint8)(terrain_b * total_light);
 
-                if (!render_water) {
+                if (!render_water)
+                {
                     color = SDL_MapRGB(gPixelFormat, terrain_r, terrain_g, terrain_b);
-                } else {
-                    // Aquí el cambio que pediste:
-                    float wave_offset = sinf(world_x * 0.1f + world_y * 0.1f + water_time) * 0.1f;
-                    total_light += wave_offset;
-                    if (total_light > 1.0f) total_light = 1.0f;
-                    if (total_light < 0.3f) total_light = 0.3f;
-
-                    float transparency = water_color_a / 255.0f;
-                    const float water_boost = 2.5f; // SUBIDO para que se note más la mezcla
-                    float mix = transparency * water_boost;
-                    if (mix > 1.0f) mix = 1.0f;
-                    float one_minus_mix = 1.0f - mix;
-
+                }
+                else
+                {
+                    // Agua azul pura - sin mezcla con terreno
                     Uint8 water_r = (Uint8)(water_color_r * total_light);
                     Uint8 water_g = (Uint8)(water_color_g * total_light);
                     Uint8 water_b = (Uint8)(water_color_b * total_light);
 
-                    Uint8 final_r = (Uint8)(terrain_r * one_minus_mix + water_r * mix);
-                    Uint8 final_g = (Uint8)(terrain_g * one_minus_mix + water_g * mix);
-                    Uint8 final_b = (Uint8)(terrain_b * one_minus_mix + water_b * mix);
-
-                    color = SDL_MapRGB(gPixelFormat, final_r, final_g, final_b);
+                    color = SDL_MapRGB(gPixelFormat, water_r, water_g, water_b);
                 }
 
                 for (int y = screen_y; y < lowest_y; y++)
@@ -519,14 +543,13 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
                 lowest_y = screen_y;
             }
 
-            if (lowest_y <= 0) break;
+            if (lowest_y <= 0)
+                break;
         }
     }
 
     return render_buffer->code;
 }
-
-
 
 /* Funciones auxiliares */
 void build_height_cache(HEIGHTMAP *hm)
@@ -1148,106 +1171,129 @@ int64_t libmod_heightmap_can_sprite_move_to(INSTANCE *my, int64_t *params)
     return 1; // Permitir movimiento
 }
 
-/* Ajustar posición Y de sprite según altura del terreno */
-int64_t libmod_heightmap_adjust_sprite_to_terrain(INSTANCE *my, int64_t *params)
-{
-    int64_t hm_id = params[0];
-    int64_t sprite_x = params[1];
-    int64_t sprite_y = params[2];
-    int64_t *adjusted_y = (int64_t *)params[3]; // Puntero a variable Y del sprite
-
-    HEIGHTMAP *hm = NULL;
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            hm = &heightmaps[i];
-            break;
-        }
-    }
-
-    if (!hm || !hm->cache_valid)
-        return 0;
-
-    float world_x = (float)sprite_x / 10.0f;
-    float world_y = (float)sprite_y / 10.0f;
-
-    if (world_x < 0 || world_x >= hm->width - 1 ||
-        world_y < 0 || world_y >= hm->height - 1)
-        return 0;
-
-    float terrain_height = get_height_at(hm, world_x, world_y);
-
-    // Ajustar Y del sprite para que esté sobre el terreno
-    *adjusted_y = (int64_t)(terrain_height * 10.0f);
-
-    return 1;
+/* Ajustar posición Y de sprite según altura del terreno */  
+int64_t libmod_heightmap_adjust_sprite_to_terrain(INSTANCE *my, int64_t *params)  
+{  
+    int64_t hm_id = params[0];  
+    int64_t sprite_x = params[1];  
+    int64_t sprite_y = params[2];  
+    int64_t *adjusted_y = (int64_t *)params[3]; // Puntero a variable Y del sprite  
+  
+    HEIGHTMAP *hm = NULL;  
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++)  
+    {  
+        if (heightmaps[i].id == hm_id)  
+        {  
+            hm = &heightmaps[i];  
+            break;  
+        }  
+    }  
+  
+    if (!hm || !hm->cache_valid)  
+        return 0;  
+  
+    float world_x = (float)sprite_x / 10.0f;  
+    float world_y = (float)sprite_y / 10.0f;  
+  
+    if (world_x < 0 || world_x >= hm->width - 1 ||  
+        world_y < 0 || world_y >= hm->height - 1)  
+        return 0;  
+  
+    float terrain_height = get_height_at(hm, world_x, world_y);  
+  
+    // Ajustar Y del sprite para que esté sobre el terreno  
+    *adjusted_y = (int64_t)(terrain_height * 10.0f);  
+  
+    // Depuración: Altura del terreno y Y ajustada  
+    printf("ASTT: World(%.2f, %.2f) TerrainH(%.2f) AdjustedY(%lld)\n", world_x, world_y, terrain_height, *adjusted_y); 
+    fflush(stdout);
+    return 1;  
 }
 
-/* Calcular escala de sprite basada en distancia a la cámara */
-int64_t libmod_heightmap_get_sprite_scale(INSTANCE *my, int64_t *params)
-{
-    int64_t sprite_x = params[0];
-    int64_t sprite_y = params[1];
-
-    // Convertir coordenadas de sprite a coordenadas del mundo
-    float world_x = (float)sprite_x / 10.0f;
-    float world_y = (float)sprite_y / 10.0f;
-
-    // Calcular distancia a la cámara
-    float dx = world_x - camera.x;
-    float dy = world_y - camera.y;
-    float distance = sqrtf(dx * dx + dy * dy);
-
-    // Escala basada en distancia (más lejos = más pequeño)
-    float scale = 300.0f / (distance + 50.0f); // Ajusta estos valores según necesites
-
-    // Limitar escala entre 10% y 200%
-    if (scale < 0.1f)
-        scale = 0.1f;
-    if (scale > 2.0f)
-        scale = 2.0f;
-
-    return (int64_t)(scale * 100.0f); // Retornar como porcentaje
+/* Calcular escala de sprite basada en distancia a la cámara */  
+int64_t libmod_heightmap_get_sprite_scale(INSTANCE *my, int64_t *params)  
+{  
+    int64_t sprite_x = params[0];  
+    int64_t sprite_y = params[1];  
+  
+    // Convertir coordenadas de sprite a coordenadas del mundo  
+    float world_x = (float)sprite_x / 10.0f;  
+    float world_y = (float)sprite_y / 10.0f;  
+  
+    // Calcular distancia a la cámara  
+    float dx = world_x - camera.x;  
+    float dy = world_y - camera.y;  
+    float distance = sqrtf(dx * dx + dy * dy);  
+  
+    // Escala basada en distancia (más lejos = más pequeño)  
+    float scale = 300.0f / (distance + 50.0f); // Ajusta estos valores según necesites  
+  
+    // Limitar escala entre 10% y 200%  
+    if (scale < 0.1f)  
+        scale = 0.1f;  
+    if (scale > 2.0f)  
+        scale = 2.0f;  
+  
+    // Depuración: Distancia y escala  
+    printf("GSS: World(%.2f, %.2f) Dist(%.2f) Scale(%.2f)\n", world_x, world_y, distance, scale);  
+    fflush(stdout);
+    return (int64_t)(scale * 100.0f); // Retornar como porcentaje  
 }
 
 /* Convertir coordenadas del mundo a coordenadas de pantalla */
-int64_t libmod_heightmap_world_to_screen(INSTANCE *my, int64_t *params)
-{
-    float world_x = (float)params[0] / 10.0f;
-    float world_y = (float)params[1] / 10.0f;
-    float world_z = (float)params[2] / 10.0f;
-    int64_t *screen_x = (int64_t *)params[3];
-    int64_t *screen_y = (int64_t *)params[4];
-
-    // Calcular posición relativa a la cámara
-    float dx = world_x - camera.x;
-    float dy = world_y - camera.y;
-    float dz = world_z - camera.z;
-
-    // Rotar según el ángulo de la cámara
-    float cos_angle = cosf(-camera.angle);
-    float sin_angle = sinf(-camera.angle);
-
-    float rotated_x = dx * cos_angle - dy * sin_angle;
-    float rotated_y = dx * sin_angle + dy * cos_angle;
-
-    // Proyección perspectiva
-    if (rotated_y > 0.1f) // Evitar división por cero
-    {
-        float projected_x = (rotated_x / rotated_y) * 300.0f + 320.0f;
-        float projected_y = (dz / rotated_y) * 300.0f + 240.0f;
-
-        // Ajustar por pitch de la cámara
-        projected_y += camera.pitch * 40.0f;
-
-        *screen_x = (int64_t)projected_x;
-        *screen_y = (int64_t)projected_y;
-
-        return 1; // Visible
-    }
-
-    return 0; // Detrás de la cámara, no visible
+/* Convertir coordenadas del mundo a coordenadas de pantalla */  
+int64_t libmod_heightmap_world_to_screen(INSTANCE *my, int64_t *params)  
+{  
+    float world_x = (float)params[0] / 10.0f;  
+    float world_y = (float)params[1] / 10.0f;  
+    float world_z = (float)params[2] / 10.0f;  
+    int64_t *screen_x = (int64_t *)params[3];  
+    int64_t *screen_y = (int64_t *)params[4];  
+  
+    // Depuración: Coordenadas de entrada y cámara  
+    printf("WTS: World(%.2f, %.2f, %.2f) Cam(%.2f, %.2f, %.2f) Angle(%.2f)\n",   
+           world_x, world_y, world_z, camera.x, camera.y, camera.z, camera.angle); 
+    fflush(stdout);
+    // Calcular posición relativa a la cámara  
+    float dx = world_x - camera.x;  
+    float dy = world_y - camera.y;  
+    float dz = world_z - camera.z;  
+  
+    // Depuración: Coordenadas relativas  
+    printf("WTS: Relative(%.2f, %.2f, %.2f)\n", dx, dy, dz);  
+    fflush(stdout);
+    // Rotar según el ángulo de la cámara  
+    float cos_angle = cosf(-camera.angle);  
+    float sin_angle = sinf(-camera.angle);  
+  
+    float rotated_x = dx * cos_angle - dy * sin_angle;  
+    float rotated_y = dx * sin_angle + dy * cos_angle;  
+  
+    // Depuración: Coordenadas rotadas  
+    printf("WTS: Rotated(%.2f, %.2f) Cos(%.2f) Sin(%.2f)\n", rotated_x, rotated_y, cos_angle, sin_angle);  
+    fflush(stdout);
+    // Proyección perspectiva  
+    if (rotated_y > 0.1f) // Evitar división por cero  
+    {  
+        float projected_x = (rotated_x / rotated_y) * 300.0f + 320.0f;  
+        float projected_y = (dz / rotated_y) * 300.0f + 240.0f;  
+  
+        // Ajustar por pitch de la cámara  
+        projected_y += camera.pitch * 40.0f;  
+  
+        *screen_x = (int64_t)projected_x;  
+        *screen_y = (int64_t)projected_y;  
+  
+        // Depuración: Coordenadas proyectadas y resultado  
+        printf("WTS: Projected(%.2f, %.2f) Result(1) Screen(%lld, %lld)\n", projected_x, projected_y, *screen_x, *screen_y); 
+        fflush(stdout);
+        return 1; // Visible  
+    }  
+  
+    // Depuración: Objeto no visible  
+    printf("WTS: Rotated_Y (%.2f) <= 0.1f. Result(0)\n", rotated_y);  
+    fflush(stdout);
+    return 0; // Detrás de la cámara, no visible  
 }
 
 /* Obtener iluminación del terreno para aplicar al sprite */
@@ -1344,8 +1390,56 @@ int64_t libmod_heightmap_set_water_color(INSTANCE *my, int64_t *params)
 
 int64_t libmod_heightmap_update_water_time(INSTANCE *my, int64_t *params)
 {
-    water_time += 0.016f;
-    if (water_time > 100.0f) water_time = 0.0f;
+    static uint32_t last_ticks = 0;
+    uint32_t current_ticks = SDL_GetTicks();
+
+    if (last_ticks == 0)
+        last_ticks = current_ticks;
+
+    float delta_time = (current_ticks - last_ticks) / 1000.0f;
+    water_time += delta_time;
+
+    if (water_time > 100.0f)
+        water_time = 0.0f;
+    last_ticks = current_ticks;
+    return 1;
+}
+
+int64_t libmod_heightmap_set_sky_color(INSTANCE *my, int64_t *params)
+{
+    sky_color_r = (Uint8)params[0];
+    sky_color_g = (Uint8)params[1];
+    sky_color_b = (Uint8)params[2];
+    sky_color_a = (Uint8)params[3];
+    return 1;
+}
+
+// Nueva función para configurar distancia de dibujado
+int64_t libmod_heightmap_set_render_distance(INSTANCE *my, int64_t *params)
+{
+    max_render_distance = (float)params[0];
+    if (max_render_distance < 100.0f)
+        max_render_distance = 100.0f;
+    if (max_render_distance > 2000.0f)
+        max_render_distance = 2000.0f;
+    return 1;
+}
+
+// Nueva función para configurar chunks
+int64_t libmod_heightmap_set_chunk_config(INSTANCE *my, int64_t *params)
+{
+    chunk_size = (int)params[0];
+    chunk_radius = (int)params[1];
+
+    if (chunk_size < 32)
+        chunk_size = 32;
+    if (chunk_size > 256)
+        chunk_size = 256;
+    if (chunk_radius < 2)
+        chunk_radius = 2;
+    if (chunk_radius > 10)
+        chunk_radius = 10;
+
     return 1;
 }
 

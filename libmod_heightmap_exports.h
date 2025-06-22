@@ -25,10 +25,15 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC("HEIGHTMAP_SET_CAMERA", "IIIIII", TYPE_INT, libmod_heightmap_set_camera),
     FUNC("HEIGHTMAP_SET_LIGHT", "I", TYPE_INT, libmod_heightmap_set_light),
     FUNC("HEIGHTMAP_SET_WATER_LEVEL", "I", TYPE_INT, libmod_heightmap_set_water_level),
+    FUNC("HEIGHTMAP_SET_WATER_COLOR" , "IIII" , TYPE_INT , libmod_heightmap_set_water_color ),  
+    FUNC("HEIGHTMAP_UPDATE_WATER_TIME", "" , TYPE_INT , libmod_heightmap_update_water_time ),
+    FUNC("HEIGHTMAP_SET_SKY_COLOR", "IIII", TYPE_INT, libmod_heightmap_set_sky_color),
     FUNC("HEIGHTMAP_LOAD_TEXTURE", "IS", TYPE_INT, libmod_heightmap_load_texture),
     FUNC("HEIGHTMAP_GET_HEIGHT", "III", TYPE_INT, libmod_heightmap_get_height),
     FUNC("HEIGHTMAP_CREATE", "II", TYPE_INT, libmod_heightmap_create),
     FUNC("HEIGHTMAP_UNLOAD", "I", TYPE_INT, libmod_heightmap_unload),
+    FUNC( "HEIGHTMAP_SET_RENDER_DISTANCE", "I", TYPE_INT, libmod_heightmap_set_render_distance ),  
+    FUNC( "HEIGHTMAP_SET_CHUNK_CONFIG", "II", TYPE_INT, libmod_heightmap_set_chunk_config ), 
 
     // Nuevas funciones de control (solo las que están implementadas)
     FUNC("HEIGHTMAP_SET_CONTROL_SENSITIVITY", "III", TYPE_INT, libmod_heightmap_set_control_sensitivity),
