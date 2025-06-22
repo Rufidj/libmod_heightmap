@@ -7,6 +7,8 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 ![Imagen 2](/images/screen2.png)
 ![Imagen 3](/images/screen3.png)
 ![Imagen 4](/images/screen4.png)
+![Imagen 5](/images/screen5.png)
+![Imagen 6](/images/screen6.png)
 
 ---
 ## Constantes exportadas
