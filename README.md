@@ -3,7 +3,12 @@
 Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (mapas de altura) y renderizarlos con estilo voxelspace. Incluye funciones de control de cámara, detección de colisiones, iluminación, nivel de agua y seguimiento de sprites.
 
 ---
+![Imagen 1 ](/images/screen1.png)
+![Imagen 2](/images/screen2.png)
+![Imagen 3](/images/screen3.png)
+![Imagen 4](/images/screen4.png)
 
+---
 ## Constantes exportadas
 
 | Constante                | Descripción                                 |
