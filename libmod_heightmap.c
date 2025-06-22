@@ -340,21 +340,31 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
     int64_t hm_id = params[0];
 
     HEIGHTMAP *hm = NULL;
-    // Variables estáticas para detectar movimiento
-    static float last_camera_x = 0, last_camera_y = 0, last_camera_angle = 0;
-
-    // Detectar movimiento de cámara
-    float movement = fabs(camera.x - last_camera_x) +
-                     fabs(camera.y - last_camera_y) +
-                     fabs(camera.angle - last_camera_angle);
-
-    // Determinar calidad basada en movimiento
-    int quality_step = (movement > 5.0f) ? 2 : 1;
-
-    // Actualizar valores anteriores
-    last_camera_x = camera.x;
-    last_camera_y = camera.y;
-    last_camera_angle = camera.angle;
+    // Variables estáticas para detectar movimiento  
+static float last_camera_x = 0, last_camera_y = 0, last_camera_angle = 0;  
+#define CHUNK_SIZE 128    
+int chunk_radius = 6;    
+  
+int chunk_x = (int)(camera.x / CHUNK_SIZE);  
+int chunk_y = (int)(camera.y / CHUNK_SIZE);  
+  
+int min_chunk_x = chunk_x - chunk_radius;  
+int max_chunk_x = chunk_x + chunk_radius;  
+int min_chunk_y = chunk_y - chunk_radius;  
+int max_chunk_y = chunk_y + chunk_radius;
+  
+// Detectar movimiento de cámara  
+float movement = fabs(camera.x - last_camera_x) +   
+                 fabs(camera.y - last_camera_y) +   
+                 fabs(camera.angle - last_camera_angle);  
+  
+// Determinar calidad basada en movimiento  
+int quality_step = (movement > 5.0f) ? 2 : 1;  
+  
+// Actualizar valores anteriores  
+last_camera_x = camera.x;  
+last_camera_y = camera.y;  
+last_camera_angle = camera.angle;
     for (int i = 0; i < MAX_HEIGHTMAPS; i++)
     {
         if (heightmaps[i].id == hm_id)
@@ -372,19 +382,17 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
         return 0;
     uint32_t background_color = SDL_MapRGB(gPixelFormat, 0, 0, 0); // Negro
     gr_clear_as(render_buffer, background_color);
-    // Crear tabla de lookup para fog (una sola vez)
-    static float fog_table[800];
-    static int fog_table_initialized = 0;
-
-    if (!fog_table_initialized)
-    {
-        for (int i = 0; i < 800; i++)
-        {
-            float fog = 1.0f - (i / 800.0f);
-            fog_table[i] = (fog < 0.6f) ? 0.6f : fog;
-        }
-        fog_table_initialized = 1;
-    }
+    // Crear tabla de lookup para fog (una sola vez)  
+static float fog_table[800];  
+static int fog_table_initialized = 0;  
+  
+if (!fog_table_initialized) {  
+    for (int i = 0; i < 800; i++) {  
+        float fog = 1.0f - (i / 800.0f);  
+        fog_table[i] = (fog < 0.6f) ? 0.6f : fog;  
+    }  
+    fog_table_initialized = 1;  
+}
     // BUCLE PRINCIPAL DE RAYCAST - CÓDIGO EXISTENTE MODIFICADO
     // Precalcular valores fuera del bucle para mejor rendimiento
     float angle_step = 0.7f / 160.0f;
@@ -394,109 +402,136 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params)
     for (int screen_x = 0; screen_x < 320; screen_x += quality_step)
     {
         float angle = base_angle + screen_x * angle_step;
+        // AGREGAR AQUÍ LA MEJORA 1 - Sistema de Culling Frustum Avanzado  
+        float camera_fov_half = camera.fov * 0.5f;  
+        float min_angle = camera.angle - camera_fov_half;  
+        float max_angle = camera.angle + camera_fov_half; 
         float cos_angle = cosf(angle);
         float sin_angle = sinf(angle);
-
         int lowest_y = 240; // iniciar en 240
 
-        for (float distance = 1.0f; distance < 800.0f; distance += (distance < 50.0f ? 0.1f : distance < 200.0f ? 0.25f
-                                                                                                                : 1.0f))
-        {
-            float world_x = camera.x + cos_angle * distance;
-            float world_y = camera.y + sin_angle * distance;
-
-            if (world_x < 0 || world_x >= hm->width - 1 || world_y < 0 || world_y >= hm->height - 1)
-                continue;
-
-            float terrain_height = get_height_at(hm, world_x, world_y);
-
-            float height_on_screen = (camera.z - terrain_height) / distance * 300.0f + 120.0f;
-            height_on_screen += pitch_offset;
-
-            int screen_y = (int)height_on_screen;
-            if (screen_y < 0)
-                screen_y = 0;
-            if (screen_y >= 240)
-                continue;
-
-            if (screen_y < lowest_y)
-            {
-                float fog = fog_table[(int)distance];
-
-                uint32_t color;
-
-                if (hm->texturemap)
-                {
-                    // Usar interpolación bilinear para mejor calidad
-                    uint32_t tex = get_texture_color_bilinear(hm->texturemap, world_x, world_y);
-                    if (tex == 0)
-                    {
-                        // Fallback al método anterior si la interpolación falla
-                        int tx = (int)world_x;
-                        int ty = (int)world_y;
-                        while (tx >= hm->texturemap->width)
-                            tx -= hm->texturemap->width;
-                        while (ty >= hm->texturemap->height)
-                            ty -= hm->texturemap->height;
-                        while (tx < 0)
-                            tx += hm->texturemap->width;
-                        while (ty < 0)
-                            ty += hm->texturemap->height;
-                        tex = gr_get_pixel(hm->texturemap, tx, ty);
-                    }
-                    Uint8 r, g, b;
-                    SDL_GetRGB(tex, gPixelFormat, &r, &g, &b);
-
-                    float total_light = light_factor * fog;
-                    r = (Uint8)(r * total_light);
-                    g = (Uint8)(g * total_light);
-                    b = (Uint8)(b * total_light);
-
-                    color = SDL_MapRGB(gPixelFormat, r, g, b);
-                }
-                else
-                {
-                    int base = (int)(terrain_height * 2.5f) + 20;
-                    if (base > 255)
-                        base = 255;
-                    if (base < 0)
-                        base = 0;
-
-                    int grid_x = (int)(world_x * 2.0f) % 8;
-                    int grid_y = (int)(world_y * 2.0f) % 8;
-                    int grid_variation = (grid_x + grid_y) % 3 - 1;
-                    base += grid_variation * 15;
-
-                    if (base > 255)
-                        base = 255;
-                    if (base < 0)
-                        base = 0;
-
-                    Uint8 r = (Uint8)((base + 60) * fog * (light_intensity / 255.0f));
-                    Uint8 g = (Uint8)((base + 30) * fog * (light_intensity / 255.0f));
-                    Uint8 b = (Uint8)(base * fog * (light_intensity / 255.0f));
-
-                    if (r > 255)
-                        r = 255;
-                    if (g > 255)
-                        g = 255;
-                    if (b > 255)
-                        b = 255;
-
-                    color = SDL_MapRGB(gPixelFormat, r, g, b);
-                }
-
-                for (int y = screen_y; y < lowest_y; y++)
-                {
-                    gr_put_pixel(render_buffer, screen_x, y, color);
-                }
-
-                lowest_y = screen_y;
-            }
-            if (lowest_y <= 0)
-                break;
-        }
+       for (float distance = 1.0f; distance < 800.0f; distance += (distance < 50.0f ? 0.1f : distance < 200.0f ? 0.25f : 1.0f))  
+{  
+    float world_x = camera.x + cos_angle * distance;  
+    float world_y = camera.y + sin_angle * distance;  
+  
+    // Verificación de límites del mapa  
+    if (world_x < 0 || world_x >= hm->width - 1 || world_y < 0 || world_y >= hm->height - 1)  
+        continue;  
+  
+    // MEJORA 2: Verificación de chunks  
+    int current_chunk_x = (int)(world_x / CHUNK_SIZE);  
+    int current_chunk_y = (int)(world_y / CHUNK_SIZE);  
+      
+    // Solo procesar si está en chunks visibles  
+    if (current_chunk_x < min_chunk_x || current_chunk_x > max_chunk_x ||  
+        current_chunk_y < min_chunk_y || current_chunk_y > max_chunk_y) {  
+        continue;  
+    }  
+    // AQUÍ VA TU CÓDIGO DE LOD DINÁMICO:  
+    float chunk_distance = sqrtf((current_chunk_x - chunk_x) * (current_chunk_x - chunk_x) +   
+                                 (current_chunk_y - chunk_y) * (current_chunk_y - chunk_y));  
+  
+    // Usar pasos más grandes para chunks lejanos  
+    float distance_step;  
+    if (chunk_distance < 2.0f) {  
+        distance_step = (distance < 50.0f ? 0.1f : distance < 200.0f ? 0.25f : 1.0f);  
+    } else {  
+        distance_step = 2.0f; // Pasos más grandes para chunks lejanos  
+    }  
+    float terrain_height = get_height_at(hm, world_x, world_y);  
+  
+    float height_on_screen = (camera.z - terrain_height) / distance * 300.0f + 120.0f;  
+    height_on_screen += pitch_offset; // Usando valor pre-calculado  
+  
+    int screen_y = (int)height_on_screen;  
+    if (screen_y < 0)  
+        screen_y = 0;  
+    if (screen_y >= 240)  
+        continue;  
+  
+    if (screen_y < lowest_y)  
+    {  
+        // Usar lookup table para fog (si implementaste la Optimización 5)  
+        float fog = fog_table[(int)distance];  
+        // O usar el cálculo original:  
+        // float fog = 1.0f - (distance / 800.0f);  
+        // if (fog < 0.6f) fog = 0.6f;  
+  
+        uint32_t color;  
+  
+        if (hm->texturemap)  
+        {  
+            // Usar interpolación bilinear para mejor calidad  
+            uint32_t tex = get_texture_color_bilinear(hm->texturemap, world_x, world_y);  
+            if (tex == 0)  
+            {  
+                // Fallback al método anterior si la interpolación falla  
+                // Optimización de acceso a texturas sin módulo  
+                int tx = (int)world_x;  
+                int ty = (int)world_y;  
+                while (tx >= hm->texturemap->width) tx -= hm->texturemap->width;  
+                while (ty >= hm->texturemap->height) ty -= hm->texturemap->height;  
+                while (tx < 0) tx += hm->texturemap->width;  
+                while (ty < 0) ty += hm->texturemap->height;  
+                  
+                tex = gr_get_pixel(hm->texturemap, tx, ty);  
+            }  
+              
+            Uint8 r, g, b;  
+            SDL_GetRGB(tex, gPixelFormat, &r, &g, &b);  
+  
+            float total_light = light_factor * fog; // Usando valor pre-calculado  
+            r = (Uint8)(r * total_light);  
+            g = (Uint8)(g * total_light);  
+            b = (Uint8)(b * total_light);  
+  
+            color = SDL_MapRGB(gPixelFormat, r, g, b);  
+        }  
+        else  
+        {  
+            int base = (int)(terrain_height * 2.5f) + 20;  
+            if (base > 255)  
+                base = 255;  
+            if (base < 0)  
+                base = 0;  
+  
+            int grid_x = (int)(world_x * 2.0f) % 8;  
+            int grid_y = (int)(world_y * 2.0f) % 8;  
+            int grid_variation = (grid_x + grid_y) % 3 - 1;  
+            base += grid_variation * 15;  
+  
+            if (base > 255)  
+                base = 255;  
+            if (base < 0)  
+                base = 0;  
+  
+            Uint8 r = (Uint8)((base + 60) * fog * light_factor); // Usando valor pre-calculado  
+            Uint8 g = (Uint8)((base + 30) * fog * light_factor);  
+            Uint8 b = (Uint8)(base * fog * light_factor);  
+  
+            if (r > 255) r = 255;  
+            if (g > 255) g = 255;  
+            if (b > 255) b = 255;  
+  
+            color = SDL_MapRGB(gPixelFormat, r, g, b);  
+        }  
+  
+        for (int y = screen_y; y < lowest_y; y++)  
+        {  
+            gr_put_pixel(render_buffer, screen_x, y, color);  
+        }  
+  
+        lowest_y = screen_y;  
+    }  
+      
+    // Early exit si ya hemos llenado toda la columna  
+    if (lowest_y <= 0) break;  
+}
+        
+        
     }
+    
 
     return render_buffer->code;
 }
