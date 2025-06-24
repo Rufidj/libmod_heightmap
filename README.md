@@ -10,106 +10,137 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 ![Imagen 5](/images/screen5.png)
 ![Imagen 6](/images/screen6.png)
 
+# libmod_heightmap for BennuGD2
+
+Este módulo proporciona un sistema de renderizado tipo "voxelspace" con heightmaps para BennuGD2, permitiendo simulación de terrenos 3D, efectos de agua, iluminación, texturas y una cámara en primera persona, así como integración de sprites en el mundo simulado.
+
+## Constantes Exportadas
+
+| Constante                  | Descripción                                      |
+|---------------------------|--------------------------------------------------|
+| `HEIGHTMAP_MAX`           | Número máximo de heightmaps permitidos          |
+| `HEIGHTMAP_DEFAULT_FOV`   | Campo de visión por defecto (FOV x1000)         |
+
 ---
-## Constantes exportadas
 
-| Constante                | Descripción                                 |
-|--------------------------|---------------------------------------------|
-| `HEIGHTMAP_MAX`         | Cantidad máxima de heightmaps simultáneos. |
-| `HEIGHTMAP_DEFAULT_FOV` | FOV por defecto (en milésimas de radian).    |
+## Funciones Exportadas
+
+### Carga y Creación de Terrenos
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_LOAD(filename)` | Carga un heightmap desde archivo. Retorna ID. |
+| `HEIGHTMAP_LOAD_TEXTURE(id, filename)` | Asocia una textura al heightmap especificado. |
+| `HEIGHTMAP_CREATE(width, height)` | Crea un heightmap vacío de dimensiones dadas. |
+| `HEIGHTMAP_CREATE_PROCEDURAL(width, height)` | Crea un terreno con generación procedural. |
+| `HEIGHTMAP_UNLOAD(id)` | Libera el heightmap de la memoria. |
 
 ---
-
-## Funciones disponibles
-
-### Carga y gestión de mapas
-
-```bennu
-HEIGHTMAP_LOAD("filename") => int
-HEIGHTMAP_CREATE(width, height) => int
-HEIGHTMAP_CREATE_PROCEDURAL(width, height) => int
-HEIGHTMAP_UNLOAD(heightmap_id)
-HEIGHTMAP_LOAD_TEXTURE(heightmap_id, "filename")
-```
 
 ### Renderizado
 
-```bennu
-HEIGHTMAP_RENDER_3D(heightmap_id, dummy1, dummy2) => int
-```
-
-> **Nota:** `dummy1` y `dummy2` son parámetros reservados para compatibilidad.
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_RENDER_3D(id, width, height)` | Renderiza el terreno en pantalla. |
+| `HEIGHTMAP_SET_RENDER_DISTANCE(distance)` | Define la distancia máxima de renderizado. |
+| `HEIGHTMAP_SET_CHUNK_CONFIG(width, height)` | Configura el tamaño de los "chunks" internos. |
 
 ---
 
 ### Cámara
 
-```bennu
-HEIGHTMAP_SET_CAMERA(x, y, z, angle, pitch, fov)
-HEIGHTMAP_GET_CAMERA_POSITION(&x, &y, &z, &angle, &pitch)
-HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(heightmap_id)
-```
-
-### Controles de movimiento
-
-```bennu
-HEIGHTMAP_SET_CONTROL_SENSITIVITY(mouse_sens, move_speed, height_speed)
-HEIGHTMAP_MOVE_FORWARD([speed])
-HEIGHTMAP_MOVE_BACKWARD([speed])
-HEIGHTMAP_STRAFE_LEFT([speed])
-HEIGHTMAP_STRAFE_RIGHT([speed])
-HEIGHTMAP_LOOK_HORIZONTAL(delta_x)
-HEIGHTMAP_LOOK_VERTICAL(delta_y)
-HEIGHTMAP_ADJUST_HEIGHT(delta_z)
-```
-
-### Colisiones y terreno
-
-```bennu
-HEIGHTMAP_CHECK_TERRAIN_COLLISION(heightmap_id)
-HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(heightmap_id, speed)
-HEIGHTMAP_MOVE_BACKWARD_WITH_COLLISION(heightmap_id, speed)
-HEIGHTMAP_STRAFE_LEFT_WITH_COLLISION(heightmap_id, speed)
-HEIGHTMAP_STRAFE_RIGHT_WITH_COLLISION(heightmap_id, speed)
-HEIGHTMAP_GET_HEIGHT(heightmap_id, x, y) => int
-HEIGHTMAP_GET_TERRAIN_HEIGHT_AT_SPRITE(heightmap_id, sprite_x, sprite_y) => int
-HEIGHTMAP_CAN_SPRITE_MOVE_TO(heightmap_id, x, y, height) => bool
-HEIGHTMAP_ADJUST_SPRITE_TO_TERRAIN(heightmap_id, x, y, &adjusted_y)
-```
-
-### Integración con sprites (escala y proyección)
-
-```bennu
-HEIGHTMAP_GET_SPRITE_SCALE(sprite_x, sprite_y) => int
-HEIGHTMAP_WORLD_TO_SCREEN(world_x, world_y, world_z, &screen_x, &screen_y)
-HEIGHTMAP_GET_TERRAIN_LIGHTING(heightmap_id, sprite_x, sprite_y) => int
-```
-
-### Luz y agua
-
-```bennu
-HEIGHTMAP_SET_LIGHT(intensity_0_to_255)
-HEIGHTMAP_SET_WATER_LEVEL(height_z)
-```
-
-### Seguimiento de sprites con la cámara
-
-```bennu
-HEIGHTMAP_SET_CAMERA_FOLLOW(sprite_id, offset_x, offset_y, offset_z)
-HEIGHTMAP_UPDATE_CAMERA_FOLLOW(heightmap_id, sprite_x, sprite_y)
-HEIGHTMAP_GET_CAMERA_FOLLOW() => int
-```
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_SET_CAMERA(x, y, z, angle, pitch, zoom)` | Define la posición y orientación de la cámara. |
+| `HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(id)` | Inicializa la cámara sobre el terreno dado. |
+| `HEIGHTMAP_GET_CAMERA_POSITION(&x, &y, &z, &angle, &pitch)` | Devuelve la posición actual de la cámara. |
 
 ---
 
-## Recomendaciones
+### Control de Movimiento
 
-- Usa mapas de altura en escala de grises (canal rojo).
-- La textura debe tener el mismo tamaño que el heightmap para coincidencia directa.
-- Los ángulos (angle, pitch) deben estar en milésimas de radian (1000 = 1 rad).
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_SET_CONTROL_SENSITIVITY(forward, strafe, look)` | Ajusta la sensibilidad del control. |
+| `HEIGHTMAP_MOVE_FORWARD()` | Avanza la cámara. |
+| `HEIGHTMAP_MOVE_FORWARD(speed)` | Avanza con velocidad específica. |
+| `HEIGHTMAP_MOVE_BACKWARD()` | Retrocede. |
+| `HEIGHTMAP_MOVE_BACKWARD(speed)` | Retrocede con velocidad específica. |
+| `HEIGHTMAP_STRAFE_LEFT()` | Se mueve lateralmente a la izquierda. |
+| `HEIGHTMAP_STRAFE_LEFT(speed)` | Igual, con velocidad. |
+| `HEIGHTMAP_STRAFE_RIGHT()` | Se mueve a la derecha. |
+| `HEIGHTMAP_STRAFE_RIGHT(speed)` | Igual, con velocidad. |
+| `HEIGHTMAP_LOOK_HORIZONTAL(value)` | Rota la cámara en horizontal. |
+| `HEIGHTMAP_LOOK_VERTICAL(value)` | Rota la cámara en vertical. |
+| `HEIGHTMAP_ADJUST_HEIGHT(value)` | Ajusta la altura de la cámara. |
 
 ---
 
+### Iluminación y Cielo
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_SET_LIGHT(intensity)` | Define la iluminación general del terreno. |
+| `HEIGHTMAP_SET_SKY_COLOR(r, g, b, alpha)` | Color del cielo. |
+| `HEIGHTMAP_GET_TERRAIN_LIGHTING(x, y, z)` | Luz del terreno en esa posición. |
+
+---
+
+### Agua
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_SET_WATER_LEVEL(level)` | Define la altura del agua. |
+| `HEIGHTMAP_SET_WATER_COLOR(r, g, b, alpha)` | Define el color y transparencia del agua. |
+| `HEIGHTMAP_UPDATE_WATER_TIME()` | Actualiza la animación de las olas. |
+
+---
+
+### Detección de Altura y Colisión
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_GET_HEIGHT(id, x, y)` | Obtiene altura del terreno en esas coordenadas. |
+| `HEIGHTMAP_CHECK_TERRAIN_COLLISION(radius)` | Verifica colisión del punto actual de la cámara. |
+| `HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(speed, radius)` | Avanza con detección de colisiones. |
+| `HEIGHTMAP_MOVE_BACKWARD_WITH_COLLISION(speed, radius)` | Retrocede con detección. |
+| `HEIGHTMAP_STRAFE_LEFT_WITH_COLLISION(speed, radius)` | Mueve a la izquierda con colisión. |
+| `HEIGHTMAP_STRAFE_RIGHT_WITH_COLLISION(speed, radius)` | Mueve a la derecha con colisión. |
+| `HEIGHTMAP_CAN_SPRITE_MOVE_TO(x, y, z, radius)` | Verifica si un sprite puede moverse a la posición. |
+| `HEIGHTMAP_GET_TERRAIN_HEIGHT_AT_SPRITE(id, x, y)` | Altura del terreno bajo un sprite. |
+| `HEIGHTMAP_ADJUST_SPRITE_TO_TERRAIN(id, sprite_id, offset, &result)` | Ajusta sprite a la superficie. |
+
+---
+
+### Sprites en el Mundo 3D
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_GET_SPRITE_SCALE(sprite_id, base_height)` | Escala un sprite basado en profundidad. |
+| `HEIGHTMAP_WORLD_TO_SCREEN(x, y, z, &screen_x, &screen_y)` | Convierte coordenadas del mundo a pantalla. |
+
+---
+
+### Seguimiento de Cámara
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_SET_CAMERA_FOLLOW(sprite_id, offset_x, offset_y, offset_z, style)` | Hace que la cámara siga a un sprite. |
+| `HEIGHTMAP_UPDATE_CAMERA_FOLLOW(offset_angle, offset_pitch, style)` | Actualiza parámetros de seguimiento. |
+| `HEIGHTMAP_GET_CAMERA_FOLLOW()` | Devuelve el ID del sprite seguido. |
+
+---
+
+## Requisitos
+
+- **BennuGD2**
+- **SDL2**
+- Texturas en formato soportado (ej: PNG)
+- Heightmaps en formato RAW u otro compatible
+
+## Créditos
+
+Desarrollado como módulo adicional para BennuGD2 por la comunidad.
 ## Ejemplo básico de uso
 
 ```bennu
