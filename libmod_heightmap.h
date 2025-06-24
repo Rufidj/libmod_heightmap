@@ -19,6 +19,7 @@
 #include "g_grlib.h"  
 #include "xstrings.h"  
 #include "m_map.h"  
+
   
 /* Estructuras para el módulo de heightmap */  
 typedef struct {  
@@ -33,12 +34,10 @@ typedef struct {
   
 typedef struct {  
     float x, y, z;  
-    float angle;      // Rotación horizontal (yaw)  
-    float pitch;      // Inclinación vertical (nuevo)  
+    float angle, pitch;  
     float fov;  
-    float near_plane;  
-    float far_plane;  
-} CAMERA_3D;  
+    float near, far;  // Agregar estos campos  
+} CAMERA_3D; 
   
 /* Constantes */  
 #define MAX_HEIGHTMAPS 256  
@@ -59,7 +58,7 @@ extern int64_t libmod_heightmap_get_height(INSTANCE *my, int64_t *params);
 extern int64_t libmod_heightmap_set_camera(INSTANCE *my, int64_t *params);  
 extern int64_t libmod_heightmap_render_3d(INSTANCE *my, int64_t *params);  
 extern int64_t libmod_heightmap_load_texture(INSTANCE *my, int64_t *params); // Nueva función  
-  
+extern int64_t libmod_heightmap_update_sprite_3d(INSTANCE *my, int64_t *params);
 /* Funciones internas */  
 extern float get_height_at(HEIGHTMAP *hm, float x, float y);  
 extern void build_height_cache(HEIGHTMAP *hm);  

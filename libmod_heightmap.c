@@ -1241,59 +1241,53 @@ int64_t libmod_heightmap_get_sprite_scale(INSTANCE *my, int64_t *params)
 }
 
 /* Convertir coordenadas del mundo a coordenadas de pantalla */
-/* Convertir coordenadas del mundo a coordenadas de pantalla */  
-int64_t libmod_heightmap_world_to_screen(INSTANCE *my, int64_t *params)  
-{  
-    float world_x = (float)params[0] / 10.0f;  
-    float world_y = (float)params[1] / 10.0f;  
-    float world_z = (float)params[2] / 10.0f;  
-    int64_t *screen_x = (int64_t *)params[3];  
-    int64_t *screen_y = (int64_t *)params[4];  
-  
-    // Depuración: Coordenadas de entrada y cámara  
-    printf("WTS: World(%.2f, %.2f, %.2f) Cam(%.2f, %.2f, %.2f) Angle(%.2f)\n",   
-           world_x, world_y, world_z, camera.x, camera.y, camera.z, camera.angle); 
-    fflush(stdout);
-    // Calcular posición relativa a la cámara  
-    float dx = world_x - camera.x;  
-    float dy = world_y - camera.y;  
-    float dz = world_z - camera.z;  
-  
-    // Depuración: Coordenadas relativas  
-    printf("WTS: Relative(%.2f, %.2f, %.2f)\n", dx, dy, dz);  
-    fflush(stdout);
-    // Rotar según el ángulo de la cámara  
-    float cos_angle = cosf(-camera.angle);  
-    float sin_angle = sinf(-camera.angle);  
-  
-    float rotated_x = dx * cos_angle - dy * sin_angle;  
-    float rotated_y = dx * sin_angle + dy * cos_angle;  
-  
-    // Depuración: Coordenadas rotadas  
-    printf("WTS: Rotated(%.2f, %.2f) Cos(%.2f) Sin(%.2f)\n", rotated_x, rotated_y, cos_angle, sin_angle);  
-    fflush(stdout);
-    // Proyección perspectiva  
-    if (rotated_y > 0.1f) // Evitar división por cero  
-    {  
-        float projected_x = (rotated_x / rotated_y) * 300.0f + 320.0f;  
-        float projected_y = (dz / rotated_y) * 300.0f + 240.0f;  
-  
-        // Ajustar por pitch de la cámara  
-        projected_y += camera.pitch * 40.0f;  
-  
+int64_t libmod_heightmap_world_to_screen(INSTANCE *my, int64_t *params)    
+{    
+    float world_x = (float)params[0] / 10.0f;    
+    float world_y = (float)params[1] / 10.0f;    
+    float world_z = (float)params[2] / 10.0f;    
+    int64_t *screen_x = (int64_t *)params[3];    
+    int64_t *screen_y = (int64_t *)params[4];    
+    
+    // Calcular vector desde cámara al objeto  
+    float dx = world_x - camera.x;    
+    float dy = world_y - camera.y;    
+    float dz = world_z - camera.z;    
+    
+    // Transformación de vista: rotar el mundo según la cámara  
+    float cos_a = cosf(camera.angle);    
+    float sin_a = sinf(camera.angle);    
+    
+    // Vista en primera persona correcta  
+    float forward = dx * cos_a + dy * sin_a;   // Profundidad (Z en vista)  
+    float right = -dx * sin_a + dy * cos_a;    // Lateral (X en vista)  
+    
+    // Solo proyectar si está delante de la cámara y a distancia razonable  
+    if (forward > 0.5f && forward < 1000.0f)  
+    {    
+        // Proyección perspectiva con límites  
+        float screen_scale = 200.0f / forward;  
+          
+        // Limitar el factor de escala para evitar proyecciones extremas  
+        if (screen_scale > 10.0f) screen_scale = 10.0f;  
+        if (screen_scale < 0.1f) screen_scale = 0.1f;  
+          
+        float projected_x = 160.0f + right * screen_scale;  
+        float projected_y = 120.0f - dz * screen_scale + camera.pitch * 30.0f;  
+          
+        // Limitar coordenadas de pantalla para evitar valores extremos  
+        if (projected_x < -50.0f) projected_x = -50.0f;  
+        if (projected_x > 370.0f) projected_x = 370.0f;  
+        if (projected_y < -50.0f) projected_y = -50.0f;  
+        if (projected_y > 290.0f) projected_y = 290.0f;  
+          
         *screen_x = (int64_t)projected_x;  
         *screen_y = (int64_t)projected_y;  
-  
-        // Depuración: Coordenadas proyectadas y resultado  
-        printf("WTS: Projected(%.2f, %.2f) Result(1) Screen(%lld, %lld)\n", projected_x, projected_y, *screen_x, *screen_y); 
-        fflush(stdout);
-        return 1; // Visible  
-    }  
-  
-    // Depuración: Objeto no visible  
-    printf("WTS: Rotated_Y (%.2f) <= 0.1f. Result(0)\n", rotated_y);  
-    fflush(stdout);
-    return 0; // Detrás de la cámara, no visible  
+    
+        return 1;  
+    }    
+    
+    return 0; // No visible  
 }
 
 /* Obtener iluminación del terreno para aplicar al sprite */
