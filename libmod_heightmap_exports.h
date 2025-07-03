@@ -14,6 +14,7 @@
 /* Constantes exportadas */
 DLCONSTANT __bgdexport(libmod_heightmap, constants_def)[] = {
     {"HEIGHTMAP_MAX", TYPE_INT, MAX_HEIGHTMAPS},
+    { "C_BILLBOARD" , TYPE_QWORD, C_BILLBOARD },  
     {"HEIGHTMAP_DEFAULT_FOV", TYPE_FLOAT, (int64_t)(DEFAULT_FOV * 1000)},
     {NULL, 0, 0}};
 
@@ -63,7 +64,7 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC("HEIGHTMAP_ADJUST_SPRITE_TO_TERRAIN", "IIIP", TYPE_INT, libmod_heightmap_adjust_sprite_to_terrain),
 
     // funciones para que los sprites se integren correctamente en el mundo "3d"
-    FUNC("HEIGHTMAP_GET_SPRITE_SCALE", "II", TYPE_INT, libmod_heightmap_get_sprite_scale),
+    // FUNC("HEIGHTMAP_GET_SPRITE_SCALE", "II", TYPE_INT, libmod_heightmap_get_sprite_scale),
     FUNC("HEIGHTMAP_WORLD_TO_SCREEN", "IIIPP", TYPE_INT, libmod_heightmap_world_to_screen),
     FUNC("HEIGHTMAP_GET_TERRAIN_LIGHTING", "III", TYPE_INT, libmod_heightmap_get_terrain_lighting),
 
@@ -71,6 +72,16 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC("HEIGHTMAP_SET_CAMERA_FOLLOW", "IIIII", TYPE_INT, libmod_heightmap_set_camera_follow),
     FUNC("HEIGHTMAP_UPDATE_CAMERA_FOLLOW", "III", TYPE_INT, libmod_heightmap_update_camera_follow),
     FUNC("HEIGHTMAP_GET_CAMERA_FOLLOW", "", TYPE_INT, libmod_heightmap_get_camera_follow),
+
+    /* Billboards */  
+    FUNC( "HEIGHTMAP_SET_BILLBOARD"             , "I"           , TYPE_INT      , libmod_heightmap_set_billboard            ),  
+    FUNC( "HEIGHTMAP_UNSET_BILLBOARD"           , "I"           , TYPE_INT      , libmod_heightmap_unset_billboard          ),  
+    FUNC( "HEIGHTMAP_IS_BILLBOARD"              , "I"           , TYPE_INT      , libmod_heightmap_is_billboard             ),  
+    FUNC( "HEIGHTMAP_PROJECT_BILLBOARD"         , "IIII"        , TYPE_QWORD    , libmod_heightmap_project_billboard        ),
+    FUNC( "HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_X" , "IF"          , TYPE_FLOAT    , libmod_heightmap_convert_screen_to_world_x ),  
+    FUNC( "HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_Y" , "IF"          , TYPE_FLOAT    , libmod_heightmap_convert_screen_to_world_y ),
+    FUNC( "HEIGHTMAP_ADD_VOXEL_BILLBOARD", "FFFI", TYPE_INT, libmod_heightmap_add_voxel_billboard ),
+
     FUNC(0, 0, 0, 0)};
 
 #endif
