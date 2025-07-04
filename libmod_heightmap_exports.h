@@ -26,7 +26,7 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC("HEIGHTMAP_SET_CAMERA", "IIIIII", TYPE_INT, libmod_heightmap_set_camera),
     FUNC("HEIGHTMAP_SET_LIGHT", "I", TYPE_INT, libmod_heightmap_set_light),
     FUNC("HEIGHTMAP_SET_WATER_LEVEL", "I", TYPE_INT, libmod_heightmap_set_water_level),
-    FUNC("HEIGHTMAP_SET_WATER_COLOR" , "IIII" , TYPE_INT , libmod_heightmap_set_water_color ),  
+    FUNC("HEIGHTMAP_SET_WATER_TEXTURE" , "SI" , TYPE_INT , libmod_heightmap_water_texture ),  
     FUNC("HEIGHTMAP_UPDATE_WATER_TIME", "" , TYPE_INT , libmod_heightmap_update_water_time ),
     FUNC("HEIGHTMAP_SET_SKY_COLOR", "IIII", TYPE_INT, libmod_heightmap_set_sky_color),
     FUNC("HEIGHTMAP_LOAD_TEXTURE", "IS", TYPE_INT, libmod_heightmap_load_texture),
