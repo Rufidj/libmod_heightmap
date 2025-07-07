@@ -39,18 +39,32 @@ enum {
 #define MAX_BILLBOARDS 64  
   
 typedef struct {  
+    int active;  
     float world_x, world_y, world_z;  
     int graph_id;  
-    float scale;  
-    int active;  
-} VOXEL_BILLBOARD;  
+    int64_t process_id;  // Añadir este campo  
+    float scale;
+} VOXEL_BILLBOARD;
 
 typedef struct {  
     uint32_t final_color;  // Color final con transparencia aplicada  
     uint8_t has_water;     // 1 si hay agua, 0 si no  
     float water_depth;     // Profundidad del agua para efectos  
 } PRECALC_WATER_DATA;  
-  
+
+// Variables para textura del cielo  
+static GRAPH *sky_texture = NULL;  
+static float sky_texture_scale = 1.0f;  
+static float sky_animation_speed = 0.3f;  
+static float sky_texture_offset_x = 0.0f;  
+static float sky_texture_offset_y = 0.0f;
+
+// Variables globales para máscaras de overlay  
+static GRAPH* overlay_mask = NULL;  
+static GRAPH* bridge_texture = NULL;  
+static float bridge_height_offset = 5.0f; // Altura adicional para puentes  
+
+
 static PRECALC_WATER_DATA *precalc_water = NULL;
 // Variables globales para el sistema de texturas de agua  
 static GRAPH *water_texture = NULL;  
@@ -59,6 +73,7 @@ static float water_texture_scale = 1.0f;
 static float water_texture_offset_x = 0.0f;  
 static float water_texture_offset_y = 0.0f;  
 static int water_texture_alpha_override = -1; // -1 = usar alpha de la textura, 0-255 = override
+static float wave_amplitude = 0.1f; // Nueva variable para controlar el tamaño de las olas
   
 static VOXEL_BILLBOARD voxel_billboards[MAX_BILLBOARDS];
 static int billboard_count = 0;  
@@ -73,6 +88,7 @@ static GRAPH *render_buffer = NULL;
 // Declaración forward corregida  
 int64_t libmod_heightmap_world_to_screen(INSTANCE *my, int64_t *params);
 uint32_t calculate_water_color(float world_x, float world_y, float water_depth, float time);
+static float calculated_bridge_height = -1.0f;  
 
   
 #ifndef M_PI_2
@@ -181,6 +197,7 @@ void __bgdexport(libmod_heightmap, module_finalize)()
     // Limpiar la estructura global heightmaps (opcional, pero buena práctica)  
     memset(heightmaps, 0, sizeof(heightmaps));  
 }
+
 
 int64_t libmod_heightmap_set_light(INSTANCE *my, int64_t *params)
 {
@@ -415,34 +432,96 @@ int64_t libmod_heightmap_load_texture(INSTANCE *my, int64_t *params)
     return 1;
 }
 
-/* Función auxiliar para obtener color corregido de textura */
-static uint32_t get_texture_pixel_color_corrected(GRAPH *texture, int x, int y, float brightness, float total_light)
-{
-    if (!texture)
-        return 0;
-
-    uint32_t tex = gr_get_pixel(texture, x, y);
-
-    // Usar SDL_GetRGB para extraer componentes correctamente
-    Uint8 r, g, b;
-    SDL_GetRGB(tex, gPixelFormat, &r, &g, &b);
-
-    // Aplicar brillo y luz total
-    r = (Uint8)(r * brightness * total_light);
-    g = (Uint8)(g * brightness * total_light);
-    b = (Uint8)(b * brightness * total_light);
-
-    // Clamp automático con Uint8, pero verificar por seguridad
-    if (r > 255)
-        r = 255;
-    if (g > 255)
-        g = 255;
-    if (b > 255)
-        b = 255;
-
-    // Usar SDL_MapRGB para reconstruir el color correctamente
-    return SDL_MapRGB(gPixelFormat, r, g, b);
+int64_t libmod_heightmap_set_sky_texture(INSTANCE *my, int64_t *params)  
+{  
+    const char *filename = string_get(params[0]);  
+    float scale = (params[1] > 0) ? (float)params[1] / 1000.0f : 1.0f;  
+      
+    if (sky_texture) {  
+        bitmap_destroy(sky_texture);  
+        sky_texture = NULL;  
+    }  
+      
+    int64_t map_id = gr_load_img(filename);  
+    string_discard(params[0]);  
+    if (!map_id) return 0;  
+      
+    sky_texture = bitmap_get(0, map_id);  
+    if (!sky_texture) return 0;  
+      
+    sky_texture_scale = scale;  
+    return 1;  
 }
+ 
+// Función auxiliar para samplear la textura del cielo con proyección esférica corregida  
+static uint32_t sample_sky_texture(float screen_x, float screen_y, float camera_angle, float camera_pitch, float time) {  
+    if (!sky_texture) {  
+        return SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);  
+    }  
+      
+    // Sincronizar FOV con el sistema voxelspace  
+    float terrain_fov = 0.7f; // Mismo valor que el renderizado principal  
+    float fov_horizontal = terrain_fov;  
+    float fov_vertical = terrain_fov * 0.75f; // Proporción ajustada  
+      
+    // Calcular ángulos del rayo de manera consistente con voxelspace  
+    float ray_angle_h = ((screen_x - 160.0f) / 320.0f) * fov_horizontal;  
+    float ray_angle_v = ((120.0f - screen_y) / 240.0f) * fov_vertical;  
+      
+    // Aplicar rotación de cámara  
+    float world_angle_h = camera_angle + ray_angle_h;  
+    float world_angle_v = camera_pitch + ray_angle_v;  
+      
+    // Mapeo UV estabilizado  
+    float u = (world_angle_h + M_PI) / (2.0f * M_PI);  
+    float v = (world_angle_v + M_PI_2) / M_PI;  
+      
+    // Clamping para evitar repetición  
+    if (u < 0.0f) u = 0.0f;  
+    if (u > 1.0f) u = 1.0f;  
+    if (v < 0.0f) v = 0.0f;  
+    if (v > 1.0f) v = 1.0f;  
+      
+    // Sampling de textura  
+    int tex_x = (int)(u * sky_texture->width) % sky_texture->width;  
+    int tex_y = (int)(v * sky_texture->height) % sky_texture->height;  
+      
+    return gr_get_pixel(sky_texture, tex_x, tex_y);  
+}
+
+// Función de renderizado del skybox corregida  
+static void render_skybox(float camera_angle, float camera_pitch, float time, int quality_step) {  
+    if (!sky_texture) {  
+        // Fallback al sistema actual  
+        uint32_t background_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);  
+        gr_clear_as(render_buffer, background_color);  
+        return;  
+    }  
+      
+    // Primero limpiar solo con el color de fondo, sin sobrescribir  
+    uint32_t background_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);  
+    gr_clear_as(render_buffer, background_color);  
+      
+    // Renderizar skybox por sectores para optimización  
+    // IMPORTANTE: Solo renderizar en áreas que realmente son cielo  
+    for (int y = 0; y < 240; y += quality_step) {  
+        for (int x = 0; x < 320; x += quality_step) {  
+            // Verificar si este píxel debería mostrar cielo  
+            // (esto se determinará después en el pipeline de renderizado principal)  
+            uint32_t sky_color = sample_sky_texture((float)x, (float)y, camera_angle, camera_pitch, time);  
+              
+            // Rellenar el área del quality_step SOLO como fondo inicial  
+            // El renderizado del terreno y agua sobrescribirá estos píxeles según corresponda  
+            for (int dy = 0; dy < quality_step && (y + dy) < 240; dy++) {  
+                for (int dx = 0; dx < quality_step && (x + dx) < 320; dx++) {  
+                    gr_put_pixel(render_buffer, x + dx, y + dy, sky_color);  
+                }  
+            }  
+        }  
+    }  
+}
+
+
 int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {  
     int64_t hm_id = params[0];  
     HEIGHTMAP *hm = NULL;  
@@ -452,322 +531,309 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
             break;  
         }  
     }  
-  
+      
     if (!hm || !hm->cache_valid)  
         return 0;  
-  
+          
     if (!render_buffer) {  
         render_buffer = bitmap_new_syslib(320, 240);  
         if (!render_buffer) return 0;  
     }  
-  
+      
     static float *depth_buffer = NULL;  
     if (!depth_buffer) {  
         depth_buffer = malloc(320 * 240 * sizeof(float));  
     }  
-  
+      
     for (int i = 0; i < 320 * 240; i++) {  
         depth_buffer[i] = max_render_distance;  
     }  
-  
+      
     uint32_t background_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);  
-    gr_clear_as(render_buffer, background_color);  
-  
+    // gr_clear_as(render_buffer, background_color);  
+    // Usar el nuevo sistema de skybox:  
+    
+      
     static float last_camera_x = 0, last_camera_y = 0, last_camera_angle = 0;  
     float movement = fabs(camera.x - last_camera_x) + fabs(camera.y - last_camera_y) + fabs(camera.angle - last_camera_angle);  
     int quality_step = (movement > 5.0f) ? 2 : 1;  
     last_camera_x = camera.x;  
     last_camera_y = camera.y;  
     last_camera_angle = camera.angle;  
-  
+      
     int chunk_x = (int)(camera.x / chunk_size);  
     int chunk_y = (int)(camera.y / chunk_size);  
     int min_chunk_x = chunk_x - chunk_radius;  
     int max_chunk_x = chunk_x + chunk_radius;  
     int min_chunk_y = chunk_y - chunk_radius;  
     int max_chunk_y = chunk_y + chunk_radius;  
-  
+      
     float terrain_fov = 0.7f;  
     float angle_step = terrain_fov / 320.0f;  
     float base_angle = camera.angle - terrain_fov * 0.5f;  
     float pitch_offset = camera.pitch * 40.0f;  
     float light_factor = light_intensity / 255.0f;  
-  
+      
     float time = SDL_GetTicks() / 1000.0f;  
     static float cached_water_time = 0.0f;  
     static int water_frame_counter = 0;  
-  
+      
     if (water_frame_counter % 4 == 0) {  
         cached_water_time = time;  
     }  
     water_frame_counter++;  
-  
+    render_skybox(camera.angle, camera.pitch, cached_water_time, quality_step);
+      
     int camera_underwater = (camera.z < water_level);  
-  
+      
     if (camera_underwater) {  
         light_factor *= 0.7f;  
         background_color = SDL_MapRGBA(gPixelFormat,  
             sky_color_r * 0.5f, sky_color_g * 0.7f, sky_color_b * 1.0f, sky_color_a);  
         gr_clear_as(render_buffer, background_color);  
     }  
-  
+      
     if (!fog_table_initialized || fog_table_size != (int)max_render_distance) {  
         if (fog_table)  
             free(fog_table);  
         fog_table_size = (int)max_render_distance;  
         fog_table = malloc(fog_table_size * sizeof(float));  
-  
+          
         for (int i = 0; i < fog_table_size; i++) {  
             float fog = 1.0f - (i / (float)fog_table_size);  
             fog_table[i] = (fog < 0.6f) ? 0.6f : fog;  
         }  
         fog_table_initialized = 1;  
     }  
-  
+      
     for (int screen_x = 0; screen_x < 320; screen_x += quality_step) {  
         float angle = base_angle + screen_x * angle_step;  
-  
+          
         float camera_fov_half = terrain_fov * 0.5f;  
         float min_angle = camera.angle - camera_fov_half;  
         float max_angle = camera.angle + camera_fov_half;  
         if (angle < min_angle || angle > max_angle)  
             continue;  
-  
+          
         float cos_angle = cosf(angle);  
         float sin_angle = sinf(angle);  
         int lowest_y = 240;  
-  
+          
         for (float distance = 1.0f; distance < max_render_distance; distance += (distance < 50.0f ? 0.2f : distance < 200.0f ? 0.5f : 1.0f)) {  
             float world_x = camera.x + cos_angle * distance;  
             float world_y = camera.y + sin_angle * distance;  
-  
+          
             if (world_x < 0 || world_x >= hm->width - 1 || world_y < 0 || world_y >= hm->height - 1)  
                 continue;  
-  
+          
             int current_chunk_x = (int)(world_x / chunk_size);  
             int current_chunk_y = (int)(world_y / chunk_size);  
             if (current_chunk_x < min_chunk_x || current_chunk_x > max_chunk_x ||  
                 current_chunk_y < min_chunk_y || current_chunk_y > max_chunk_y) {  
                 continue;  
             }  
-  
+          
             float terrain_height = get_height_at(hm, world_x, world_y);  
-  
-            float render_height = terrain_height;  
+              
+            // Renderizar terreno/agua según su altura real  
+            float render_height;  
             int render_water = 0;  
+              
             if (water_level > 0 && terrain_height < water_level) {  
-                float simple_wave = sin(cached_water_time + world_x * 0.05f) * 0.1f;  
+                float simple_wave = sin(cached_water_time + world_x * 0.05f) * wave_amplitude;
                 render_height = water_level + simple_wave;  
                 render_water = 1;  
+            } else {  
+                render_height = terrain_height;  
             }  
-  
+              
             float height_on_screen = (camera.z - render_height) / distance * 300.0f + 120.0f;  
             height_on_screen += pitch_offset;  
-  
+              
             int screen_y = (int)height_on_screen;  
             if (screen_y < 0)  
                 screen_y = 0;  
             if (screen_y >= 240)  
                 continue;  
-  
+              
             if (screen_y < lowest_y) {  
                 int fog_index = (int)distance;  
                 if (fog_index >= fog_table_size)  
                     fog_index = fog_table_size - 1;  
                 float fog = fog_table[fog_index];  
-                uint32_t color;  
-  
-                Uint8 terrain_r = 0, terrain_g = 0, terrain_b = 0;  
-                if (hm->texturemap) {  
-                    uint32_t tex = get_texture_color_bilinear(hm->texturemap, world_x, world_y);  
-                    if (tex == 0) {  
-                        int tx = (int)world_x;  
-                        int ty = (int)world_y;  
-                        while (tx >= hm->texturemap->width)  
-                            tx -= hm->texturemap->width;  
-                        while (ty >= hm->texturemap->height)  
-                            ty -= hm->texturemap->height;  
-                        while (tx < 0)  
-                            tx += hm->texturemap->width;  
-                        while (ty < 0)  
-                            ty += hm->texturemap->height;  
-                        tex = gr_get_pixel(hm->texturemap, tx, ty);  
-                    }  
-                    SDL_GetRGB(tex, gPixelFormat, &terrain_r, &terrain_g, &terrain_b);  
-                } else {  
-                    int base = (int)(terrain_height * 2.5f) + 20;  
-                    if (base > 255) base = 255;  
-                    if (base < 0) base = 0;  
-  
-                    int grid_x = (int)(world_x * 2.0f) % 8;  
-                    int grid_y = (int)(world_y * 2.0f) % 8;  
-                    int grid_variation = (grid_x + grid_y) % 3 - 1;  
-                    base += grid_variation * 15;  
-                    if (base > 255) base = 255;  
-                    if (base < 0) base = 0;  
-  
-                    terrain_r = (Uint8)((base + 60));  
-                    terrain_g = (Uint8)((base + 30));  
-                    terrain_b = (Uint8)(base);  
-                }  
-  
-                float total_light = light_factor * fog;  
-                terrain_r = (Uint8)(terrain_r * total_light);  
-                terrain_g = (Uint8)(terrain_g * total_light);  
-                terrain_b = (Uint8)(terrain_b * total_light);  
-  
-                if (!render_water) {  
-                    color = SDL_MapRGB(gPixelFormat, terrain_r, terrain_g, terrain_b);  
-                } else {  
-                    // SISTEMA DE TEXTURAS PARA EL AGUA CORREGIDO - SIN DOBLE CAPA  
+                  
+                if (render_water) {  
+                    // Renderizar agua  
                     if (water_texture) {  
-                        // Calcular coordenadas UV con animación  
-                        float u = (world_x * water_texture_scale + water_texture_offset_x + cached_water_time * 0.1f);  
-                        float v = (world_y * water_texture_scale + water_texture_offset_y + cached_water_time * 0.05f);  
+                        float u = (world_x * 0.01f + cached_water_time * 0.1f);  
+                        float v = (world_y * 0.01f + cached_water_time * 0.05f);  
                           
-                        // Normalizar coordenadas UV  
                         u = u - floor(u);  
                         v = v - floor(v);  
                           
-                        // Convertir a coordenadas de píxel  
                         int tex_x = (int)(u * water_texture->width);  
                         int tex_y = (int)(v * water_texture->height);  
                           
-                        // Asegurar que estén dentro de los límites  
                         tex_x = tex_x % water_texture->width;  
                         tex_y = tex_y % water_texture->height;  
                         if (tex_x < 0) tex_x += water_texture->width;  
                         if (tex_y < 0) tex_y += water_texture->height;  
                           
-                        // Obtener color de la textura  
-                        uint32_t water_tex_color = gr_get_pixel(water_texture, tex_x, tex_y);  
+                        uint32_t water_color = gr_get_pixel(water_texture, tex_x, tex_y);  
                           
-                        // Extraer componentes RGBA de la textura  
-                        Uint8 tex_r, tex_g, tex_b, tex_a;  
-                        SDL_GetRGBA(water_tex_color, gPixelFormat, &tex_r, &tex_g, &tex_b, &tex_a);  
-                          
-                        // Determinar alpha final  
-                        float final_alpha;  
-                        if (water_texture_alpha_override >= 0) {  
-                            final_alpha = water_texture_alpha_override / 255.0f;  
-                        } else if (tex_a == 255) {  
-                            final_alpha = water_color_a / 255.0f;  
-                        } else {  
-                            float texture_alpha = tex_a / 255.0f;  
-                            float global_alpha = water_color_a / 255.0f;  
-                            final_alpha = texture_alpha * global_alpha;  
-                        }  
-                          
-                        // CLAVE: Si el alpha es muy bajo, mostrar solo el terreno  
-                        if (final_alpha < 0.01f) {  
-                            color = SDL_MapRGB(gPixelFormat, terrain_r, terrain_g, terrain_b);  
-                        } else {  
-                            // Mezclar PRIMERO con el terreno usando transparencia  
-                            tex_r = (Uint8)(tex_r * final_alpha + terrain_r * (1.0f - final_alpha));  
-                            tex_g = (Uint8)(tex_g * final_alpha + terrain_g * (1.0f - final_alpha));  
-                            tex_b = (Uint8)(tex_b * final_alpha + terrain_b * (1.0f - final_alpha));  
-                              
-                            // DESPUÉS aplicar iluminación al resultado mezclado  
-                            tex_r = (Uint8)(tex_r * total_light);  
-                            tex_g = (Uint8)(tex_g * total_light);  
-                            tex_b = (Uint8)(tex_b * total_light);  
-                              
-                            color = SDL_MapRGB(gPixelFormat, tex_r, tex_g, tex_b);  
+                        for (int y = screen_y; y < lowest_y; y++) {  
+                            gr_put_pixel(render_buffer, screen_x, y, water_color);  
+                            int depth_index = y * 320 + screen_x;  
+                            if (depth_index >= 0 && depth_index < 320 * 240) {  
+                                depth_buffer[depth_index] = distance;  
+                            }  
                         }  
                     } else {  
-                        // Solo usar fallback si NO hay textura cargada  
-                        Uint8 water_r = water_color_r;  
-                        Uint8 water_g = water_color_g;  
-                        Uint8 water_b = water_color_b;  
+                        uint32_t water_color = SDL_MapRGB(gPixelFormat, 64, 128, 255);  
+                        for (int y = screen_y; y < lowest_y; y++) {  
+                            gr_put_pixel(render_buffer, screen_x, y, water_color);  
+                            int depth_index = y * 320 + screen_x;  
+                            if (depth_index >= 0 && depth_index < 320 * 240) {  
+                                depth_buffer[depth_index] = distance;  
+                            }  
+                        }  
+                    }  
+                } else {  
+                    // Renderizar terreno normal  
+                    GRAPH* texture_to_use = hm->texturemap;  
+                    Uint8 terrain_r = 0, terrain_g = 0, terrain_b = 0;  
+                      
+                    if (texture_to_use) {  
+                        uint32_t tex = get_texture_color_bilinear(texture_to_use, world_x, world_y);  
+                        if (tex == 0) {  
+                            int tx = (int)world_x;  
+                            int ty = (int)world_y;  
+                            while (tx >= texture_to_use->width)  
+                                tx -= texture_to_use->width;  
+                            while (ty >= texture_to_use->height)  
+                                ty -= texture_to_use->height;  
+                            while (tx < 0)  
+                                tx += texture_to_use->width;  
+                            while (ty < 0)  
+                                ty += texture_to_use->height;  
+                            tex = gr_get_pixel(texture_to_use, tx, ty);  
+                        }  
+                        SDL_GetRGB(tex, gPixelFormat, &terrain_r, &terrain_g, &terrain_b);  
+                    } else {  
+                        int base = (int)(terrain_height * 2.5f) + 20;  
+                        if (base > 255) base = 255;  
+                        if (base < 0) base = 0;  
                           
-                        float alpha_factor = water_color_a / 255.0f;  
-                        water_r = (Uint8)(water_r * alpha_factor + terrain_r * (1.0f - alpha_factor));  
-                        water_g = (Uint8)(water_g * alpha_factor + terrain_g * (1.0f - alpha_factor));  
-                        water_b = (Uint8)(water_b * alpha_factor + terrain_b * (1.0f - alpha_factor));  
+                        int grid_x = (int)(world_x * 2.0f) % 8;  
+                        int grid_y = (int)(world_y * 2.0f) % 8;  
+                        int grid_variation = (grid_x + grid_y) % 3 - 1;  
+                        base += grid_variation * 15;  
+                        if (base > 255) base = 255;  
+                        if (base < 0) base = 0;  
                           
-                        water_r = (Uint8)(water_r * total_light);  
-                        water_g = (Uint8)(water_g * total_light);  
-                        water_b = (Uint8)(water_b * total_light);  
-                          
-                        color = SDL_MapRGB(gPixelFormat, water_r, water_g, water_b);  
+                        terrain_r = (Uint8)((base + 60));  
+                        terrain_g = (Uint8)((base + 30));  
+                        terrain_b = (Uint8)(base);  
+                    }  
+                      
+                    // Aplicar iluminación  
+                    float total_light = light_factor * fog;  
+                    terrain_r = (Uint8)(terrain_r * total_light);  
+                    terrain_g = (Uint8)(terrain_g * total_light);  
+                    terrain_b = (Uint8)(terrain_b * total_light);  
+                      
+                    uint32_t terrain_color = SDL_MapRGB(gPixelFormat, terrain_r, terrain_g, terrain_b);  
+                    for (int y = screen_y; y < lowest_y; y++) {  
+                        gr_put_pixel(render_buffer, screen_x, y, terrain_color);  
+                        int depth_index = y * 320 + screen_x;  
+                        if (depth_index >= 0 && depth_index < 320 * 240) {  
+                            depth_buffer[depth_index] = distance;  
+                        }  
                     }  
                 }  
-  
-                for (int y = screen_y; y < lowest_y; y++) {  
-                    gr_put_pixel(render_buffer, screen_x, y, color);  
-                    int depth_index = y * 320 + screen_x;  
-                    if (depth_index >= 0 && depth_index < 320 * 240) {  
-                        depth_buffer[depth_index] = distance;  
-                    }  
-                }  
+                  
                 lowest_y = screen_y;  
             }  
-  
             if (lowest_y <= 0)  
                 break;  
         }  
     }  
-  
-    // RENDERIZADO DE BILLBOARDS  
-    for (int i = 0; i < billboard_count; i++) {  
-        if (!voxel_billboards[i].active) continue;  
-  
-        VOXEL_BILLBOARD *bb = &voxel_billboards[i];  
-  
-        float dx = bb->world_x - camera.x;  
-        float dy = bb->world_y - camera.y;  
-        float distance = sqrtf(dx * dx + dy * dy);  
-  
-        if (distance > max_render_distance || distance < 0.1f) continue;  
-  
-        float angle_to_billboard = atan2f(dy, dx);  
-        float angle_diff = angle_to_billboard - camera.angle;  
-  
-        while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;  
-        while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;  
-  
-        float fov_half = terrain_fov * 0.5f;  
-        if (fabs(angle_diff) > fov_half) continue;  
-  
-        float pixels_per_radian = 320.0f / terrain_fov;  
-        int screen_x = (int)(160 + (angle_diff * pixels_per_radian));  
-  
-        if (screen_x < 0 || screen_x >= 320) continue;  
-  
-        float height_on_screen = (camera.z - bb->world_z) / distance * 300.0f + 120.0f;  
-        height_on_screen += camera.pitch * 40.0f;  
-  
-        int screen_y = (int)height_on_screen;  
-        if (screen_y < 0 || screen_y >= 240) continue;  
-  
-        int depth_index = screen_y * 320 + screen_x;  
-        if (depth_index >= 0 && depth_index < 320 * 240) {  
-            if (distance >= depth_buffer[depth_index]) {  
-                continue;  
-            }  
-        }  
-  
-        GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);  
-        if (billboard_graph) {  
-            float scale = 50.0f / distance;  
-            if (scale > 3.0f) scale = 3.0f;  
-            if (scale < 0.1f) scale = 0.1f;  
-  
-            int fog_index = (int)distance;  
-            if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;  
-            float fog = fog_table[fog_index];  
-  
-            Uint8 alpha = (Uint8)(255 * fog);  
-  
-            gr_blit(render_buffer, NULL, screen_x, screen_y, 0, 0,  
-                   (int)(scale * 100), (int)(scale * 100),  
-                   billboard_graph->width/2, billboard_graph->height/2,  
-                   billboard_graph, NULL, 255, 255, 255, alpha, 0, NULL);  
+      
+   // RENDERIZADO DE BILLBOARDS CORREGIDO  
+for (int i = 0; i < MAX_BILLBOARDS; i++) {  
+    if (!voxel_billboards[i].active) continue;  
+      
+    VOXEL_BILLBOARD *bb = &voxel_billboards[i];  
+      
+    float dx = bb->world_x - camera.x;  
+    float dy = bb->world_y - camera.y;  
+    float distance = sqrtf(dx * dx + dy * dy);  
+      
+    if (distance > max_render_distance || distance < 1.0f) continue; // Aumentar mínimo  
+      
+    float angle_to_billboard = atan2f(dy, dx);  
+    float angle_diff = angle_to_billboard - camera.angle;  
+      
+    // Normalizar ángulo  
+    while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;  
+    while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;  
+      
+    // FOV más restrictivo para evitar coordenadas extremas  
+    float billboard_fov_half = terrain_fov * 0.8f;  
+    if (fabs(angle_diff) > billboard_fov_half) continue;  
+      
+    float pixels_per_radian = 320.0f / terrain_fov;  
+    float screen_x_float = 160.0f + (angle_diff * pixels_per_radian);  
+      
+    // Verificar límites ANTES de convertir a entero  
+    if (screen_x_float < 0.0f || screen_x_float >= 320.0f) continue;  
+      
+    int screen_x = (int)screen_x_float;  
+      
+    // Cálculo corregido de altura en pantalla  
+    float height_on_screen = 120.0f + (camera.z - bb->world_z) / distance * 200.0f;  
+    height_on_screen += camera.pitch * 30.0f;  
+      
+    // Verificar límites Y  
+    if (height_on_screen < 0.0f || height_on_screen >= 240.0f) continue;  
+      
+    int screen_y = (int)height_on_screen;  
+      
+    // Verificar depth buffer  
+    int depth_index = screen_y * 320 + screen_x;  
+    if (depth_index >= 0 && depth_index < 320 * 240) {  
+        if (distance >= depth_buffer[depth_index]) {  
+            continue;  
         }  
     }  
-  
+      
+    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);  
+    if (billboard_graph) {  
+        float scale = 30.0f / distance; // Reducir escala base  
+        if (scale > 2.0f) scale = 2.0f;  
+        if (scale < 0.2f) scale = 0.2f;  
+          
+        int fog_index = (int)distance;  
+        if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;  
+        float fog = fog_table[fog_index];  
+          
+        Uint8 alpha = (Uint8)(255 * fog);  
+          
+        // Debug solo para billboards dinámicos  
+        if (bb->process_id > 0) {   
+                   i, screen_x, screen_y, scale;  
+        }  
+          
+        gr_blit(render_buffer, NULL, screen_x, screen_y, 0, 0,  
+               (int)(scale * 100), (int)(scale * 100),  
+               billboard_graph->width/2, billboard_graph->height/2,  
+               billboard_graph, NULL, 255, 255, 255, alpha, 0, NULL);  
+    }  
+}
+      
     return render_buffer->code;  
 }
+                               
 /* Funciones auxiliares */
 void build_height_cache(HEIGHTMAP *hm)
 {
@@ -1624,12 +1690,9 @@ int64_t libmod_heightmap_set_billboard(INSTANCE *my, int64_t *params)
     INSTANCE *target = instance_get(instance_id);  
       
     if (target) {  
-        LOCQWORD(target, CTYPE) = C_BILLBOARD;      
-        printf("✅ Billboard marcado exitosamente - ID: %ld\n", instance_id);    
+        LOCQWORD(target, CTYPE) = C_BILLBOARD;        
         return 1;    
-    }  
-      
-    printf("❌ ERROR: No se encontró instancia con ID: %ld\n", instance_id);    
+    }   
     return 0;      
 }
   
@@ -1793,15 +1856,17 @@ float libmod_heightmap_convert_screen_to_world_y(INSTANCE *my, int64_t *params)
 // Función para añadir billboards directamente al sistema voxelspace  
 int64_t libmod_heightmap_add_voxel_billboard(INSTANCE *my, int64_t *params) {  
     float world_x = *(float*)&params[0];  
-    float world_y = *(float*)&params[1];   
-    float height_offset = *(float*)&params[2]; // Ahora es un offset sobre el terreno  
+    float world_y = *(float*)&params[1];     
+    float height_offset = *(float*)&params[2];  
     int graph_id = params[3];  
+    // Removido el parámetro hm_id problemático  
       
-    // Obtener la altura del heightmap actual  
+    // Buscar el primer heightmap válido disponible  
     HEIGHTMAP *hm = NULL;  
     for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        if (heightmaps[i].id == current_heightmap_id) { // Asumiendo que tienes un current_heightmap_id global  
+        if (heightmaps[i].cache_valid && heightmaps[i].width > 0 && heightmaps[i].height > 0) {  
             hm = &heightmaps[i];  
+            
             break;  
         }  
     }  
@@ -1809,36 +1874,28 @@ int64_t libmod_heightmap_add_voxel_billboard(INSTANCE *my, int64_t *params) {
     float terrain_height = 0.0f;  
     if (hm) {  
         terrain_height = get_height_at(hm, world_x, world_y);  
+        
+    } else {  
+        
     }  
       
-    float final_world_z = terrain_height + height_offset; // Altura del terreno + offset  
+    // Añadir altura mínima para que aparezca sobre el terreno  
+    float final_world_z = terrain_height + height_offset + 10.0f;  
       
-    printf("=== DEBUG ADD BILLBOARD ===\n");  
-    printf("Añadiendo billboard #%d\n", billboard_count);  
-    printf("Coordenadas recibidas: x=%.2f, y=%.2f, offset_z=%.2f\n", world_x, world_y, height_offset);  
-    printf("Altura terreno: %.2f, Z final: %.2f\n", terrain_height, final_world_z);  
-    printf("Graph ID: %d\n", graph_id);  
       
-    if (billboard_count < MAX_BILLBOARDS) {  
-        voxel_billboards[billboard_count].world_x = world_x;  
-        voxel_billboards[billboard_count].world_y = world_y;  
-        voxel_billboards[billboard_count].world_z = final_world_z; // Usar la Z calculada  
-        voxel_billboards[billboard_count].graph_id = graph_id;  
-        voxel_billboards[billboard_count].scale = 1.0f;  
+      if (billboard_count < MAX_BILLBOARDS) {    
+        voxel_billboards[billboard_count].world_x = world_x;    
+        voxel_billboards[billboard_count].world_y = world_y;    
+        voxel_billboards[billboard_count].world_z = final_world_z;    
+        voxel_billboards[billboard_count].graph_id = graph_id;    
+        voxel_billboards[billboard_count].scale = 1.0f;    
         voxel_billboards[billboard_count].active = 1;  
-          
-        printf("Billboard almacenado en posición: x=%.2f, y=%.2f, z=%.2f\n",   
-               voxel_billboards[billboard_count].world_x,  
-               voxel_billboards[billboard_count].world_y,  
-               voxel_billboards[billboard_count].world_z);  
-        printf("===========================\n");  
-          
-        return billboard_count++;  
-    }  
-    printf("ERROR: Límite de billboards alcanzado\n");  
-    return -1;  
+        voxel_billboards[billboard_count].process_id = 0; // 0 para estáticos  
+            
+        return billboard_count++;  // Solo incrementar para estáticos  
+    }    
+    return -1;    
 }
-
 int64_t libmod_heightmap_water_texture(INSTANCE *my, int64_t *params) {  
     const char *texture_path = string_get(params[0]);  
     int alpha_override = params[1]; // Nuevo parámetro alpha (0-255)  
@@ -1856,92 +1913,69 @@ int64_t libmod_heightmap_water_texture(INSTANCE *my, int64_t *params) {
     }  
     return 0;  
 }
-
-// Función para calcular el color del terreno  
-uint32_t calculate_terrain_color(HEIGHTMAP *hm, float world_x, float world_y, float terrain_height) {  
-    Uint8 terrain_r = 0, terrain_g = 0, terrain_b = 0;  
+   
+int64_t libmod_heightmap_register_billboard(INSTANCE *my, int64_t *params) {  
+    int64_t process_id = params[0];  
+    float world_x = *(float*)&params[1];  
+    float world_y = *(float*)&params[2];  
+    float world_z = *(float*)&params[3];  
+    int64_t graph_id = params[4];  
       
-    if (hm->texturemap) {  
-        uint32_t tex = get_texture_color_bilinear(hm->texturemap, world_x, world_y);  
-        if (tex == 0) {  
-            int tx = (int)world_x;  
-            int ty = (int)world_y;  
-            while (tx >= hm->texturemap->width) tx -= hm->texturemap->width;  
-            while (ty >= hm->texturemap->height) ty -= hm->texturemap->height;  
-            while (tx < 0) tx += hm->texturemap->width;  
-            while (ty < 0) ty += hm->texturemap->height;  
-            tex = gr_get_pixel(hm->texturemap, tx, ty);  
-        }  
-        SDL_GetRGB(tex, gPixelFormat, &terrain_r, &terrain_g, &terrain_b);  
-    } else {  
-        int base = (int)(terrain_height * 2.5f) + 20;  
-        if (base > 255) base = 255;  
-        if (base < 0) base = 0;  
-          
-        int grid_x = (int)(world_x * 2.0f) % 8;  
-        int grid_y = (int)(world_y * 2.0f) % 8;  
-        int grid_variation = (grid_x + grid_y) % 3 - 1;  
-        base += grid_variation * 15;  
-        if (base > 255) base = 255;  
-        if (base < 0) base = 0;  
-          
-        terrain_r = (Uint8)((base + 60));  
-        terrain_g = (Uint8)((base + 30));  
-        terrain_b = (Uint8)(base);  
-    }  
-      
-    return SDL_MapRGB(gPixelFormat, terrain_r, terrain_g, terrain_b);  
-}  
-  
-
-// Función mejorada de ruido simple para movimiento orgánico  
-float simple_noise(float x, float y) {  
-    int n = (int)(x + y * 57.0f);  
-    n = (n << 13) ^ n;  
-    return (1.0f - ((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff) / 1073741824.0f);  
-}  
-
-void precalculate_water_transparency(HEIGHTMAP *hm) {  
-    if (!precalc_water) {  
-        precalc_water = malloc(hm->width * hm->height * sizeof(PRECALC_WATER_DATA));  
-    }  
-  
-    for (int y = 0; y < hm->height; y++) {  
-        for (int x = 0; x < hm->width; x++) {  
-            int index = y * hm->width + x;  
-            float terrain_height = get_height_at(hm, x, y);  
-  
-            if (water_level > 0 && terrain_height < water_level) {  
-                precalc_water[index].has_water = 1;  
-                precalc_water[index].water_depth = water_level - terrain_height;  
-                // Eliminar cálculos de color - se harán con texturas  
-            } else {  
-                precalc_water[index].has_water = 0;  
-            }  
+    for (int i = 0; i < MAX_BILLBOARDS; i++) {  
+        if (!voxel_billboards[i].active) {  
+            voxel_billboards[i].active = 1;  
+            voxel_billboards[i].process_id = process_id;  
+            voxel_billboards[i].world_x = world_x;  
+            voxel_billboards[i].world_y = world_y;  
+            voxel_billboards[i].world_z = world_z;  
+            voxel_billboards[i].graph_id = graph_id;  
+            voxel_billboards[i].scale = 1.0f;  
+            // NO incrementar billboard_count para dinámicos  
+            return i;  
         }  
     }  
+    return -1;  
 }
 
-uint32_t sample_water_texture(float world_x, float world_y, float time) {  
-    if (!water_texture) {  
-        // Fallback a color sólido si no hay textura  
-        return SDL_MapRGB(gPixelFormat, water_color_r, water_color_g, water_color_b);  
+int64_t libmod_heightmap_update_billboard(INSTANCE *my, int64_t *params) {  
+    int64_t process_id = params[0];  
+    float world_x = *(float*)&params[1];  
+    float world_y = *(float*)&params[2];  
+    float world_z = *(float*)&params[3];  
+      
+    // Buscar el billboard por process_id  
+    for (int i = 0; i < MAX_BILLBOARDS; i++) {  
+        if (voxel_billboards[i].active && voxel_billboards[i].process_id == process_id) {  
+            voxel_billboards[i].world_x = world_x;  
+            voxel_billboards[i].world_y = world_y;  
+            voxel_billboards[i].world_z = world_z;  
+            return 1; // Éxito  
+        }  
     }  
-      
-    // Calcular coordenadas UV con animación  
-    float u = (world_x * water_texture_scale + water_texture_offset_x + time * 0.1f);  
-    float v = (world_y * water_texture_scale + water_texture_offset_y + time * 0.05f);  
-      
-    // Wrap UV coordinates  
-    u = fmod(u, 1.0f);  
-    v = fmod(v, 1.0f);  
-    if (u < 0) u += 1.0f;  
-    if (v < 0) v += 1.0f;  
-      
-    // Convertir a coordenadas de píxel  
-    int tex_x = (int)(u * water_texture->width) % water_texture->width;  
-    int tex_y = (int)(v * water_texture->height) % water_texture->height;  
-      
-    return gr_get_pixel(water_texture, tex_x, tex_y);  
+    return 0; // No encontrado  
 }
+
+int64_t libmod_heightmap_unregister_billboard(INSTANCE *my, int64_t *params) {    
+    int64_t process_id = params[0];    
+        
+    for (int i = 0; i < MAX_BILLBOARDS; i++) {    
+        if (voxel_billboards[i].active && voxel_billboards[i].process_id == process_id) {    
+            voxel_billboards[i].active = 0;    
+            voxel_billboards[i].process_id = 0; // Limpiar process_id  
+            // NO decrementar billboard_count aquí  
+            return 1; // Éxito    
+        }    
+    }    
+    return 0; // No encontrado    
+}
+
+int64_t libmod_heightmap_set_wave_amplitude(INSTANCE *my, int64_t *params)  
+{  
+    float amplitude = *(float*)&params[0];  
+    if (amplitude < 0.0f) amplitude = 0.0f;  
+    if (amplitude > 5.0f) amplitude = 5.0f; // Límite razonable  
+    wave_amplitude = amplitude;  
+    return 1;  
+}
+
 #include "libmod_heightmap_exports.h"
