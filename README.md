@@ -13,33 +13,13 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 
 ---
 
-## Tabla de Contenido
-
-- [Constantes Exportadas](#constantes-exportadas)
-- [Funciones Exportadas](#funciones-exportadas)
-  - [Carga y Creación de Terrenos](#carga-y-creación-de-terrenos)
-  - [Renderizado](#renderizado)
-  - [Cámara](#cámara)
-  - [Control de Movimiento](#control-de-movimiento)
-  - [Iluminación y Cielo](#iluminación-y-cielo)
-  - [Agua](#agua)
-  - [Detección de Altura y Colisión](#detección-de-altura-y-colisión)
-  - [Sprites en el Mundo 3D](#sprites-en-el-mundo-3d)
-  - [Billboards](#billboards)
-  - [Seguimiento de Cámara](#seguimiento-de-cámara)
-- [Requisitos](#requisitos)
-- [Créditos](#créditos)
-- [Ejemplo básico de uso](#ejemplo-básico-de-uso)
-
----
-
 ## Constantes Exportadas
 
-| Constante                  | Descripción                                      |
-|---------------------------|--------------------------------------------------|
-| `HEIGHTMAP_MAX`           | Número máximo de heightmaps permitidos          |
-| `HEIGHTMAP_DEFAULT_FOV`   | Campo de visión por defecto (FOV x1000)         |
-| `C_BILLBOARD`             | Flag para definir un sprite como billboard      |
+| Constante                | Descripción                                      |
+|-------------------------|--------------------------------------------------|
+| `HEIGHTMAP_MAX`         | Número máximo de heightmaps permitidos          |
+| `HEIGHTMAP_DEFAULT_FOV` | Campo de visión por defecto (FOV x1000)         |
+| `C_BILLBOARD`           | Flag para identificar sprites como billboard    |
 
 ---
 
@@ -49,11 +29,11 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 
 | Función | Descripción |
 |--------|-------------|
-| `HEIGHTMAP_LOAD(filename)` | Carga un heightmap desde archivo. Retorna ID. |
-| `HEIGHTMAP_LOAD_TEXTURE(id, filename)` | Asocia una textura al heightmap especificado. |
-| `HEIGHTMAP_CREATE(width, height)` | Crea un heightmap vacío de dimensiones dadas. |
-| `HEIGHTMAP_CREATE_PROCEDURAL(width, height)` | Crea un terreno con generación procedural. |
-| `HEIGHTMAP_UNLOAD(id)` | Libera el heightmap de la memoria. |
+| `HEIGHTMAP_LOAD(filename)` | Carga un heightmap desde archivo. |
+| `HEIGHTMAP_LOAD_TEXTURE(id, filename)` | Asocia una textura al terreno. |
+| `HEIGHTMAP_CREATE(width, height)` | Crea un heightmap vacío. |
+| `HEIGHTMAP_CREATE_PROCEDURAL(width, height)` | Crea un heightmap procedural. |
+| `HEIGHTMAP_UNLOAD(id)` | Libera recursos del heightmap. |
 
 ---
 
@@ -61,9 +41,9 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 
 | Función | Descripción |
 |--------|-------------|
-| `HEIGHTMAP_RENDER_3D(id, width, height)` | Renderiza el terreno en pantalla. |
-| `HEIGHTMAP_SET_RENDER_DISTANCE(distance)` | Define la distancia máxima de renderizado. |
-| `HEIGHTMAP_SET_CHUNK_CONFIG(width, height)` | Configura el tamaño de los "chunks" internos. |
+| `HEIGHTMAP_RENDER_3D(id, width, height)` | Renderiza el terreno a pantalla. |
+| `HEIGHTMAP_SET_RENDER_DISTANCE(distance)` | Establece distancia máxima de renderizado. |
+| `HEIGHTMAP_SET_CHUNK_CONFIG(width, height)` | Configura tamaño de los "chunks" internos. |
 
 ---
 
@@ -71,9 +51,9 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 
 | Función | Descripción |
 |--------|-------------|
-| `HEIGHTMAP_SET_CAMERA(x, y, z, angle, pitch, zoom)` | Define la posición y orientación de la cámara. |
-| `HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(id)` | Inicializa la cámara sobre el terreno dado. |
-| `HEIGHTMAP_GET_CAMERA_POSITION(&x, &y, &z, &angle, &pitch)` | Devuelve la posición actual de la cámara. |
+| `HEIGHTMAP_SET_CAMERA(x, y, z, angle, pitch, zoom)` | Posiciona la cámara. |
+| `HEIGHTMAP_GET_CAMERA_POSITION(&x, &y, &z, &angle, &pitch)` | Devuelve la posición de la cámara. |
+| `HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(id)` | Sitúa la cámara sobre el terreno. |
 
 ---
 
@@ -81,18 +61,14 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 
 | Función | Descripción |
 |--------|-------------|
-| `HEIGHTMAP_SET_CONTROL_SENSITIVITY(forward, strafe, look)` | Ajusta la sensibilidad del control. |
-| `HEIGHTMAP_MOVE_FORWARD()` | Avanza la cámara. |
-| `HEIGHTMAP_MOVE_FORWARD(speed)` | Avanza con velocidad específica. |
-| `HEIGHTMAP_MOVE_BACKWARD()` | Retrocede. |
-| `HEIGHTMAP_MOVE_BACKWARD(speed)` | Retrocede con velocidad específica. |
-| `HEIGHTMAP_STRAFE_LEFT()` | Se mueve lateralmente a la izquierda. |
-| `HEIGHTMAP_STRAFE_LEFT(speed)` | Igual, con velocidad. |
-| `HEIGHTMAP_STRAFE_RIGHT()` | Se mueve a la derecha. |
-| `HEIGHTMAP_STRAFE_RIGHT(speed)` | Igual, con velocidad. |
-| `HEIGHTMAP_LOOK_HORIZONTAL(value)` | Rota la cámara en horizontal. |
-| `HEIGHTMAP_LOOK_VERTICAL(value)` | Rota la cámara en vertical. |
-| `HEIGHTMAP_ADJUST_HEIGHT(value)` | Ajusta la altura de la cámara. |
+| `HEIGHTMAP_SET_CONTROL_SENSITIVITY(forward, strafe, look)` | Ajusta sensibilidad de movimiento. |
+| `HEIGHTMAP_MOVE_FORWARD()` / `HEIGHTMAP_MOVE_FORWARD(speed)` | Avanza la cámara. |
+| `HEIGHTMAP_MOVE_BACKWARD()` / `HEIGHTMAP_MOVE_BACKWARD(speed)` | Retrocede la cámara. |
+| `HEIGHTMAP_STRAFE_LEFT()` / `HEIGHTMAP_STRAFE_LEFT(speed)` | Desplaza a la izquierda. |
+| `HEIGHTMAP_STRAFE_RIGHT()` / `HEIGHTMAP_STRAFE_RIGHT(speed)` | Desplaza a la derecha. |
+| `HEIGHTMAP_LOOK_HORIZONTAL(value)` | Gira horizontalmente. |
+| `HEIGHTMAP_LOOK_VERTICAL(value)` | Gira verticalmente. |
+| `HEIGHTMAP_ADJUST_HEIGHT(value)` | Ajusta altura vertical de la cámara. |
 
 ---
 
@@ -100,10 +76,10 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 
 | Función | Descripción |
 |--------|-------------|
-| `HEIGHTMAP_SET_LIGHT(intensity)` | Define la iluminación general del terreno. |
-| `HEIGHTMAP_SET_SKY_COLOR(r, g, b, alpha)` | Color del cielo. |
-| `HEIGHTMAP_SET_SKY_TEXTURE(filename, id)` | Aplica una textura como cielo. |
-| `HEIGHTMAP_GET_TERRAIN_LIGHTING(x, y, z)` | Luz del terreno en esa posición. |
+| `HEIGHTMAP_SET_LIGHT(intensity)` | Ajusta luz ambiental. |
+| `HEIGHTMAP_SET_SKY_COLOR(r, g, b, alpha)` | Define el color del cielo. |
+| `HEIGHTMAP_SET_SKY_TEXTURE(filename, id)` | Asigna una textura al cielo. |
+| `HEIGHTMAP_GET_TERRAIN_LIGHTING(x, y, z)` | Valor de iluminación en posición dada. |
 
 ---
 
@@ -111,52 +87,34 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 
 | Función | Descripción |
 |--------|-------------|
-| `HEIGHTMAP_SET_WATER_LEVEL(level)` | Define la altura del agua. |
-| `HEIGHTMAP_SET_WATER_COLOR(r, g, b, alpha)` | Define el color y transparencia del agua. |
-| `HEIGHTMAP_UPDATE_WATER_TIME()` | Actualiza la animación de las olas. |
-| `HEIGHTMAP_SET_WATER_TEXTURE(filename, id)` | Asigna una textura animada de agua. |
-| `HEIGHTMAP_SET_WAVE_AMPLITUDE(amplitude)` | Ajusta la fuerza de las olas. |
+| `HEIGHTMAP_SET_WATER_LEVEL(level)` | Ajusta la altura del agua. |
+| `HEIGHTMAP_SET_WATER_TEXTURE(filename, id)` | Asocia textura de agua. |
+| `HEIGHTMAP_UPDATE_WATER_TIME()` | Anima el agua (olas). |
+| `HEIGHTMAP_SET_WAVE_AMPLITUDE(amplitude)` | Controla la fuerza de las olas. |
 
 ---
 
-### Detección de Altura y Colisión
+### Colisión y Altura
 
 | Función | Descripción |
 |--------|-------------|
-| `HEIGHTMAP_GET_HEIGHT(id, x, y)` | Obtiene altura del terreno en esas coordenadas. |
-| `HEIGHTMAP_CHECK_TERRAIN_COLLISION(radius)` | Verifica colisión en la posición actual de cámara. |
-| `HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(speed, radius)` | Avanza con detección de colisiones. |
-| `HEIGHTMAP_MOVE_BACKWARD_WITH_COLLISION(speed, radius)` | Retrocede con detección. |
-| `HEIGHTMAP_STRAFE_LEFT_WITH_COLLISION(speed, radius)` | Mueve a la izquierda con colisión. |
-| `HEIGHTMAP_STRAFE_RIGHT_WITH_COLLISION(speed, radius)` | Mueve a la derecha con colisión. |
-| `HEIGHTMAP_CAN_SPRITE_MOVE_TO(x, y, z, radius)` | Verifica si un sprite puede moverse a esa posición. |
-| `HEIGHTMAP_GET_TERRAIN_HEIGHT_AT_SPRITE(id, x, y)` | Altura del terreno bajo un sprite. |
-| `HEIGHTMAP_ADJUST_SPRITE_TO_TERRAIN(id, sprite_id, offset, &result)` | Ajusta sprite a la superficie del terreno. |
+| `HEIGHTMAP_GET_HEIGHT(id, x, y)` | Obtiene altura del terreno en X/Y. |
+| `HEIGHTMAP_CHECK_TERRAIN_COLLISION(radius)` | Verifica colisión desde la cámara. |
+| `HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(speed, radius)` | Avanza con colisión. |
+| `HEIGHTMAP_MOVE_BACKWARD_WITH_COLLISION(speed, radius)` | Retrocede con colisión. |
+| `HEIGHTMAP_STRAFE_LEFT_WITH_COLLISION(speed, radius)` | Izquierda con colisión. |
+| `HEIGHTMAP_STRAFE_RIGHT_WITH_COLLISION(speed, radius)` | Derecha con colisión. |
+| `HEIGHTMAP_CAN_SPRITE_MOVE_TO(x, y, z, radius)` | Verifica si un sprite puede ir a esa posición. |
+| `HEIGHTMAP_GET_TERRAIN_HEIGHT_AT_SPRITE(id, x, y)` | Altura bajo un sprite. |
+| `HEIGHTMAP_ADJUST_SPRITE_TO_TERRAIN(id, sprite_id, offset, &result)` | Ajusta el sprite al terreno. |
 
 ---
 
-### Sprites en el Mundo 3D
+### Sprites en 3D
 
 | Función | Descripción |
 |--------|-------------|
-| `HEIGHTMAP_WORLD_TO_SCREEN(x, y, z, &screen_x, &screen_y)` | Convierte coordenadas del mundo a pantalla. |
-
----
-
-### Billboards
-
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_SET_BILLBOARD(sprite_id)` | Marca un sprite como billboard. |
-| `HEIGHTMAP_UNSET_BILLBOARD(sprite_id)` | Elimina el modo billboard. |
-| `HEIGHTMAP_IS_BILLBOARD(sprite_id)` | Verifica si un sprite es billboard. |
-| `HEIGHTMAP_PROJECT_BILLBOARD(x, y, z, size)` | Proyecta un sprite como billboard. |
-| `HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_X(id, screen_x)` | Convierte X pantalla a mundo. |
-| `HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_Y(id, screen_y)` | Convierte Y pantalla a mundo. |
-| `HEIGHTMAP_ADD_VOXEL_BILLBOARD(x, y, graph_id, scale)` | Añade billboard tipo voxel. |
-| `HEIGHTMAP_REGISTER_BILLBOARD(id, x, y, z, graph)` | Registra un billboard en el sistema. |
-| `HEIGHTMAP_UPDATE_BILLBOARD(id, x, y, z)` | Actualiza posición de billboard. |
-| `HEIGHTMAP_UNREGISTER_BILLBOARD(id)` | Elimina un billboard del sistema. |
+| `HEIGHTMAP_WORLD_TO_SCREEN(x, y, z, &sx, &sy)` | Convierte posición 3D a coordenadas 2D en pantalla. |
 
 ---
 
@@ -164,30 +122,37 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 
 | Función | Descripción |
 |--------|-------------|
-| `HEIGHTMAP_SET_CAMERA_FOLLOW(sprite_id, offset_x, offset_y, offset_z, style)` | Hace que la cámara siga un sprite. |
-| `HEIGHTMAP_UPDATE_CAMERA_FOLLOW(offset_angle, offset_pitch, style)` | Actualiza los parámetros de seguimiento. |
-| `HEIGHTMAP_GET_CAMERA_FOLLOW()` | Devuelve el ID del sprite seguido. |
+| `HEIGHTMAP_SET_CAMERA_FOLLOW(sprite_id, ox, oy, oz, style)` | Hace que la cámara siga a un sprite. |
+| `HEIGHTMAP_UPDATE_CAMERA_FOLLOW(offset_angle, offset_pitch, style)` | Ajusta seguimiento. |
+| `HEIGHTMAP_GET_CAMERA_FOLLOW()` | Obtiene el sprite seguido. |
+
+---
+
+### Billboards
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_X(id, screen_x)` | Convierte coordenada X de pantalla a mundo. |
+| `HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_Y(id, screen_y)` | Convierte coordenada Y de pantalla a mundo. |
+| `HEIGHTMAP_ADD_VOXEL_BILLBOARD(x, y, graph_id, scale)` | Añade un sprite estilo voxel a la escena. |
+| `HEIGHTMAP_REGISTER_BILLBOARD(id, x, y, z, graph)` | Registra billboard en el motor. |
+| `HEIGHTMAP_UPDATE_BILLBOARD(id, x, y, z)` | Actualiza posición de billboard. |
+| `HEIGHTMAP_UNREGISTER_BILLBOARD(id)` | Elimina billboard del motor. |
 
 ---
 
 ## Requisitos
 
-- **BennuGD2**
-- **SDL2**
-- Texturas en formato soportado (ej: PNG)
+- BennuGD2
+- SDL2
+- Texturas en formato PNG (u otros soportados)
 - Heightmaps en formato RAW o PNG
 
 ---
 
 ## Créditos
 
-Desarrollado como módulo adicional para BennuGD2 por la comunidad.
-
----
-
-## Ejemplo básico de uso
-
-Consulta la sección de ejemplo en el archivo fuente para ver un programa completo con control de cámara, renderizado y uso del ratón.
+Desarrollado como módulo experimental para simulación 3D estilo voxelspace en BennuGD2.
 
 ---
 
