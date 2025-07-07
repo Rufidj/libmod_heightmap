@@ -348,3 +348,5 @@ END
 ## Autor
 
 Módulo desarrollado para experimentación 3D en BennuGD2 con motor estilo voxelspace, renderizado por software.
+
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Rufidj/libmod_heightmap)
