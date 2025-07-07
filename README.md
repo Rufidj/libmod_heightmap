@@ -114,4 +114,81 @@ Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (
 | `HEIGHTMAP_SET_WATER_LEVEL(level)` | Define la altura del agua. |
 | `HEIGHTMAP_SET_WATER_COLOR(r, g, b, alpha)` | Define el color y transparencia del agua. |
 | `HEIGHTMAP_UPDATE_WATER_TIME()` | Actualiza la animación de las olas. |
-| `HEIGHTMAP_SET_WATER_TEXTURE(filename, id)` | Asigna una textura animada de agu_
+| `HEIGHTMAP_SET_WATER_TEXTURE(filename, id)` | Asigna una textura animada de agua. |
+| `HEIGHTMAP_SET_WAVE_AMPLITUDE(amplitude)` | Ajusta la fuerza de las olas. |
+
+---
+
+### Detección de Altura y Colisión
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_GET_HEIGHT(id, x, y)` | Obtiene altura del terreno en esas coordenadas. |
+| `HEIGHTMAP_CHECK_TERRAIN_COLLISION(radius)` | Verifica colisión en la posición actual de cámara. |
+| `HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(speed, radius)` | Avanza con detección de colisiones. |
+| `HEIGHTMAP_MOVE_BACKWARD_WITH_COLLISION(speed, radius)` | Retrocede con detección. |
+| `HEIGHTMAP_STRAFE_LEFT_WITH_COLLISION(speed, radius)` | Mueve a la izquierda con colisión. |
+| `HEIGHTMAP_STRAFE_RIGHT_WITH_COLLISION(speed, radius)` | Mueve a la derecha con colisión. |
+| `HEIGHTMAP_CAN_SPRITE_MOVE_TO(x, y, z, radius)` | Verifica si un sprite puede moverse a esa posición. |
+| `HEIGHTMAP_GET_TERRAIN_HEIGHT_AT_SPRITE(id, x, y)` | Altura del terreno bajo un sprite. |
+| `HEIGHTMAP_ADJUST_SPRITE_TO_TERRAIN(id, sprite_id, offset, &result)` | Ajusta sprite a la superficie del terreno. |
+
+---
+
+### Sprites en el Mundo 3D
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_WORLD_TO_SCREEN(x, y, z, &screen_x, &screen_y)` | Convierte coordenadas del mundo a pantalla. |
+
+---
+
+### Billboards
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_SET_BILLBOARD(sprite_id)` | Marca un sprite como billboard. |
+| `HEIGHTMAP_UNSET_BILLBOARD(sprite_id)` | Elimina el modo billboard. |
+| `HEIGHTMAP_IS_BILLBOARD(sprite_id)` | Verifica si un sprite es billboard. |
+| `HEIGHTMAP_PROJECT_BILLBOARD(x, y, z, size)` | Proyecta un sprite como billboard. |
+| `HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_X(id, screen_x)` | Convierte X pantalla a mundo. |
+| `HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_Y(id, screen_y)` | Convierte Y pantalla a mundo. |
+| `HEIGHTMAP_ADD_VOXEL_BILLBOARD(x, y, graph_id, scale)` | Añade billboard tipo voxel. |
+| `HEIGHTMAP_REGISTER_BILLBOARD(id, x, y, z, graph)` | Registra un billboard en el sistema. |
+| `HEIGHTMAP_UPDATE_BILLBOARD(id, x, y, z)` | Actualiza posición de billboard. |
+| `HEIGHTMAP_UNREGISTER_BILLBOARD(id)` | Elimina un billboard del sistema. |
+
+---
+
+### Seguimiento de Cámara
+
+| Función | Descripción |
+|--------|-------------|
+| `HEIGHTMAP_SET_CAMERA_FOLLOW(sprite_id, offset_x, offset_y, offset_z, style)` | Hace que la cámara siga un sprite. |
+| `HEIGHTMAP_UPDATE_CAMERA_FOLLOW(offset_angle, offset_pitch, style)` | Actualiza los parámetros de seguimiento. |
+| `HEIGHTMAP_GET_CAMERA_FOLLOW()` | Devuelve el ID del sprite seguido. |
+
+---
+
+## Requisitos
+
+- **BennuGD2**
+- **SDL2**
+- Texturas en formato soportado (ej: PNG)
+- Heightmaps en formato RAW o PNG
+
+---
+
+## Créditos
+
+Desarrollado como módulo adicional para BennuGD2 por la comunidad.
+
+---
+
+## Ejemplo básico de uso
+
+Consulta la sección de ejemplo en el archivo fuente para ver un programa completo con control de cámara, renderizado y uso del ratón.
+
+---
+
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Rufidj/libmod_heightmap)
