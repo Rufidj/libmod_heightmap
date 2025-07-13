@@ -66,6 +66,11 @@ extern int64_t libmod_heightmap_set_bridge_height(INSTANCE *my, int64_t *params)
 static uint32_t sample_sky_texture(float screen_x, float screen_y, float camera_angle, float camera_pitch, float time);  
 static void render_skybox(float camera_angle, float camera_pitch, float time, int quality_step);
 
+// Declaraciones forward para efectos atmosféricos  
+static void render_atmospheric_particles(float time, int quality_step, HEIGHTMAP *hm); 
+static float calculate_atmospheric_lighting(float distance, float height);  
+static float calculate_volumetric_fog(float world_z, float distance);
+
 
 /* Funciones internas */  
 extern float get_height_at(HEIGHTMAP *hm, float x, float y);  
