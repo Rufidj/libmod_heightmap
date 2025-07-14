@@ -38,7 +38,6 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC( "HEIGHTMAP_SET_RENDER_DISTANCE", "I", TYPE_INT, libmod_heightmap_set_render_distance ),  
     FUNC( "HEIGHTMAP_SET_CHUNK_CONFIG", "II", TYPE_INT, libmod_heightmap_set_chunk_config ), 
     FUNC("HEIGHTMAP_SET_FOG_COLOR", "IIII", TYPE_INT, libmod_heightmap_set_fog_color),
-    FUNC("HEIGHTMAP_SET_ATMOSPHERE", "IIIII", TYPE_INT, libmod_heightmap_set_atmosphere),  
 
 
     // Nuevas funciones de control (solo las que están implementadas)
@@ -85,7 +84,7 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC( "HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_X" , "IF"          , TYPE_FLOAT    , libmod_heightmap_convert_screen_to_world_x ),  
     FUNC( "HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_Y" , "IF"          , TYPE_FLOAT    , libmod_heightmap_convert_screen_to_world_y ),
     FUNC( "HEIGHTMAP_ADD_VOXEL_BILLBOARD", "FFIIF", TYPE_INT, libmod_heightmap_add_voxel_billboard ),
-    FUNC( "HEIGHTMAP_REGISTER_BILLBOARD", "IFFFIF", TYPE_INT, libmod_heightmap_register_billboard),
+    FUNC( "HEIGHTMAP_REGISTER_BILLBOARD", "IFFFII", TYPE_INT, libmod_heightmap_register_billboard),
     FUNC( "HEIGHTMAP_UPDATE_BILLBOARD", "IFFF", TYPE_INT, libmod_heightmap_update_billboard),  
     FUNC( "HEIGHTMAP_UNREGISTER_BILLBOARD", "I", TYPE_INT, libmod_heightmap_unregister_billboard),  
     FUNC(0, 0, 0, 0)};

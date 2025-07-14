@@ -40,12 +40,13 @@ enum {
 #define MAX_STATIC_BILLBOARDS 500  
 #define MAX_DYNAMIC_BILLBOARDS 500  
   
-typedef struct {  
-    int active;  
-    float world_x, world_y, world_z;  
-    int graph_id;  
-    int64_t process_id;  // Añadir este campo  
-    float scale;
+typedef struct {    
+    int active;    
+    float world_x, world_y, world_z;    
+    int graph_id;    
+    int64_t process_id;  
+    float scale;  
+    int billboard_type;  // NUEVO CAMPO  
 } VOXEL_BILLBOARD;
 
 typedef struct {  
@@ -88,6 +89,11 @@ static float *fog_table = NULL;
 static int fog_table_size = 0;      
 static int fog_table_initialized = 0;     
 
+#define BILLBOARD_TYPE_STATIC     0  
+#define BILLBOARD_TYPE_PLAYER     1  
+#define BILLBOARD_TYPE_ENEMY      2  
+#define BILLBOARD_TYPE_PROJECTILE 3
+
 #define C_BILLBOARD 999  
   
 // Declaración forward corregida  
@@ -106,9 +112,9 @@ static float calculated_bridge_height = -1.0f;
 #define RGBA32_A(color) ((color >> 24) & 0xFF)
 
 // Variables globales para configuración de renderizado
-static float max_render_distance = 800.0f;
-static int chunk_size = 96;
-static int chunk_radius = 4;
+static float max_render_distance = 5000.0f;
+static int chunk_size = 512;
+static int chunk_radius = 15;
 
 // Variables globales para el color del cielo
 static Uint8 sky_color_r = 135; // Azul cielo por defecto
@@ -137,33 +143,6 @@ static float camera_follow_offset_x = 0.0f;
 static float camera_follow_offset_y = 0.0f;
 static float camera_follow_offset_z = 10.0f;
 static float camera_follow_speed = 5.0f;
-
-// Variables para efectos atmosféricos avanzados  
-static float atmosphere_density = 1.0f;  
-static Uint8 sun_color_r = 255, sun_color_g = 240, sun_color_b = 200;  
-static float sun_angle = 45.0f;  
-static float rayleigh_scattering = 0.1f;  
-  
-// Variables para partículas atmosféricas  
-static float particle_density = 0.0f;  
-static Uint8 particle_type = 0; // 0=lluvia, 1=nieve, 2=ceniza  
-static float wind_x = 0.0f, wind_y = 0.0f;  
-static int max_particles = 600;  
-  
-// Variables para clima dinámico  
-static int weather_type = 0; // 0=despejado, 1=nublado, 2=tormenta  
-static float cloud_coverage = 0.0f;  
-static float rain_intensity = 0.0f;  
-static int lightning_enabled = 0;  
-static float lightning_timer = 0.0f;  
-  
-// Variables para niebla volumétrica  
-static float fog_ground_level = 0.0f;  
-static float fog_ceiling_level = 100.0f;  
-static float fog_density_curve = 1.0f;  
-static int fog_animation_enabled = 0;  
-static float fog_wind_speed = 0.1f;
-
 
 
 // Declaración por si no está en el header
@@ -293,6 +272,10 @@ int64_t libmod_heightmap_load(INSTANCE *my, int64_t *params)
     heightmaps[slot].height = graph->height;
     heightmaps[slot].height_cache = NULL;
     heightmaps[slot].cache_valid = 0;
+// DEBUG CORREGIDO  
+printf("DEBUG HEIGHTMAP: Cargado heightmap ID %ld\\n", heightmaps[slot].id);  
+printf("DEBUG HEIGHTMAP: Dimensiones: %ld x %ld\\n", heightmaps[slot].width, heightmaps[slot].height);  
+printf("DEBUG HEIGHTMAP: Archivo: %s\\n", filename);
 
     build_height_cache(&heightmaps[slot]);
 
@@ -396,29 +379,47 @@ int64_t libmod_heightmap_get_height(INSTANCE *my, int64_t *params)
 }
 
 float get_height_at(HEIGHTMAP *hm, float x, float y)
+
 {
+
     if (!hm->cache_valid)
+
         return 0;
+
 
     int ix = (int)x;
+
     int iy = (int)y;
 
+
     if (ix < 0 || ix >= hm->width - 1 || iy < 0 || iy >= hm->height - 1)
+
         return 0;
 
+
     float fx = x - ix;
+
     float fy = y - iy;
 
+
     float h00 = hm->height_cache[iy * hm->width + ix];
+
     float h10 = hm->height_cache[iy * hm->width + (ix + 1)];
+
     float h01 = hm->height_cache[(iy + 1) * hm->width + ix];
+
     float h11 = hm->height_cache[(iy + 1) * hm->width + (ix + 1)];
 
+
     float h0 = h00 + fx * (h10 - h00);
+
     float h1 = h01 + fx * (h11 - h01);
+
     float h = h0 + fy * (h1 - h0);
 
+
     return h;
+
 }
 
 /* Configurar cámara 3D - Original */
@@ -565,6 +566,100 @@ static void render_skybox(float camera_angle, float camera_pitch, float time, in
     }  
 }
 
+static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *billboard_graph, float terrain_fov) {  
+    BILLBOARD_PROJECTION result = {0};  
+      
+    // Cálculo de distancia 3D real  
+    float dx = bb->world_x - camera.x;  
+    float dy = bb->world_y - camera.y;  
+    float dz = bb->world_z - camera.z;  
+    float distance = sqrtf(dx * dx + dy * dy + dz * dz);  
+      
+    if (distance > max_render_distance || distance < 1.0f) {  
+        result.valid = 0;  
+        return result;  
+    }  
+      
+    // Cálculo de ángulo y proyección horizontal  
+    float angle_to_billboard = atan2f(dy, dx);  
+    float angle_diff = angle_to_billboard - camera.angle;  
+      
+    // Normalizar ángulo  
+    while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;  
+    while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;  
+      
+    float billboard_fov_half = terrain_fov * 0.8f;  
+    if (fabs(angle_diff) > billboard_fov_half) {  
+        result.valid = 0;  
+        return result;  
+    }  
+      
+    // Proyección a coordenadas de pantalla  
+    float pixels_per_radian = 320.0f / terrain_fov;  
+    float screen_x_float = 160.0f + (angle_diff * pixels_per_radian);  
+      
+    if (screen_x_float < 0.0f || screen_x_float >= 320.0f) {  
+        result.valid = 0;  
+        return result;  
+    }  
+      
+    result.screen_x = (int)screen_x_float;  
+      
+    // Cálculo de altura en pantalla  
+    float height_on_screen = 120.0f + (camera.z - bb->world_z) / distance * 300.0f;  
+    height_on_screen += camera.pitch * 30.0f;  
+      
+    if (height_on_screen < 0.0f || height_on_screen >= 240.0f) {  
+        result.valid = 0;  
+        return result;  
+    }  
+      
+    result.screen_y = (int)height_on_screen;  
+      
+    // Escalado diferenciado por tipo de billboard  
+    float base_scale_factor;  
+    float max_scale, min_scale;  
+      
+    switch(bb->billboard_type) {  
+        case BILLBOARD_TYPE_PLAYER:  // Nave protagonista  
+            base_scale_factor = 10.0f;  // Más conservador para objetos cercanos  
+            max_scale = 1.5f;  
+            min_scale = 0.3f;  
+            break;  
+        case BILLBOARD_TYPE_ENEMY:   // Enemigos  
+            base_scale_factor = 35.0f;  
+            max_scale = 2.5f;  
+            min_scale = 0.2f;  
+            break;  
+        case BILLBOARD_TYPE_PROJECTILE:  // Proyectiles  
+            base_scale_factor = 25.0f;  
+            max_scale = 2.0f;  
+            min_scale = 0.1f;  
+            break;  
+        default:  // Billboards estáticos y otros  
+            base_scale_factor = 30.0f;  
+            max_scale = 2.0f;  
+            min_scale = 0.2f;  
+    }  
+      
+    result.distance_scale = base_scale_factor / distance;  
+    if (result.distance_scale > max_scale) result.distance_scale = max_scale;  
+    if (result.distance_scale < min_scale) result.distance_scale = min_scale;  
+      
+    // Cálculo de tamaño escalado  
+    result.scaled_width = (int)(result.distance_scale * billboard_graph->width);  
+    result.scaled_height = (int)(result.distance_scale * billboard_graph->height);  
+      
+    // Cálculo de niebla  
+    int fog_index = (int)distance;  
+    if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;  
+    float fog = fog_table[fog_index];  
+    result.alpha = (Uint8)(255 * fog);  
+      
+    result.valid = 1;  
+    return result;  
+}
+
 
 int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {    
     int64_t hm_id = params[0];    
@@ -649,8 +744,6 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
         fog_table_initialized = 1;    
     }    
      
-     // NUEVO: Renderizar partículas atmosféricas  
-    render_atmospheric_particles(time, quality_step, hm);
     for (int screen_x = 0; screen_x < 320; screen_x += quality_step) {    
         float angle = base_angle + screen_x * angle_step;    
             
@@ -781,29 +874,6 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
                         terrain_b = (Uint8)(base);    
                     }    
                         
-                    // MODIFICADO: Aplicar iluminación atmosférica avanzada  
-                    float atmospheric_light = calculate_atmospheric_lighting(distance, render_height);  
-                    float volumetric_fog = (fog_animation_enabled) ?   
-                        calculate_volumetric_fog(render_height, distance) : fog;  
-  
-                    float total_light = atmospheric_light * volumetric_fog;  
-                    float fog_blend = (1.0f - volumetric_fog) * fog_intensity;  
-  
-                    // Aplicar color de sol para iluminación atmosférica  
-                    if (atmosphere_density > 1.0f) {  
-                        float sun_influence = (atmosphere_density - 1.0f) * 0.5f;  
-                        terrain_r = (Uint8)(terrain_r * total_light +   
-                                           (fog_color_r * fog_blend + sun_color_r * sun_influence) * 0.5f);  
-                        terrain_g = (Uint8)(terrain_g * total_light +   
-                                           (fog_color_g * fog_blend + sun_color_g * sun_influence) * 0.5f);  
-                        terrain_b = (Uint8)(terrain_b * total_light +   
-                                           (fog_color_b * fog_blend + sun_color_b * sun_influence) * 0.5f);  
-                    } else {  
-                        terrain_r = (Uint8)(terrain_r * total_light + fog_color_r * fog_blend);  
-                        terrain_g = (Uint8)(terrain_g * total_light + fog_color_g * fog_blend);  
-                        terrain_b = (Uint8)(terrain_b * total_light + fog_color_b * fog_blend);  
-                    }  
-                        
                     uint32_t terrain_color = SDL_MapRGB(gPixelFormat, terrain_r, terrain_g, terrain_b);    
                     for (int y = screen_y; y < lowest_y; y++) {    
                         gr_put_pixel(render_buffer, screen_x, y, terrain_color);    
@@ -822,134 +892,58 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
     }    
         
         
-// RENDERIZADO DE BILLBOARDS SEPARADOS  
 // Renderizar billboards estáticos  
-for (int i = 0; i < static_billboard_count; i++) {    
-    if (!static_billboards[i].active) continue;    
-        
-    VOXEL_BILLBOARD *bb = &static_billboards[i];    
-        
-    float dx = bb->world_x - camera.x;    
-    float dy = bb->world_y - camera.y;    
-    float distance = sqrtf(dx * dx + dy * dy);    
-        
-    if (distance > max_render_distance || distance < 1.0f) continue;    
-        
-    float angle_to_billboard = atan2f(dy, dx);    
-    float angle_diff = angle_to_billboard - camera.angle;    
-        
-    // Normalizar ángulo    
-    while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;    
-    while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;    
-        
-    float billboard_fov_half = terrain_fov * 0.8f;    
-    if (fabs(angle_diff) > billboard_fov_half) continue;    
-        
-    float pixels_per_radian = 320.0f / terrain_fov;    
-    float screen_x_float = 160.0f + (angle_diff * pixels_per_radian);    
-        
-    if (screen_x_float < 0.0f || screen_x_float >= 320.0f) continue;    
-        
-    int screen_x = (int)screen_x_float;    
-        
-    float height_on_screen = 120.0f + (camera.z - bb->world_z) / distance * 200.0f;    
-    height_on_screen += camera.pitch * 30.0f;    
-        
-    if (height_on_screen < 0.0f || height_on_screen >= 240.0f) continue;    
-        
-    int screen_y = (int)height_on_screen;    
-        
-    // Verificar depth buffer    
-    int depth_index = screen_y * 320 + screen_x;    
-    if (depth_index >= 0 && depth_index < 320 * 240) {    
-        if (distance >= depth_buffer[depth_index]) {    
-            continue;    
-        }    
-    }    
-        
-    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);    
-    if (billboard_graph) {    
-        float scale = 30.0f / distance;    
-        if (scale > 2.0f) scale = 2.0f;    
-        if (scale < 0.2f) scale = 0.2f;    
-            
-        int fog_index = (int)distance;    
-        if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;    
-        float fog = fog_table[fog_index];    
-            
-        Uint8 alpha = (Uint8)(255 * fog);    
-            
-        gr_blit(render_buffer, NULL, screen_x, screen_y, 0, 0,    
-               (int)(scale * 100), (int)(scale * 100),    
-               billboard_graph->width/2, billboard_graph->height/2,    
-               billboard_graph, NULL, 255, 255, 255, alpha, 0, NULL);    
-    }    
-}  
+for (int i = 0; i < static_billboard_count; i++) {  
+    if (!static_billboards[i].active) continue;  
+      
+    VOXEL_BILLBOARD *bb = &static_billboards[i];  
+    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);  
+      
+    if (!billboard_graph) continue;  
+      
+    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);  
+    if (!proj.valid) continue;  
+      
+    // Verificar depth buffer  
+    int depth_index = proj.screen_y * 320 + proj.screen_x;  
+    if (depth_index >= 0 && depth_index < 320 * 240) {  
+        if (proj.distance_scale >= depth_buffer[depth_index]) continue;  
+    }  
+      
+    // Renderizar con proyección calculada  
+    gr_blit(render_buffer, NULL,   
+           proj.screen_x - proj.scaled_width/2,   
+           proj.screen_y - proj.scaled_height/2,   
+           0, 0, proj.scaled_width, proj.scaled_height,  
+           billboard_graph->width/2, billboard_graph->height/2,  
+           billboard_graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
+}
   
 // Renderizar billboards dinámicos  
-for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {    
-    if (!dynamic_billboards[i].active) continue;    
-        
-    VOXEL_BILLBOARD *bb = &dynamic_billboards[i];    
-        
-    float dx = bb->world_x - camera.x;    
-    float dy = bb->world_y - camera.y;    
-    float distance = sqrtf(dx * dx + dy * dy);    
-        
-    if (distance > max_render_distance || distance < 1.0f) continue;    
-        
-    float angle_to_billboard = atan2f(dy, dx);    
-    float angle_diff = angle_to_billboard - camera.angle;    
-        
-    // Normalizar ángulo    
-    while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;    
-    while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;    
-        
-    float billboard_fov_half = terrain_fov * 0.8f;    
-    if (fabs(angle_diff) > billboard_fov_half) continue;    
-        
-    float pixels_per_radian = 320.0f / terrain_fov;    
-    float screen_x_float = 160.0f + (angle_diff * pixels_per_radian);    
-        
-    if (screen_x_float < 0.0f || screen_x_float >= 320.0f) continue;    
-        
-    int screen_x = (int)screen_x_float;    
-        
-    float height_on_screen = 120.0f + (camera.z - bb->world_z) / distance * 200.0f;    
-    height_on_screen += camera.pitch * 30.0f;    
-        
-    if (height_on_screen < 0.0f || height_on_screen >= 240.0f) continue;    
-        
-    int screen_y = (int)height_on_screen;    
-        
-    // Verificar depth buffer    
-    int depth_index = screen_y * 320 + screen_x;    
-    if (depth_index >= 0 && depth_index < 320 * 240) {    
-        if (distance >= depth_buffer[depth_index]) {    
-            continue;    
-        }    
-    }    
-        
-   GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);    
-if (billboard_graph) {    
-    float distance_scale = 30.0f / distance; // Escala base por distancia  
-    if (distance_scale > 2.0f) distance_scale = 2.0f;    
-    if (distance_scale < 0.2f) distance_scale = 0.2f;    
+for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {  
+    if (!dynamic_billboards[i].active) continue;  
       
-    // MULTIPLICAR por la escala personalizada del billboard  
-    float final_scale = distance_scale * bb->scale;  
-        
-    int fog_index = (int)distance;    
-    if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;    
-    float fog = fog_table[fog_index];    
-        
-    Uint8 alpha = (Uint8)(255 * fog);    
-        
-    gr_blit(render_buffer, NULL, screen_x, screen_y, 0, 0,    
-           (int)(final_scale * 100), (int)(final_scale * 100),  // USAR final_scale  
-           billboard_graph->width/2, billboard_graph->height/2,    
-           billboard_graph, NULL, 255, 255, 255, alpha, 0, NULL);    
-    }
+    VOXEL_BILLBOARD *bb = &dynamic_billboards[i];  
+    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);  
+      
+    if (!billboard_graph) continue;  
+      
+    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);  
+    if (!proj.valid) continue;  
+      
+    // Verificar depth buffer  
+    int depth_index = proj.screen_y * 320 + proj.screen_x;  
+    if (depth_index >= 0 && depth_index < 320 * 240) {  
+        if (proj.distance_scale >= depth_buffer[depth_index]) continue;  
+    }  
+      
+    // Renderizar con proyección calculada  
+    gr_blit(render_buffer, NULL,   
+           proj.screen_x - proj.scaled_width/2,   
+           proj.screen_y - proj.scaled_height/2,   
+           0, 0, proj.scaled_width, proj.scaled_height,  
+           billboard_graph->width/2, billboard_graph->height/2,  
+           billboard_graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
 }
       
     return render_buffer->code;  
@@ -957,79 +951,137 @@ if (billboard_graph) {
                                
 /* Funciones auxiliares */
 void build_height_cache(HEIGHTMAP *hm)
+
 {
+
     if (!hm->heightmap)
+
         return;
+
 
     if (hm->height_cache)
+
     {
+
         free(hm->height_cache);
+
         hm->height_cache = NULL;
+
     }
+
 
     hm->height_cache = malloc(hm->width * hm->height * sizeof(float));
+
     if (!hm->height_cache)
+
     {
+
         hm->cache_valid = 0;
+
         return;
+
     }
+
 
     for (int y = 0; y < hm->height; y++)
+
     {
+
         for (int x = 0; x < hm->width; x++)
+
         {
+
             uint32_t pixel = gr_get_pixel(hm->heightmap, x, y);
+
             float height = (float)((pixel >> 16) & 0xFF);
+
             hm->height_cache[y * hm->width + x] = height;
+
         }
+
     }
 
+
     hm->cache_valid = 1;
+
 }
+
 
 /* Devuelve un color RGB interpolado usando funciones SDL */
 uint32_t get_texture_color_bilinear(GRAPH *texture, float x, float y)
+
 {
+
     if (!texture)
+
         return 0;
+
 
     int ix = (int)x;
+
     int iy = (int)y;
 
+
     if (ix < 0 || iy < 0 || ix >= texture->width - 1 || iy >= texture->height - 1)
+
         return 0;
 
+
     float fx = x - ix;
+
     float fy = y - iy;
 
+
     uint32_t c00 = gr_get_pixel(texture, ix, iy);
+
     uint32_t c10 = gr_get_pixel(texture, ix + 1, iy);
+
     uint32_t c01 = gr_get_pixel(texture, ix, iy + 1);
+
     uint32_t c11 = gr_get_pixel(texture, ix + 1, iy + 1);
 
+
     // Extraer componentes usando SDL_GetRGB
+
     Uint8 r00, g00, b00, r10, g10, b10, r01, g01, b01, r11, g11, b11;
 
+
     SDL_GetRGB(c00, gPixelFormat, &r00, &g00, &b00);
+
     SDL_GetRGB(c10, gPixelFormat, &r10, &g10, &b10);
+
     SDL_GetRGB(c01, gPixelFormat, &r01, &g01, &b01);
+
     SDL_GetRGB(c11, gPixelFormat, &r11, &g11, &b11);
 
+
     // Interpolación bilineal
+
     float r0 = r00 + fx * (r10 - r00);
+
     float r1 = r01 + fx * (r11 - r01);
+
     float rf = r0 + fy * (r1 - r0);
 
+
     float g0 = g00 + fx * (g10 - g00);
+
     float g1 = g01 + fx * (g11 - g01);
+
     float gf = g0 + fy * (g1 - g0);
 
+
     float b0 = b00 + fx * (b10 - b00);
+
     float b1 = b01 + fx * (b11 - b01);
+
     float bf = b0 + fy * (b1 - b0);
 
+
     // Reconstruir usando SDL_MapRGB
+
     return SDL_MapRGB(gPixelFormat, (Uint8)rf, (Uint8)gf, (Uint8)bf);
+
 }
 
 /* Función para mantener cámara sobre el terreno */
@@ -1075,49 +1127,85 @@ void clamp_camera_to_bounds(HEIGHTMAP *hm)
 
 /* Inicializar cámara en posición válida del terreno */
 int64_t libmod_heightmap_init_camera_on_terrain(INSTANCE *my, int64_t *params)
+
 {
+
     int64_t hm_id = params[0];
 
+
     HEIGHTMAP *hm = NULL;
+
     for (int i = 0; i < MAX_HEIGHTMAPS; i++)
+
     {
+
         if (heightmaps[i].id == hm_id)
+
         {
+
             hm = &heightmaps[i];
+
             break;
+
         }
+
     }
 
+
     if (!hm || !hm->cache_valid)
+
         return 0;
 
+
     // Colocar en el centro del mapa con margen de seguridad
+
     float margin = 10.0f;
+
     float x = hm->width / 2.0f;
+
     float y = hm->height / 2.0f;
 
+
     if (x < margin)
+
         x = margin;
+
     if (x >= hm->width - margin)
+
         x = hm->width - margin - 1;
+
     if (y < margin)
+
         y = margin;
+
     if (y >= hm->height - margin)
+
         y = hm->height - margin - 1;
 
+
     camera.x = x;
+
     camera.y = y;
 
+
     // Obtener altura del terreno y situar cámara justo encima
+
     float terrain_height = get_height_at(hm, camera.x, camera.y);
+
     camera.z = terrain_height + 10.0f;
 
+
     // Ángulos iniciales
+
     camera.angle = 0.0f;
+
     camera.pitch = 0.0f;
+
     camera.fov = DEFAULT_FOV;
 
+
     return 1;
+
 }
 
 /* Configurar sensibilidad de controles */
@@ -1701,38 +1789,72 @@ int64_t libmod_heightmap_get_terrain_lighting(INSTANCE *my, int64_t *params)
 
 /* Asignar sprite para que la cámara lo siga */
 int64_t libmod_heightmap_update_camera_follow(INSTANCE *my, int64_t *params)  
+
 {  
+
     int64_t hm_id = params[0];  
+
     int64_t sprite_x = params[1];  
+
     int64_t sprite_y = params[2];  
+
     int64_t sprite_z = params[3];  
+
   
+
     if (camera_follow_sprite_id == 0)  
+
         return 0;  
+
   
+
     // NO dividir por 10.0f - usar coordenadas directas del sprite  
+
     float world_x = (float)sprite_x;  
+
     float world_y = (float)sprite_y;  
+
     float world_z = (float)sprite_z;  
+
   
+
     // Los offsets también deben estar en la misma escala  
+
   camera.x = world_x + camera_follow_offset_x;  // Sin multiplicar por 10  
+
 camera.y = world_y + camera_follow_offset_y;  // Sin multiplicar por 10    
+
 camera.z = world_z + camera_follow_offset_z;  // Sin multiplicar por 10
+
   
+
     // Calcular ángulo para que la cámara mire hacia la nave  
+
     float dx = world_x - camera.x;  
+
     float dy = world_y - camera.y;  
+
       
+
     if (dx != 0.0f || dy != 0.0f) {  
+
         camera.angle = atan2f(dy, dx);  
+
     }  
+
   
+
     // Pitch para tercera persona  
+
     camera.pitch = -0.3f;  
+
   
+
     return 1;  
+
 }
+
+
 /* Obtener ID del sprite que sigue la cámara */
 int64_t libmod_heightmap_get_camera_follow(INSTANCE *my, int64_t *params)
 {
@@ -1769,11 +1891,13 @@ int64_t libmod_heightmap_set_sky_color(INSTANCE *my, int64_t *params)
 // Nueva función para configurar distancia de dibujado
 int64_t libmod_heightmap_set_render_distance(INSTANCE *my, int64_t *params)
 {
+    float requested = (float)params[0];  // Añadir esta línea  
     max_render_distance = (float)params[0];
     if (max_render_distance < 100.0f)
         max_render_distance = 100.0f;
     if (max_render_distance > 2000.0f)
         max_render_distance = 2000.0f;
+     printf("DEBUG RENDER: Solicitado: %.1f, Aplicado: %.1f\\n", requested, max_render_distance);
     return 1;
 }
 
@@ -2025,46 +2149,62 @@ int64_t libmod_heightmap_water_texture(INSTANCE *my, int64_t *params) {
     return 0;  
 }
    
-int64_t libmod_heightmap_register_billboard(INSTANCE *my, int64_t *params) {    
-    int64_t process_id = params[0];    
-    float world_x = *(float*)&params[1];    
-    float world_y = *(float*)&params[2];    
-    float world_z = *(float*)&params[3];    
-    int64_t graph_id = params[4];    
-    float scale = *(float*)&params[5];  // NUEVO PARÁMETRO  
-        
+int64_t libmod_heightmap_register_billboard(INSTANCE *my, int64_t *params) {  
+    int64_t process_id = params[0];  
+    float world_x = *(float*)&params[1];  
+    float world_y = *(float*)&params[2];  
+    float world_z = *(float*)&params[3];  
+    int64_t graph_id = params[4];  
+    int64_t billboard_type = params[5];  // NUEVO: tipo de billboard  
+      
     // Buscar en billboards dinámicos  
-    for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {    
-        if (!dynamic_billboards[i].active) {    
-            dynamic_billboards[i].active = 1;    
-            dynamic_billboards[i].process_id = process_id;    
-            dynamic_billboards[i].world_x = world_x;    
-            dynamic_billboards[i].world_y = world_y;    
-            dynamic_billboards[i].world_z = world_z;    
-            dynamic_billboards[i].graph_id = graph_id;    
-            dynamic_billboards[i].scale = scale;  // USAR EL PARÁMETRO  
+    for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {  
+        if (!dynamic_billboards[i].active) {  
+            dynamic_billboards[i].active = 1;  
+            dynamic_billboards[i].process_id = process_id;  
+            dynamic_billboards[i].world_x = world_x;  
+            dynamic_billboards[i].world_y = world_y;  
+            dynamic_billboards[i].world_z = world_z;  
+            dynamic_billboards[i].graph_id = graph_id;  
+            dynamic_billboards[i].billboard_type = billboard_type;  // Almacenar tipo  
             return i + MAX_STATIC_BILLBOARDS;  
-        }    
-    }    
-    return -1;    
+        }  
+    }  
+    return -1;  
 }
 
 int64_t libmod_heightmap_update_billboard(INSTANCE *my, int64_t *params) {    
+
     int64_t process_id = params[0];    
+
     float world_x = *(float*)&params[1];    
+
     float world_y = *(float*)&params[2];    
+
     float world_z = *(float*)&params[3];    
+
         
+
     // Buscar en billboards dinámicos  
+
     for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {    
+
         if (dynamic_billboards[i].active && dynamic_billboards[i].process_id == process_id) {    
+
             dynamic_billboards[i].world_x = world_x;    
+
             dynamic_billboards[i].world_y = world_y;    
+
             dynamic_billboards[i].world_z = world_z;    
+
             return 1;  
+
         }    
+
     }    
+
     return 0;  
+
 }
 
 int64_t libmod_heightmap_unregister_billboard(INSTANCE *my, int64_t *params) {      
@@ -2091,19 +2231,33 @@ int64_t libmod_heightmap_set_wave_amplitude(INSTANCE *my, int64_t *params)
 
 
 int64_t libmod_heightmap_set_camera_follow(INSTANCE *my, int64_t *params)  
+
 {  
+
     camera_follow_sprite_id = params[0]; // ID del sprite a seguir (0 = desactivar)  
+
   
+
     if (params[1] != -1)  
+
         camera_follow_offset_x = (float)params[1] / 10.0f;  
+
     if (params[2] != -1)  
+
         camera_follow_offset_y = (float)params[2] / 10.0f;  
+
     if (params[3] != -1)  
+
         camera_follow_offset_z = (float)params[3] / 10.0f;  
+
     if (params[4] != -1)  
+
         camera_follow_speed = (float)params[4];  
+
   
+
     return 1;  
+
 }
 
 int64_t libmod_heightmap_set_fog_color(INSTANCE *my, int64_t *params)  
@@ -2115,163 +2269,5 @@ int64_t libmod_heightmap_set_fog_color(INSTANCE *my, int64_t *params)
     return 1;  
 }
 
-int64_t libmod_heightmap_set_atmosphere(INSTANCE *my, int64_t *params)  
-{  
-    int effect_type = params[0]; // Tipo de efecto  
-    float intensity = (float)params[1] / 1000.0f;  
-    Uint8 r = (Uint8)params[2];  
-    Uint8 g = (Uint8)params[3];   
-    Uint8 b = (Uint8)params[4];  
-      
-    switch(effect_type) {  
-        case 0: // Niebla colorizada (ya implementado)  
-            fog_intensity = intensity;  
-            fog_color_r = r; fog_color_g = g; fog_color_b = b;  
-            break;  
-              
-        case 1: // Partículas atmosféricas  
-            particle_density = intensity;  
-            particle_type = r;  
-            wind_x = (float)g / 100.0f;  
-            wind_y = (float)b / 100.0f;  
-            max_particles = (int)(particle_density * 200.0f);  
-            break;  
-              
-        case 2: // Iluminación atmosférica avanzada  
-            atmosphere_density = intensity;  
-            sun_color_r = r; sun_color_g = g; sun_color_b = b;  
-            rayleigh_scattering = intensity * 0.2f;  
-            break;  
-              
-        case 3: // Sistema de clima  
-            weather_type = r;  
-            cloud_coverage = intensity;  
-            rain_intensity = (float)g / 100.0f;  
-            lightning_enabled = b;  
-            break;  
-              
-        case 4: // Niebla volumétrica por capas  
-            fog_ground_level = (float)r;  
-            fog_ceiling_level = (float)g;  
-            fog_density_curve = intensity;  
-            fog_animation_enabled = b;  
-            break;  
-    }  
-    return 1;  
-}
 
-// Efectos atmosfericos
-static void render_atmospheric_particles(float time, int quality_step, HEIGHTMAP *hm) {    
-    if (!fog_table_initialized || !hm) return;    
-      
-    // Verificar que particle_density sea mayor que 0 localmente  
-    if (particle_density <= 0.0f) {  
-        // Si particle_density es 0, usar un valor fijo para testing  
-        static float local_density = 0.8f;  
-        if (local_density <= 0.0f) return;  
-    }  
-        
-    // Usar valores completamente fijos y locales  
-    static const int LOCAL_MAX_PARTICLES = 500;  
-    static const float LOCAL_AREA_SIZE = 600.0f;  
-      
-    for (int i = 0; i < LOCAL_MAX_PARTICLES; i++) {    
-        // Generación COMPLETAMENTE determinística sin variables externas  
-        float seed_x = (float)(i * 73); // Números primos para mejor distribución  
-        float seed_y = (float)(i * 97);  
-          
-        // Crear offsets usando solo constantes locales  
-        float offset_x = fmod(seed_x, LOCAL_AREA_SIZE) - LOCAL_AREA_SIZE/2.0f;  
-        float offset_y = fmod(seed_y, LOCAL_AREA_SIZE) - LOCAL_AREA_SIZE/2.0f;  
-          
-        // CRÍTICO: Solo usar camera y time - sin wind_x/wind_y  
-        float world_x = camera.x + offset_x + sinf(time * 0.1f + i) * 2.0f;  
-        float world_y = camera.y + offset_y + cosf(time * 0.1f + i) * 2.0f;  
-            
-        // Verificar límites del heightmap  
-        if (world_x < 0 || world_x >= hm->width - 1 || world_y < 0 || world_y >= hm->height - 1)  
-            continue;  
-            
-        // Obtener altura del terreno  
-        float terrain_height_at_pos = get_height_at(hm, world_x, world_y);    
-          
-        // Caída de partículas con ciclo fijo  
-        float fall_cycle = fmod((time * 10.0f + i * 1.5f), 120.0f);  
-        float world_z = terrain_height_at_pos + 120.0f - fall_cycle;  
-              
-        // Proyección a pantalla  
-        float dx = world_x - camera.x;      
-        float dy = world_y - camera.y;      
-        float distance = sqrtf(dx * dx + dy * dy);      
-              
-        if (distance > max_render_distance || distance < 1.0f) continue;      
-              
-        float angle_to_particle = atan2f(dy, dx);      
-        float angle_diff = angle_to_particle - camera.angle;      
-              
-        while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;      
-        while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;      
-              
-        float terrain_fov = 0.7f;      
-        float fov_half = terrain_fov * 0.5f;      
-        if (fabs(angle_diff) > fov_half) continue;      
-              
-        float pixels_per_radian = 320.0f / terrain_fov;      
-        int screen_x = (int)(160.0f + (angle_diff * pixels_per_radian));      
-        int screen_y = (int)(120.0f + (camera.z - world_z) / distance * 200.0f);      
-              
-        if (screen_x < 0 || screen_x >= 320 || screen_y < 0 || screen_y >= 240) continue;      
-              
-        // Aplicar niebla  
-        int fog_index = (int)distance;      
-        if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;      
-        float fog = fog_table[fog_index];      
-              
-        // Color blanco fijo  
-        Uint8 intensity = (Uint8)(255 * fog * 0.9f);  
-        uint32_t particle_color = SDL_MapRGB(gPixelFormat, intensity, intensity, intensity);  
-          
-        // Renderizar partícula  
-        gr_put_pixel(render_buffer, screen_x, screen_y, particle_color);      
-        if (screen_y + 1 < 240) {      
-            gr_put_pixel(render_buffer, screen_x, screen_y + 1, particle_color);      
-        }      
-    }      
-}
-  
-// Función para calcular iluminación atmosférica avanzada  
-static float calculate_atmospheric_lighting(float distance, float height) {  
-    float base_light = light_intensity / 255.0f;  
-      
-    // Aplicar scattering atmosférico  
-    float scattering_factor = 1.0f - (rayleigh_scattering * distance / max_render_distance);  
-    if (scattering_factor < 0.3f) scattering_factor = 0.3f;  
-      
-    // Aplicar densidad atmosférica  
-    float density_factor = 1.0f / (1.0f + atmosphere_density * 0.1f);  
-      
-    return base_light * scattering_factor * density_factor;  
-}  
-  
-// Función para niebla volumétrica por capas  
-static float calculate_volumetric_fog(float world_z, float distance) {  
-    // Calcular factor de altura  
-    float height_factor = 1.0f;  
-    if (world_z >= fog_ground_level && world_z <= fog_ceiling_level) {  
-        float layer_thickness = fog_ceiling_level - fog_ground_level;  
-        if (layer_thickness > 0) {  
-            float height_in_layer = (world_z - fog_ground_level) / layer_thickness;  
-            height_factor = pow(1.0f - height_in_layer, fog_density_curve);  
-        }  
-    } else if (world_z > fog_ceiling_level) {  
-        height_factor = 0.0f; // Sin niebla por encima del techo  
-    }  
-      
-    // Calcular niebla base  
-    int fog_index = (int)distance;  
-    if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;  
-    float base_fog = fog_table[fog_index];  
-      
-    return base_fog * height_factor;  
-}
 #include "libmod_heightmap_exports.h"
