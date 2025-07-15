@@ -47,7 +47,8 @@ typedef struct {
     uint8_t alpha;    
     int valid;    
 } BILLBOARD_PROJECTION;
-  
+
+
 /* Constantes */  
 #define MAX_HEIGHTMAPS 256  
 #define DEFAULT_FOV 60.0f  

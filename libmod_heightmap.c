@@ -55,6 +55,15 @@ typedef struct {
     float water_depth;     // Profundidad del agua para efectos  
 } PRECALC_WATER_DATA;  
 
+// Estructura temporal para ordenamiento de billboards  
+typedef struct {  
+    VOXEL_BILLBOARD *billboard;  
+    BILLBOARD_PROJECTION projection;  
+    GRAPH *graph;  
+    float distance;  
+} BILLBOARD_RENDER_DATA;
+  
+
 // Variables para textura del cielo  
 static GRAPH *sky_texture = NULL;  
 static float sky_texture_scale = 1.0f;  
@@ -676,6 +685,16 @@ static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *bil
     return result;  
 }
 
+// Función de comparación para qsort (más lejanos primero)  
+int compare_billboards_by_distance(const void *a, const void *b) {  
+    BILLBOARD_RENDER_DATA *bb_a = (BILLBOARD_RENDER_DATA *)a;  
+    BILLBOARD_RENDER_DATA *bb_b = (BILLBOARD_RENDER_DATA *)b;  
+      
+    // Renderizar primero los más lejanos (mayor distancia)  
+    if (bb_a->distance > bb_b->distance) return -1;  
+    if (bb_a->distance < bb_b->distance) return 1;  
+    return 0;  
+}
 
 int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {    
     int64_t hm_id = params[0];    
@@ -908,115 +927,31 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
     }    
         
         
-// Renderizar billboards estáticos    
-for (int i = 0; i < static_billboard_count; i++) {    
-    if (!static_billboards[i].active) continue;    
-        
-    VOXEL_BILLBOARD *bb = &static_billboards[i];    
-    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);    
-        
-    if (!billboard_graph) continue;    
-        
-    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);    
-    if (!proj.valid) continue;    
-        
-    // CORREGIDO: Verificación de oclusión por área completa  
-    int billboard_visible = 1;  
-    int center_x = proj.screen_x;  
-    int center_y = proj.screen_y;  
-    int half_width = proj.scaled_width / 2;  
-    int half_height = proj.scaled_height / 2;  
+// Array temporal para todos los billboards visibles  
+BILLBOARD_RENDER_DATA visible_billboards[MAX_STATIC_BILLBOARDS + MAX_DYNAMIC_BILLBOARDS];  
+int visible_count = 0;  
   
-    // Verificar múltiples puntos del billboard contra el depth buffer  
-    for (int check_y = center_y - half_height; check_y <= center_y + half_height && billboard_visible; check_y += 4) {  
-        for (int check_x = center_x - half_width; check_x <= center_x + half_width && billboard_visible; check_x += 4) {  
-            if (check_x >= 0 && check_x < 320 && check_y >= 0 && check_y < 240) {  
-                int depth_index = check_y * 320 + check_x;  
-                if (proj.distance >= depth_buffer[depth_index]) {  
-                    billboard_visible = 0;  // Billboard ocluido  
-                }  
-            }  
-        }  
-    }  
-  
-    if (!billboard_visible) continue;  
-  
-    // Renderizar billboard  
-    gr_blit(render_buffer, NULL,     
-           proj.screen_x - proj.scaled_width/2,     
-           proj.screen_y - proj.scaled_height/2,     
-           0, 0, proj.scaled_width, proj.scaled_height,    
-           billboard_graph->width/2, billboard_graph->height/2,    
-           billboard_graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
-  
-    // NUEVO: Actualizar depth buffer en toda el área del billboard  
-    for (int y = center_y - half_height; y <= center_y + half_height; y++) {  
-        for (int x = center_x - half_width; x <= center_x + half_width; x++) {  
-            if (x >= 0 && x < 320 && y >= 0 && y < 240) {  
-                int idx = y * 320 + x;  
-                if (proj.distance < depth_buffer[idx]) {  
-                    depth_buffer[idx] = proj.distance;  
-                }  
-            }  
-        }  
-    }  
+// PASO 4A: Recopilar billboards estáticos visibles  
+for (int i = 0; i < static_billboard_count; i++) {  
+    if (!static_billboards[i].active) continue;  
+      
+    VOXEL_BILLBOARD *bb = &static_billboards[i];  
+    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);  
+      
+    if (!billboard_graph) continue;  
+      
+    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);  
+    if (!proj.valid) continue;  
+      
+    // Agregar a la lista de renderizado  
+    visible_billboards[visible_count].billboard = bb;  
+    visible_billboards[visible_count].projection = proj;  
+    visible_billboards[visible_count].graph = billboard_graph;  
+    visible_billboards[visible_count].distance = proj.distance;  
+    visible_count++;  
 }  
-    
-// Renderizar billboards dinámicos (aplicar la misma corrección)  
-for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {    
-    if (!dynamic_billboards[i].active) continue;    
-        
-    VOXEL_BILLBOARD *bb = &dynamic_billboards[i];    
-    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);    
-        
-    if (!billboard_graph) continue;    
-        
-    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);    
-    if (!proj.valid) continue;    
-        
-    // CORREGIDO: Verificación de oclusión por área completa  
-    int billboard_visible = 1;  
-    int center_x = proj.screen_x;  
-    int center_y = proj.screen_y;  
-    int half_width = proj.scaled_width / 2;  
-    int half_height = proj.scaled_height / 2;  
   
-    // Verificar múltiples puntos del billboard contra el depth buffer  
-    for (int check_y = center_y - half_height; check_y <= center_y + half_height && billboard_visible; check_y += 4) {  
-        for (int check_x = center_x - half_width; check_x <= center_x + half_width && billboard_visible; check_x += 4) {  
-            if (check_x >= 0 && check_x < 320 && check_y >= 0 && check_y < 240) {  
-                int depth_index = check_y * 320 + check_x;  
-                if (proj.distance >= depth_buffer[depth_index]) {  
-                    billboard_visible = 0;  // Billboard ocluido  
-                }  
-            }  
-        }  
-    }  
-  
-    if (!billboard_visible) continue;  
-  
-    // Renderizar billboard  
-    gr_blit(render_buffer, NULL,     
-           proj.screen_x - proj.scaled_width/2,     
-           proj.screen_y - proj.scaled_height/2,     
-           0, 0, proj.scaled_width, proj.scaled_height,    
-           billboard_graph->width/2, billboard_graph->height/2,    
-           billboard_graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
-  
-    // NUEVO: Actualizar depth buffer en toda el área del billboard  
-    for (int y = center_y - half_height; y <= center_y + half_height; y++) {  
-        for (int x = center_x - half_width; x <= center_x + half_width; x++) {  
-            if (x >= 0 && x < 320 && y >= 0 && y < 240) {  
-                int idx = y * 320 + x;  
-                if (proj.distance < depth_buffer[idx]) {  
-                    depth_buffer[idx] = proj.distance;  
-                }  
-            }  
-        }  
-    }  
-}
-  
-// Renderizar billboards dinámicos  
+// PASO 4B: Recopilar billboards dinámicos visibles  
 for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {  
     if (!dynamic_billboards[i].active) continue;  
       
@@ -1028,19 +963,71 @@ for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {
     BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);  
     if (!proj.valid) continue;  
       
-    // Verificar depth buffer  
-    int depth_index = proj.screen_y * 320 + proj.screen_x;  
-    // if (depth_index >= 0 && depth_index < 320 * 240) {  
-    //     if (proj.distance_scale >= depth_buffer[depth_index]) continue;  
-    // }  
+    // Agregar a la lista de renderizado  
+    visible_billboards[visible_count].billboard = bb;  
+    visible_billboards[visible_count].projection = proj;  
+    visible_billboards[visible_count].graph = billboard_graph;  
+    visible_billboards[visible_count].distance = proj.distance;  
+    visible_count++;  
+}  
+  
+// PASO 4C: Ordenar por distancia (más lejanos primero)  
+qsort(visible_billboards, visible_count, sizeof(BILLBOARD_RENDER_DATA), compare_billboards_by_distance);  
+  
+// PASO 4D: Renderizar en orden correcto  
+for (int i = 0; i < visible_count; i++) {  
+    BILLBOARD_RENDER_DATA *render_data = &visible_billboards[i];  
+    BILLBOARD_PROJECTION proj = render_data->projection;  
       
-    // Renderizar con proyección calculada  
-    gr_blit(render_buffer, NULL,   
-           proj.screen_x - proj.scaled_width/2,   
-           proj.screen_y - proj.scaled_height/2,   
+    // Aplicar la verificación de oclusión mejorada  
+    int billboard_visible = 1;  
+    int center_x = proj.screen_x;  
+    int center_y = proj.screen_y;  
+    int half_width = proj.scaled_width / 2;  
+    int half_height = proj.scaled_height / 2;  
+      
+    float depth_tolerance = 2.0f;  
+    int occlusion_samples = 0;  
+    int total_samples = 0;  
+  
+    for (int check_y = center_y - half_height; check_y <= center_y + half_height; check_y += 8) {  
+        for (int check_x = center_x - half_width; check_x <= center_x + half_width; check_x += 8) {  
+            if (check_x >= 0 && check_x < 320 && check_y >= 0 && check_y < 240) {  
+                int depth_index = check_y * 320 + check_x;  
+                total_samples++;  
+                if (proj.distance > depth_buffer[depth_index] + depth_tolerance) {  
+                    occlusion_samples++;  
+                }  
+            }  
+        }  
+    }  
+      
+    if (total_samples > 0 && (float)occlusion_samples / total_samples > 0.75f) {  
+        billboard_visible = 0;  
+    }  
+  
+    if (!billboard_visible) continue;  
+  
+    // Renderizar billboard  
+    gr_blit(render_buffer, NULL,  
+           proj.screen_x - proj.scaled_width/2,  
+           proj.screen_y - proj.scaled_height/2,  
            0, 0, proj.scaled_width, proj.scaled_height,  
-           billboard_graph->width/2, billboard_graph->height/2,  
-           billboard_graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
+           render_data->graph->width/2, render_data->graph->height/2,  
+           render_data->graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
+  
+    // Actualizar depth buffer  
+    int update_radius = 2;  
+    for (int y = center_y - update_radius; y <= center_y + update_radius; y++) {  
+        for (int x = center_x - update_radius; x <= center_x + update_radius; x++) {  
+            if (x >= 0 && x < 320 && y >= 0 && y < 240) {  
+                int idx = y * 320 + x;  
+                if (proj.distance < depth_buffer[idx]) {  
+                    depth_buffer[idx] = proj.distance;  
+                }  
+            }  
+        }  
+    }  
 }
       
     return render_buffer->code;  
