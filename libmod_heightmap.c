@@ -112,7 +112,7 @@ static float calculated_bridge_height = -1.0f;
 #define RGBA32_A(color) ((color >> 24) & 0xFF)
 
 // Variables globales para configuración de renderizado
-static float max_render_distance = 5000.0f;
+static float max_render_distance = 8000.0f;
 static int chunk_size = 512;
 static int chunk_radius = 15;
 
@@ -143,6 +143,9 @@ static float camera_follow_offset_x = 0.0f;
 static float camera_follow_offset_y = 0.0f;
 static float camera_follow_offset_z = 10.0f;
 static float camera_follow_speed = 5.0f;
+
+// fov para billboards
+static float billboard_render_fov = 1.5f;  // FOV independiente para billboards
 
 
 // Declaración por si no está en el header
@@ -272,10 +275,6 @@ int64_t libmod_heightmap_load(INSTANCE *my, int64_t *params)
     heightmaps[slot].height = graph->height;
     heightmaps[slot].height_cache = NULL;
     heightmaps[slot].cache_valid = 0;
-// DEBUG CORREGIDO  
-printf("DEBUG HEIGHTMAP: Cargado heightmap ID %ld\\n", heightmaps[slot].id);  
-printf("DEBUG HEIGHTMAP: Dimensiones: %ld x %ld\\n", heightmaps[slot].width, heightmaps[slot].height);  
-printf("DEBUG HEIGHTMAP: Archivo: %s\\n", filename);
 
     build_height_cache(&heightmaps[slot]);
 
@@ -575,12 +574,28 @@ static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *bil
     float dz = bb->world_z - camera.z;  
     float distance = sqrtf(dx * dx + dy * dy + dz * dz);  
       
-    if (distance > max_render_distance || distance < 1.0f) {  
+    if (distance > max_render_distance || distance < 0.5f) {  
         result.valid = 0;  
         return result;  
     }  
       
-    // Cálculo de ángulo y proyección horizontal  
+    result.distance = distance;  // Almacenar distancia real  
+      
+    // CORREGIDO: Transformación a espacio de cámara para proyección correcta  
+    float cos_angle = cosf(camera.angle);  
+    float sin_angle = sinf(camera.angle);  
+      
+    // Proyectar a espacio de cámara (coordenadas relativas a la cámara)  
+    float cam_forward = dx * cos_angle + dy * sin_angle;  // Profundidad  
+    float cam_right = -dx * sin_angle + dy * cos_angle;   // Lateral  
+      
+    if (cam_forward <= 0.1f) {  
+        result.valid = 0;  
+        return result;  
+    }  
+      
+    // Usar FOV independiente para billboards (evita popping)  
+    float billboard_fov_half = billboard_render_fov * 0.5f;  
     float angle_to_billboard = atan2f(dy, dx);  
     float angle_diff = angle_to_billboard - camera.angle;  
       
@@ -588,67 +603,68 @@ static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *bil
     while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;  
     while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;  
       
-    float billboard_fov_half = terrain_fov * 0.8f;  
     if (fabs(angle_diff) > billboard_fov_half) {  
         result.valid = 0;  
         return result;  
     }  
       
-    // Proyección a coordenadas de pantalla  
-    float pixels_per_radian = 320.0f / terrain_fov;  
-    float screen_x_float = 160.0f + (angle_diff * pixels_per_radian);  
+    // CORREGIDO: Proyección perspectiva real usando coordenadas de cámara  
+    float pixels_per_radian = 320.0f / billboard_render_fov;  
+    float screen_x_float = 160.0f + (cam_right * pixels_per_radian / cam_forward);  
       
-    if (screen_x_float < 0.0f || screen_x_float >= 320.0f) {  
+    if (screen_x_float < -300.0f || screen_x_float >= 620.0f) {  
         result.valid = 0;  
         return result;  
     }  
       
     result.screen_x = (int)screen_x_float;  
       
-    // Cálculo de altura en pantalla  
-    float height_on_screen = 120.0f + (camera.z - bb->world_z) / distance * 300.0f;  
-    height_on_screen += camera.pitch * 30.0f;  
+    // Proyección vertical perspectiva  
+    float height_on_screen = 120.0f + (camera.z - bb->world_z) * pixels_per_radian / cam_forward;  
+    height_on_screen += camera.pitch * 40.0f;  
       
-    if (height_on_screen < 0.0f || height_on_screen >= 240.0f) {  
+    if (height_on_screen < -300.0f || height_on_screen >= 540.0f) {  
         result.valid = 0;  
         return result;  
     }  
       
     result.screen_y = (int)height_on_screen;  
       
-    // Escalado diferenciado por tipo de billboard  
+    // Escalado perspectivo usando distancia forward  
     float base_scale_factor;  
     float max_scale, min_scale;  
       
     switch(bb->billboard_type) {  
-        case BILLBOARD_TYPE_PLAYER:  // Nave protagonista  
-            base_scale_factor = 10.0f;  // Más conservador para objetos cercanos  
-            max_scale = 1.5f;  
+        case BILLBOARD_TYPE_PLAYER:  
+            base_scale_factor = 30.0f;  
+            max_scale = 1.2f;  
             min_scale = 0.3f;  
             break;  
-        case BILLBOARD_TYPE_ENEMY:   // Enemigos  
-            base_scale_factor = 35.0f;  
-            max_scale = 2.5f;  
-            min_scale = 0.2f;  
-            break;  
-        case BILLBOARD_TYPE_PROJECTILE:  // Proyectiles  
-            base_scale_factor = 25.0f;  
-            max_scale = 2.0f;  
+        case BILLBOARD_TYPE_ENEMY:  
+            base_scale_factor = 120.0f;  
+            max_scale = 6.0f;  
             min_scale = 0.1f;  
             break;  
-        default:  // Billboards estáticos y otros  
-            base_scale_factor = 30.0f;  
-            max_scale = 2.0f;  
-            min_scale = 0.2f;  
+        case BILLBOARD_TYPE_PROJECTILE:  
+            base_scale_factor = 80.0f;  
+            max_scale = 4.0f;  
+            min_scale = 0.05f;  
+            break;  
+        default:  // Billboards estáticos  
+            base_scale_factor = 150.0f;  
+            max_scale = 8.0f;  
+            min_scale = 0.05f;  
     }  
       
-    result.distance_scale = base_scale_factor / distance;  
+    result.distance_scale = base_scale_factor / cam_forward;  
     if (result.distance_scale > max_scale) result.distance_scale = max_scale;  
     if (result.distance_scale < min_scale) result.distance_scale = min_scale;  
       
-    // Cálculo de tamaño escalado  
     result.scaled_width = (int)(result.distance_scale * billboard_graph->width);  
     result.scaled_height = (int)(result.distance_scale * billboard_graph->height);  
+      
+    if (result.scaled_width < 1) result.scaled_width = 1;  
+    if (result.scaled_height < 1) result.scaled_height = 1;  
       
     // Cálculo de niebla  
     int fog_index = (int)distance;  
@@ -892,31 +908,112 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
     }    
         
         
-// Renderizar billboards estáticos  
-for (int i = 0; i < static_billboard_count; i++) {  
-    if (!static_billboards[i].active) continue;  
-      
-    VOXEL_BILLBOARD *bb = &static_billboards[i];  
-    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);  
-      
-    if (!billboard_graph) continue;  
-      
-    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);  
-    if (!proj.valid) continue;  
-      
-    // Verificar depth buffer  
-    int depth_index = proj.screen_y * 320 + proj.screen_x;  
-    if (depth_index >= 0 && depth_index < 320 * 240) {  
-        if (proj.distance_scale >= depth_buffer[depth_index]) continue;  
+// Renderizar billboards estáticos    
+for (int i = 0; i < static_billboard_count; i++) {    
+    if (!static_billboards[i].active) continue;    
+        
+    VOXEL_BILLBOARD *bb = &static_billboards[i];    
+    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);    
+        
+    if (!billboard_graph) continue;    
+        
+    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);    
+    if (!proj.valid) continue;    
+        
+    // CORREGIDO: Verificación de oclusión por área completa  
+    int billboard_visible = 1;  
+    int center_x = proj.screen_x;  
+    int center_y = proj.screen_y;  
+    int half_width = proj.scaled_width / 2;  
+    int half_height = proj.scaled_height / 2;  
+  
+    // Verificar múltiples puntos del billboard contra el depth buffer  
+    for (int check_y = center_y - half_height; check_y <= center_y + half_height && billboard_visible; check_y += 4) {  
+        for (int check_x = center_x - half_width; check_x <= center_x + half_width && billboard_visible; check_x += 4) {  
+            if (check_x >= 0 && check_x < 320 && check_y >= 0 && check_y < 240) {  
+                int depth_index = check_y * 320 + check_x;  
+                if (proj.distance >= depth_buffer[depth_index]) {  
+                    billboard_visible = 0;  // Billboard ocluido  
+                }  
+            }  
+        }  
     }  
-      
-    // Renderizar con proyección calculada  
-    gr_blit(render_buffer, NULL,   
-           proj.screen_x - proj.scaled_width/2,   
-           proj.screen_y - proj.scaled_height/2,   
-           0, 0, proj.scaled_width, proj.scaled_height,  
-           billboard_graph->width/2, billboard_graph->height/2,  
+  
+    if (!billboard_visible) continue;  
+  
+    // Renderizar billboard  
+    gr_blit(render_buffer, NULL,     
+           proj.screen_x - proj.scaled_width/2,     
+           proj.screen_y - proj.scaled_height/2,     
+           0, 0, proj.scaled_width, proj.scaled_height,    
+           billboard_graph->width/2, billboard_graph->height/2,    
            billboard_graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
+  
+    // NUEVO: Actualizar depth buffer en toda el área del billboard  
+    for (int y = center_y - half_height; y <= center_y + half_height; y++) {  
+        for (int x = center_x - half_width; x <= center_x + half_width; x++) {  
+            if (x >= 0 && x < 320 && y >= 0 && y < 240) {  
+                int idx = y * 320 + x;  
+                if (proj.distance < depth_buffer[idx]) {  
+                    depth_buffer[idx] = proj.distance;  
+                }  
+            }  
+        }  
+    }  
+}  
+    
+// Renderizar billboards dinámicos (aplicar la misma corrección)  
+for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {    
+    if (!dynamic_billboards[i].active) continue;    
+        
+    VOXEL_BILLBOARD *bb = &dynamic_billboards[i];    
+    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);    
+        
+    if (!billboard_graph) continue;    
+        
+    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);    
+    if (!proj.valid) continue;    
+        
+    // CORREGIDO: Verificación de oclusión por área completa  
+    int billboard_visible = 1;  
+    int center_x = proj.screen_x;  
+    int center_y = proj.screen_y;  
+    int half_width = proj.scaled_width / 2;  
+    int half_height = proj.scaled_height / 2;  
+  
+    // Verificar múltiples puntos del billboard contra el depth buffer  
+    for (int check_y = center_y - half_height; check_y <= center_y + half_height && billboard_visible; check_y += 4) {  
+        for (int check_x = center_x - half_width; check_x <= center_x + half_width && billboard_visible; check_x += 4) {  
+            if (check_x >= 0 && check_x < 320 && check_y >= 0 && check_y < 240) {  
+                int depth_index = check_y * 320 + check_x;  
+                if (proj.distance >= depth_buffer[depth_index]) {  
+                    billboard_visible = 0;  // Billboard ocluido  
+                }  
+            }  
+        }  
+    }  
+  
+    if (!billboard_visible) continue;  
+  
+    // Renderizar billboard  
+    gr_blit(render_buffer, NULL,     
+           proj.screen_x - proj.scaled_width/2,     
+           proj.screen_y - proj.scaled_height/2,     
+           0, 0, proj.scaled_width, proj.scaled_height,    
+           billboard_graph->width/2, billboard_graph->height/2,    
+           billboard_graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
+  
+    // NUEVO: Actualizar depth buffer en toda el área del billboard  
+    for (int y = center_y - half_height; y <= center_y + half_height; y++) {  
+        for (int x = center_x - half_width; x <= center_x + half_width; x++) {  
+            if (x >= 0 && x < 320 && y >= 0 && y < 240) {  
+                int idx = y * 320 + x;  
+                if (proj.distance < depth_buffer[idx]) {  
+                    depth_buffer[idx] = proj.distance;  
+                }  
+            }  
+        }  
+    }  
 }
   
 // Renderizar billboards dinámicos  
@@ -933,9 +1030,9 @@ for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {
       
     // Verificar depth buffer  
     int depth_index = proj.screen_y * 320 + proj.screen_x;  
-    if (depth_index >= 0 && depth_index < 320 * 240) {  
-        if (proj.distance_scale >= depth_buffer[depth_index]) continue;  
-    }  
+    // if (depth_index >= 0 && depth_index < 320 * 240) {  
+    //     if (proj.distance_scale >= depth_buffer[depth_index]) continue;  
+    // }  
       
     // Renderizar con proyección calculada  
     gr_blit(render_buffer, NULL,   
@@ -1897,7 +1994,6 @@ int64_t libmod_heightmap_set_render_distance(INSTANCE *my, int64_t *params)
         max_render_distance = 100.0f;
     if (max_render_distance > 2000.0f)
         max_render_distance = 2000.0f;
-     printf("DEBUG RENDER: Solicitado: %.1f, Aplicado: %.1f\\n", requested, max_render_distance);
     return 1;
 }
 
@@ -2093,43 +2189,48 @@ float libmod_heightmap_convert_screen_to_world_y(INSTANCE *my, int64_t *params)
 }
 
 // Función para añadir billboards directamente al sistema voxelspace  
-int64_t libmod_heightmap_add_voxel_billboard(INSTANCE *my, int64_t *params) {    
-    float world_x = *(float*)&params[0];    
-    float world_y = *(float*)&params[1];       
-    float height_offset = *(float*)&params[2];    
-    int graph_id = params[3];    
-    float scale = *(float*)&params[4];  
-        
-    // Buscar el primer heightmap válido disponible    
-    HEIGHTMAP *hm = NULL;    
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {    
-        if (heightmaps[i].cache_valid && heightmaps[i].width > 0 && heightmaps[i].height > 0) {    
-            hm = &heightmaps[i];    
-            break;    
-        }    
-    }    
-    
-    float terrain_height = 0.0f;    
-    if (hm) {    
-        terrain_height = get_height_at(hm, world_x, world_y);    
-    }    
-        
-    float final_world_z = terrain_height + height_offset + 10.0f;    
-        
-    // USAR EL ARRAY static_billboards  
-    if (static_billboard_count < MAX_STATIC_BILLBOARDS) {      
-        static_billboards[static_billboard_count].world_x = world_x;      
-        static_billboards[static_billboard_count].world_y = world_y;      
-        static_billboards[static_billboard_count].world_z = final_world_z;      
-        static_billboards[static_billboard_count].graph_id = graph_id;      
-        static_billboards[static_billboard_count].scale = scale;  
-        static_billboards[static_billboard_count].active = 1;    
-        static_billboards[static_billboard_count].process_id = 0;  
-              
-        return static_billboard_count++;  
+int64_t libmod_heightmap_add_voxel_billboard(INSTANCE *my, int64_t *params) {      
+    float world_x = *(float*)&params[0];      
+    float world_y = *(float*)&params[1];         
+    float height_offset = *(float*)&params[2];      
+    int graph_id = params[3];      
+    float scale = *(float*)&params[4];    
+          
+    // Buscar el primer heightmap válido disponible      
+    HEIGHTMAP *hm = NULL;      
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {      
+        if (heightmaps[i].cache_valid && heightmaps[i].width > 0 && heightmaps[i].height > 0) {      
+            hm = &heightmaps[i];      
+            break;      
+        }      
     }      
-    return -1;      
-}  
+      
+    float terrain_height = 0.0f;      
+    if (hm) {      
+        terrain_height = get_height_at(hm, world_x, world_y);      
+    }      
+          
+    float final_world_z = terrain_height + height_offset + 10.0f;      
+          
+ // USAR EL ARRAY static_billboards      
+if (static_billboard_count < MAX_STATIC_BILLBOARDS) {          
+    static_billboards[static_billboard_count].world_x = world_x;          
+    static_billboards[static_billboard_count].world_y = world_y;          
+    static_billboards[static_billboard_count].world_z = final_world_z;          
+    static_billboards[static_billboard_count].graph_id = graph_id;          
+    static_billboards[static_billboard_count].scale = scale;      
+    static_billboards[static_billboard_count].active = 1;        
+    static_billboards[static_billboard_count].process_id = 0;      
+    // AGREGAR ESTA LÍNEA CRÍTICA:    
+    static_billboards[static_billboard_count].billboard_type = 0; // Tipo por defecto (estático)    
+      
+    printf("DEBUG BILLBOARD: Añadido billboard estático #%d en (%.2f,%.2f,%.2f) graph_id=%d\\n",   
+           static_billboard_count, world_x, world_y, final_world_z, graph_id);  
+              
+    return static_billboard_count++;      
+}          
+return -1;
+}
 
 int64_t libmod_heightmap_water_texture(INSTANCE *my, int64_t *params) {  
     const char *texture_path = string_get(params[0]);  
@@ -2266,6 +2367,14 @@ int64_t libmod_heightmap_set_fog_color(INSTANCE *my, int64_t *params)
     fog_color_g = (Uint8)params[1];  
     fog_color_b = (Uint8)params[2];  
     fog_intensity = (float)params[3] / 1000.0f; // Pasar como entero *1000  
+    return 1;  
+}
+
+
+int64_t libmod_heightmap_set_billboard_fov(INSTANCE *my, int64_t *params) {  
+    billboard_render_fov = (float)params[0] / 1000.0f;  // Convertir de milésimas  
+    if (billboard_render_fov < 0.5f) billboard_render_fov = 0.5f;  
+    if (billboard_render_fov > 3.0f) billboard_render_fov = 3.0f;  
     return 1;  
 }
 

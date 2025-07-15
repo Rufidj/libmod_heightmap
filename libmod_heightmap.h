@@ -39,13 +39,14 @@ typedef struct {
     float near, far;  // Agregar estos campos  
 } CAMERA_3D; 
 
-typedef struct {  
-    int screen_x, screen_y;  
-    float distance_scale;  
-    int scaled_width, scaled_height;  
-    uint8_t alpha;  
-    int valid;  
-} BILLBOARD_PROJECTION; 
+typedef struct {    
+    int screen_x, screen_y;    
+    float distance;          // NUEVO: distancia real para depth buffer  
+    float distance_scale;    // Mantener para compatibilidad  
+    int scaled_width, scaled_height;    
+    uint8_t alpha;    
+    int valid;    
+} BILLBOARD_PROJECTION;
   
 /* Constantes */  
 #define MAX_HEIGHTMAPS 256  
