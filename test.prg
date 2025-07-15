@@ -171,7 +171,7 @@ PRIVATE
     int i, j;  
     float tree_x, tree_y;  
     int trees_created = 0;  
-    int grid_size = 2; // 14x14 = 196 árboles (cerca de 200)  
+    int grid_size = 6; // 14x14 = 196 árboles (cerca de 200)  
     float spacing_x, spacing_y;  
 BEGIN          
     LOOP          
