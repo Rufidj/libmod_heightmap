@@ -574,72 +574,71 @@ static void render_skybox(float camera_angle, float camera_pitch, float time, in
     }  
 }
 
-static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *billboard_graph, float terrain_fov) {  
-    BILLBOARD_PROJECTION result = {0};  
+static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *billboard_graph, float terrain_fov) {    
+    BILLBOARD_PROJECTION result = {0};    
+        
+    // Cálculo de distancia 3D real    
+    float dx = bb->world_x - camera.x;    
+    float dy = bb->world_y - camera.y;    
+    float dz = bb->world_z - camera.z;    
+    float distance = sqrtf(dx * dx + dy * dy + dz * dz);    
+        
+    // MODIFICADO: Extender el rango para permitir fade-out  
+    if (distance > max_render_distance * 1.1f || distance < 0.5f) {    
+        result.valid = 0;    
+        return result;    
+    }    
+        
+    result.distance = distance;  
       
-    // Cálculo de distancia 3D real  
-    float dx = bb->world_x - camera.x;  
-    float dy = bb->world_y - camera.y;  
-    float dz = bb->world_z - camera.z;  
-    float distance = sqrtf(dx * dx + dy * dy + dz * dz);  
+    // Usar el mismo FOV que el terreno  
+    float effective_fov = terrain_fov;  
+    float billboard_angle = atan2f(dy, dx);  
+    float angle_diff = billboard_angle - camera.angle;  
       
-    if (distance > max_render_distance || distance < 0.5f) {  
-        result.valid = 0;  
-        return result;  
-    }  
-      
-    result.distance = distance;  // Almacenar distancia real  
-      
-    // CORREGIDO: Transformación a espacio de cámara para proyección correcta  
-    float cos_angle = cosf(camera.angle);  
-    float sin_angle = sinf(camera.angle);  
-      
-    // Proyectar a espacio de cámara (coordenadas relativas a la cámara)  
-    float cam_forward = dx * cos_angle + dy * sin_angle;  // Profundidad  
-    float cam_right = -dx * sin_angle + dy * cos_angle;   // Lateral  
-      
-    if (cam_forward <= 0.1f) {  
-        result.valid = 0;  
-        return result;  
-    }  
-      
-    // Usar FOV independiente para billboards (evita popping)  
-    float billboard_fov_half = billboard_render_fov * 0.5f;  
-    float angle_to_billboard = atan2f(dy, dx);  
-    float angle_diff = angle_to_billboard - camera.angle;  
-      
-    // Normalizar ángulo  
     while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;  
     while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;  
       
-    if (fabs(angle_diff) > billboard_fov_half) {  
+    float terrain_fov_half = effective_fov * 0.5f;  
+      
+    // MODIFICADO: Extender FOV para permitir fade-out en bordes  
+    if (fabs(angle_diff) > terrain_fov_half * 1.2f) {  
         result.valid = 0;  
         return result;  
     }  
       
-    // CORREGIDO: Proyección perspectiva real usando coordenadas de cámara  
-    float pixels_per_radian = 320.0f / billboard_render_fov;  
-    float screen_x_float = 160.0f + (cam_right * pixels_per_radian / cam_forward);  
+    // Proyección de pantalla  
+    float screen_x_float = 160.0f + (angle_diff / effective_fov) * 320.0f;  
       
-    if (screen_x_float < -300.0f || screen_x_float >= 620.0f) {  
+    // MODIFICADO: Extender límites de pantalla para fade-out  
+    if (screen_x_float < -400.0f || screen_x_float >= 720.0f) {  
         result.valid = 0;  
         return result;  
     }  
       
     result.screen_x = (int)screen_x_float;  
       
-    // Proyección vertical perspectiva  
-    float height_on_screen = 120.0f + (camera.z - bb->world_z) * pixels_per_radian / cam_forward;  
+    // Resto de la proyección vertical y escalado...  
+    float cos_angle = cosf(camera.angle);    
+    float sin_angle = sinf(camera.angle);    
+    float cam_forward = dx * cos_angle + dy * sin_angle;  
+      
+    if (cam_forward <= 0.1f) {    
+        result.valid = 0;    
+        return result;    
+    }  
+      
+    float height_on_screen = 120.0f + (camera.z - bb->world_z) / cam_forward * 300.0f;  
     height_on_screen += camera.pitch * 40.0f;  
       
-    if (height_on_screen < -300.0f || height_on_screen >= 540.0f) {  
+    if (height_on_screen < -400.0f || height_on_screen >= 640.0f) {  
         result.valid = 0;  
         return result;  
     }  
       
     result.screen_y = (int)height_on_screen;  
       
-    // Escalado perspectivo usando distancia forward  
+    // Escalado (sin cambios)  
     float base_scale_factor;  
     float max_scale, min_scale;  
       
@@ -659,7 +658,7 @@ static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *bil
             max_scale = 4.0f;  
             min_scale = 0.05f;  
             break;  
-        default:  // Billboards estáticos  
+        default:  
             base_scale_factor = 150.0f;  
             max_scale = 8.0f;  
             min_scale = 0.05f;  
@@ -675,10 +674,29 @@ static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *bil
     if (result.scaled_width < 1) result.scaled_width = 1;  
     if (result.scaled_height < 1) result.scaled_height = 1;  
       
-    // Cálculo de niebla  
+    // CLAVE: Cálculo de alpha con fade-out REAL  
     int fog_index = (int)distance;  
     if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;  
     float fog = fog_table[fog_index];  
+      
+    // Fade-out por distancia  
+    if (distance > max_render_distance * 0.7f) {  
+        float fade_range = max_render_distance * 0.3f; // 30% del rango para fade  
+        float fade_progress = (distance - max_render_distance * 0.7f) / fade_range;  
+        float distance_fade = 1.0f - fade_progress;  
+        distance_fade = fmaxf(0.0f, fminf(1.0f, distance_fade));  
+        fog *= distance_fade;  
+    }  
+      
+    // Fade-out por FOV  
+    if (fabs(angle_diff) > terrain_fov_half * 0.7f) {  
+        float fov_fade_range = terrain_fov_half * 0.3f;  
+        float fov_fade_progress = (fabs(angle_diff) - terrain_fov_half * 0.7f) / fov_fade_range;  
+        float fov_fade = 1.0f - fov_fade_progress;  
+        fov_fade = fmaxf(0.0f, fminf(1.0f, fov_fade));  
+        fog *= fov_fade;  
+    }  
+      
     result.alpha = (Uint8)(255 * fog);  
       
     result.valid = 1;  
@@ -938,107 +956,107 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
     }    
         
         
-// Array temporal para todos los billboards visibles  
-BILLBOARD_RENDER_DATA visible_billboards[MAX_STATIC_BILLBOARDS + MAX_DYNAMIC_BILLBOARDS];  
-int visible_count = 0;  
-  
-// PASO 4A: Recopilar billboards estáticos visibles  
-for (int i = 0; i < static_billboard_count; i++) {  
-    if (!static_billboards[i].active) continue;  
-      
-    VOXEL_BILLBOARD *bb = &static_billboards[i];  
-    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);  
-      
-    if (!billboard_graph) continue;  
-      
-    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);  
-    if (!proj.valid) continue;  
-      
-    // Agregar a la lista de renderizado  
-    visible_billboards[visible_count].billboard = bb;  
-    visible_billboards[visible_count].projection = proj;  
-    visible_billboards[visible_count].graph = billboard_graph;  
-    visible_billboards[visible_count].distance = proj.distance;  
-    visible_count++;  
-}  
-  
-// PASO 4B: Recopilar billboards dinámicos visibles  
-for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {  
-    if (!dynamic_billboards[i].active) continue;  
-      
-    VOXEL_BILLBOARD *bb = &dynamic_billboards[i];  
-    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);  
-      
-    if (!billboard_graph) continue;  
-      
-    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);  
-    if (!proj.valid) continue;  
-      
-    // Agregar a la lista de renderizado  
-    visible_billboards[visible_count].billboard = bb;  
-    visible_billboards[visible_count].projection = proj;  
-    visible_billboards[visible_count].graph = billboard_graph;  
-    visible_billboards[visible_count].distance = proj.distance;  
-    visible_count++;  
-}  
-  
-// PASO 4C: Ordenar por distancia (más lejanos primero)  
-qsort(visible_billboards, visible_count, sizeof(BILLBOARD_RENDER_DATA), compare_billboards_by_distance);  
-  
-// PASO 4D: Renderizar en orden correcto  
-for (int i = 0; i < visible_count; i++) {  
-    BILLBOARD_RENDER_DATA *render_data = &visible_billboards[i];  
-    BILLBOARD_PROJECTION proj = render_data->projection;  
-      
-    // Aplicar la verificación de oclusión mejorada  
-    int billboard_visible = 1;  
-    int center_x = proj.screen_x;  
-    int center_y = proj.screen_y;  
-    int half_width = proj.scaled_width / 2;  
-    int half_height = proj.scaled_height / 2;  
-      
-    float depth_tolerance = 2.0f;  
-    int occlusion_samples = 0;  
-    int total_samples = 0;  
-  
-    for (int check_y = center_y - half_height; check_y <= center_y + half_height; check_y += 8) {  
-        for (int check_x = center_x - half_width; check_x <= center_x + half_width; check_x += 8) {  
-            if (check_x >= 0 && check_x < 320 && check_y >= 0 && check_y < 240) {  
-                int depth_index = check_y * 320 + check_x;  
-                total_samples++;  
-                if (proj.distance > depth_buffer[depth_index] + depth_tolerance) {  
-                    occlusion_samples++;  
-                }  
-            }  
-        }  
-    }  
-      
-    if (total_samples > 0 && (float)occlusion_samples / total_samples > 0.75f) {  
-        billboard_visible = 0;  
-    }  
-  
-    if (!billboard_visible) continue;  
-  
-    // Renderizar billboard  
-    gr_blit(render_buffer, NULL,  
-           proj.screen_x - proj.scaled_width/2,  
-           proj.screen_y - proj.scaled_height/2,  
-           0, 0, proj.scaled_width, proj.scaled_height,  
-           render_data->graph->width/2, render_data->graph->height/2,  
-           render_data->graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
-  
-    // Actualizar depth buffer  
-    int update_radius = 2;  
-    for (int y = center_y - update_radius; y <= center_y + update_radius; y++) {  
-        for (int x = center_x - update_radius; x <= center_x + update_radius; x++) {  
-            if (x >= 0 && x < 320 && y >= 0 && y < 240) {  
-                int idx = y * 320 + x;  
-                if (proj.distance < depth_buffer[idx]) {  
-                    depth_buffer[idx] = proj.distance;  
-                }  
-            }  
-        }  
-    }  
+// Array temporal para todos los billboards visibles    
+BILLBOARD_RENDER_DATA visible_billboards[MAX_STATIC_BILLBOARDS + MAX_DYNAMIC_BILLBOARDS];    
+int visible_count = 0;    
+    
+// PASO 4A: Recopilar billboards estáticos visibles    
+for (int i = 0; i < static_billboard_count; i++) {    
+    if (!static_billboards[i].active) continue;    
+        
+    VOXEL_BILLBOARD *bb = &static_billboards[i];    
+    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);    
+        
+    if (!billboard_graph) continue;    
+        
+    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);    
+    if (!proj.valid) continue;    
+        
+    // Agregar a la lista de renderizado    
+    visible_billboards[visible_count].billboard = bb;    
+    visible_billboards[visible_count].projection = proj;    
+    visible_billboards[visible_count].graph = billboard_graph;    
+    visible_billboards[visible_count].distance = proj.distance;    
+    visible_count++;    
+}    
+    
+// PASO 4B: Recopilar billboards dinámicos visibles    
+for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {    
+    if (!dynamic_billboards[i].active) continue;    
+        
+    VOXEL_BILLBOARD *bb = &dynamic_billboards[i];    
+    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);    
+        
+    if (!billboard_graph) continue;    
+        
+    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);    
+    if (!proj.valid) continue;    
+        
+    // Agregar a la lista de renderizado    
+    visible_billboards[visible_count].billboard = bb;    
+    visible_billboards[visible_count].projection = proj;    
+    visible_billboards[visible_count].graph = billboard_graph;    
+    visible_billboards[visible_count].distance = proj.distance;    
+    visible_count++;    
+}    
+    
+// PASO 4C: Ordenar por distancia (más lejanos primero)    
+qsort(visible_billboards, visible_count, sizeof(BILLBOARD_RENDER_DATA), compare_billboards_by_distance);    
+    
+// PASO 4D: Renderizar en orden correcto con fade-out mejorado  
+for (int i = 0; i < visible_count; i++) {    
+    BILLBOARD_RENDER_DATA *render_data = &visible_billboards[i];    
+    BILLBOARD_PROJECTION proj = render_data->projection;    
+        
+    // Aplicar la verificación de oclusión mejorada    
+    int billboard_visible = 1;    
+    int center_x = proj.screen_x;    
+    int center_y = proj.screen_y;    
+    int half_width = proj.scaled_width / 2;    
+    int half_height = proj.scaled_height / 2;    
+        
+    float depth_tolerance = 2.0f;    
+    int occlusion_samples = 0;    
+    int total_samples = 0;    
+    
+    for (int check_y = center_y - half_height; check_y <= center_y + half_height; check_y += 8) {    
+        for (int check_x = center_x - half_width; check_x <= center_x + half_width; check_x += 8) {    
+            if (check_x >= 0 && check_x < 320 && check_y >= 0 && check_y < 240) {    
+                int depth_index = check_y * 320 + check_x;    
+                total_samples++;    
+                if (proj.distance > depth_buffer[depth_index] + depth_tolerance) {    
+                    occlusion_samples++;    
+                }    
+            }    
+        }    
+    }    
+        
+    if (total_samples > 0 && (float)occlusion_samples / total_samples > 0.75f) {    
+        billboard_visible = 0;    
+    }    
+    
+    if (!billboard_visible) continue;    
+    
+    // Renderizar billboard con alpha mejorado (incluye fade-out)  
+    gr_blit(render_buffer, NULL,    
+           proj.screen_x - proj.scaled_width/2,    
+           proj.screen_y - proj.scaled_height/2,    
+           0, 0, proj.scaled_width, proj.scaled_height,    
+           render_data->graph->width/2, render_data->graph->height/2,    
+           render_data->graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);    
+    
+    // Actualizar depth buffer    
+    int update_radius = 2;    
+    for (int y = center_y - update_radius; y <= center_y + update_radius; y++) {    
+        for (int x = center_x - update_radius; x <= center_x + update_radius; x++) {    
+            if (x >= 0 && x < 320 && y >= 0 && y < 240) {    
+                int idx = y * 320 + x;    
+                if (proj.distance < depth_buffer[idx]) {    
+                    depth_buffer[idx] = proj.distance;    
+                }    
+            }    
+        }    
+    }    
 }
       
     return render_buffer->code;  
@@ -1103,80 +1121,89 @@ void build_height_cache(HEIGHTMAP *hm)
 
 
 /* Devuelve un color RGB interpolado usando funciones SDL */
-uint32_t get_texture_color_bilinear(GRAPH *texture, float x, float y)
-
-{
-
-    if (!texture)
-
-        return 0;
-
-
-    int ix = (int)x;
-
-    int iy = (int)y;
-
-
-    if (ix < 0 || iy < 0 || ix >= texture->width - 1 || iy >= texture->height - 1)
-
-        return 0;
-
-
-    float fx = x - ix;
-
-    float fy = y - iy;
-
-
-    uint32_t c00 = gr_get_pixel(texture, ix, iy);
-
-    uint32_t c10 = gr_get_pixel(texture, ix + 1, iy);
-
-    uint32_t c01 = gr_get_pixel(texture, ix, iy + 1);
-
-    uint32_t c11 = gr_get_pixel(texture, ix + 1, iy + 1);
-
-
-    // Extraer componentes usando SDL_GetRGB
-
-    Uint8 r00, g00, b00, r10, g10, b10, r01, g01, b01, r11, g11, b11;
-
-
-    SDL_GetRGB(c00, gPixelFormat, &r00, &g00, &b00);
-
-    SDL_GetRGB(c10, gPixelFormat, &r10, &g10, &b10);
-
-    SDL_GetRGB(c01, gPixelFormat, &r01, &g01, &b01);
-
-    SDL_GetRGB(c11, gPixelFormat, &r11, &g11, &b11);
-
-
-    // Interpolación bilineal
-
-    float r0 = r00 + fx * (r10 - r00);
-
-    float r1 = r01 + fx * (r11 - r01);
-
-    float rf = r0 + fy * (r1 - r0);
-
-
-    float g0 = g00 + fx * (g10 - g00);
-
-    float g1 = g01 + fx * (g11 - g01);
-
-    float gf = g0 + fy * (g1 - g0);
-
-
-    float b0 = b00 + fx * (b10 - b00);
-
-    float b1 = b01 + fx * (b11 - b01);
-
-    float bf = b0 + fy * (b1 - b0);
-
-
-    // Reconstruir usando SDL_MapRGB
-
-    return SDL_MapRGB(gPixelFormat, (Uint8)rf, (Uint8)gf, (Uint8)bf);
-
+uint32_t get_texture_color_bilinear(GRAPH *texture, float x, float y) {  
+    if (!texture)  
+        return 0;  
+  
+    // Implementar wrapping de coordenadas para tiling  
+    while (x < 0) x += texture->width;  
+    while (y < 0) y += texture->height;  
+    x = fmod(x, texture->width);  
+    y = fmod(y, texture->height);  
+  
+    int ix = (int)x;  
+    int iy = (int)y;  
+      
+    // Asegurar que estamos dentro de los límites para interpolación  
+    if (ix >= texture->width - 1) ix = texture->width - 2;  
+    if (iy >= texture->height - 1) iy = texture->height - 2;  
+    if (ix < 0) ix = 0;  
+    if (iy < 0) iy = 0;  
+  
+    float fx = x - ix;  
+    float fy = y - iy;  
+  
+    // Obtener los 4 píxeles para interpolación  
+    uint32_t c00 = gr_get_pixel(texture, ix, iy);  
+    uint32_t c10 = gr_get_pixel(texture, (ix + 1) % texture->width, iy);  
+    uint32_t c01 = gr_get_pixel(texture, ix, (iy + 1) % texture->height);  
+    uint32_t c11 = gr_get_pixel(texture, (ix + 1) % texture->width, (iy + 1) % texture->height);  
+  
+    // Verificar si algún pixel es inválido  
+    if (c00 == 0 && c10 == 0 && c01 == 0 && c11 == 0) {  
+        return 0; // Fallback al sistema original  
+    }  
+  
+    // Extraer componentes RGB y Alpha si está disponible  
+    Uint8 r00, g00, b00, a00 = 255;  
+    Uint8 r10, g10, b10, a10 = 255;  
+    Uint8 r01, g01, b01, a01 = 255;  
+    Uint8 r11, g11, b11, a11 = 255;  
+  
+    // Manejar diferentes formatos de pixel  
+    if (gPixelFormat->BytesPerPixel == 4) {  
+        // RGBA format  
+        SDL_GetRGBA(c00, gPixelFormat, &r00, &g00, &b00, &a00);  
+        SDL_GetRGBA(c10, gPixelFormat, &r10, &g10, &b10, &a10);  
+        SDL_GetRGBA(c01, gPixelFormat, &r01, &g01, &b01, &a01);  
+        SDL_GetRGBA(c11, gPixelFormat, &r11, &g11, &b11, &a11);  
+    } else {  
+        // RGB format  
+        SDL_GetRGB(c00, gPixelFormat, &r00, &g00, &b00);  
+        SDL_GetRGB(c10, gPixelFormat, &r10, &g10, &b10);  
+        SDL_GetRGB(c01, gPixelFormat, &r01, &g01, &b01);  
+        SDL_GetRGB(c11, gPixelFormat, &r11, &g11, &b11);  
+    }  
+  
+    // Interpolación bilineal mejorada  
+    float r0 = r00 + fx * (r10 - r00);  
+    float r1 = r01 + fx * (r11 - r01);  
+    float rf = r0 + fy * (r1 - r0);  
+  
+    float g0 = g00 + fx * (g10 - g00);  
+    float g1 = g01 + fx * (g11 - g01);  
+    float gf = g0 + fy * (g1 - g0);  
+  
+    float b0 = b00 + fx * (b10 - b00);  
+    float b1 = b01 + fx * (b11 - b01);  
+    float bf = b0 + fy * (b1 - b0);  
+  
+    float a0 = a00 + fx * (a10 - a00);  
+    float a1 = a01 + fx * (a11 - a01);  
+    float af = a0 + fy * (a1 - a0);  
+  
+    // Clamp values  
+    rf = fmaxf(0, fminf(255, rf));  
+    gf = fmaxf(0, fminf(255, gf));  
+    bf = fmaxf(0, fminf(255, bf));  
+    af = fmaxf(0, fminf(255, af));  
+  
+    // Retornar el color apropiado según el formato  
+    if (gPixelFormat->BytesPerPixel == 4) {  
+        return SDL_MapRGBA(gPixelFormat, (Uint8)rf, (Uint8)gf, (Uint8)bf, (Uint8)af);  
+    } else {  
+        return SDL_MapRGB(gPixelFormat, (Uint8)rf, (Uint8)gf, (Uint8)bf);  
+    }  
 }
 
 /* Función para mantener cámara sobre el terreno */
