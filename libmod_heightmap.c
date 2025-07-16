@@ -852,25 +852,36 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
                         if (tex_x < 0) tex_x += water_texture->width;    
                         if (tex_y < 0) tex_y += water_texture->height;    
                             
-                        uint32_t water_color = gr_get_pixel(water_texture, tex_x, tex_y);    
-                            
-                        for (int y = screen_y; y < lowest_y; y++) {    
-                            gr_put_pixel(render_buffer, screen_x, y, water_color);    
-                            int depth_index = y * 320 + screen_x;    
-                            if (depth_index >= 0 && depth_index < 320 * 240) {    
-                                depth_buffer[depth_index] = distance;    
-                            }    
-                        }    
-                    } else {    
-                        uint32_t water_color = SDL_MapRGB(gPixelFormat, 64, 128, 255);    
-                        for (int y = screen_y; y < lowest_y; y++) {    
-                            gr_put_pixel(render_buffer, screen_x, y, water_color);    
-                            int depth_index = y * 320 + screen_x;    
-                            if (depth_index >= 0 && depth_index < 320 * 240) {    
-                                depth_buffer[depth_index] = distance;    
-                            }    
-                        }    
-                    }    
+                      //                        uint32_t water_color = gr_get_pixel(water_texture, tex_x, tex_y);
+//
+                        BGD_Rect clip;
+                        clip.x = tex_x;
+                        clip.y = tex_y;
+                        clip.w = 1;
+                        clip.h = 1;
+
+//                        {
+//                            uint8_t r, g, b;
+//                            SDL_GetRGB(water_color, gPixelFormat, &r, &g, &b);
+//                            water_color = SDL_MapRGBA(gPixelFormat, r, g, b, 128);
+//                        }
+
+                        gr_blit(render_buffer, NULL,
+                               screen_x, screen_y,
+                               0,
+                               0,
+                               100, 100*(lowest_y-screen_y+1),
+                               0, 0,
+                               water_texture, &clip, 128, 255, 255, 255, BLEND_NORMAL, NULL);
+
+                        for (int y = screen_y; y < lowest_y; y++) {
+//                            gr_put_pixel(render_buffer, screen_x, y, water_color);
+                            int depth_index = y * 320 + screen_x;
+                            if (depth_index >= 0 && depth_index < 320 * 240) {
+                                depth_buffer[depth_index] = distance;
+                            }
+                        } 
+                    }
                 } else {    
                     // Renderizar terreno normal con efectos atmosféricos avanzados  
                     GRAPH* texture_to_use = hm->texturemap;    
