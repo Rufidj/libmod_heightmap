@@ -176,6 +176,9 @@ void clamp_camera_to_terrain(HEIGHTMAP *hm);
 void clamp_camera_to_bounds(HEIGHTMAP *hm);
 uint32_t get_texture_color_bilinear(GRAPH *texture, float x, float y);
 int64_t libmod_heightmap_project_billboard(INSTANCE *my, int64_t *params);
+static HEIGHTMAP* find_heightmap_by_id(int64_t hm_id);  
+static int apply_terrain_collision(HEIGHTMAP *hm, float new_x, float new_y);  
+static int move_camera_with_collision(int64_t hm_id, float angle_offset, float speed_factor, float speed);
 
 void libmod_heightmap_destroy_render_buffer() {  
     if (render_buffer) {  
@@ -1339,49 +1342,6 @@ int64_t libmod_heightmap_set_control_sensitivity(INSTANCE *my, int64_t *params)
     return 1;
 }
 
-/* Movimiento hacia adelante */
-int64_t libmod_heightmap_move_forward(INSTANCE *my, int64_t *params)
-{
-    float speed = (params[0] > 0) ? (float)params[0] : move_speed;
-
-    camera.x += cosf(camera.angle) * speed / 1.5f;
-    camera.y += sinf(camera.angle) * speed / 1.5f;
-
-    return 1;
-}
-
-/* Movimiento hacia atrás */
-int64_t libmod_heightmap_move_backward(INSTANCE *my, int64_t *params)
-{
-    float speed = (params[0] > 0) ? (float)params[0] : move_speed;
-
-    camera.x -= cosf(camera.angle) * speed / 1.5f;
-    camera.y -= sinf(camera.angle) * speed / 1.5f;
-
-    return 1;
-}
-
-/* Movimiento lateral izquierda */
-int64_t libmod_heightmap_strafe_left(INSTANCE *my, int64_t *params)
-{
-    float speed = (params[0] > 0) ? (float)params[0] : move_speed;
-
-    camera.x += cosf(camera.angle - M_PI_2) * speed / 2.0f;
-    camera.y += sinf(camera.angle - M_PI_2) * speed / 2.0f;
-
-    return 1;
-}
-
-/* Movimiento lateral derecha */
-int64_t libmod_heightmap_strafe_right(INSTANCE *my, int64_t *params)
-{
-    float speed = (params[0] > 0) ? (float)params[0] : move_speed;
-
-    camera.x += cosf(camera.angle + M_PI_2) * speed / 2.0f;
-    camera.y += sinf(camera.angle + M_PI_2) * speed / 2.0f;
-
-    return 1;
-}
 
 /* Control de rotación horizontal */
 int64_t libmod_heightmap_look_horizontal(INSTANCE *my, int64_t *params)
@@ -1530,193 +1490,6 @@ int64_t libmod_heightmap_check_terrain_collision(INSTANCE *my, int64_t *params)
     return 0; // Sin colisión
 }
 
-/* Movimiento con colisión - versión mejorada */
-int64_t libmod_heightmap_move_forward_with_collision(INSTANCE *my, int64_t *params)
-{
-    int64_t hm_id = params[0];
-    float speed = (params[1] > 0) ? (float)params[1] : move_speed;
-
-    HEIGHTMAP *hm = NULL;
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            hm = &heightmaps[i];
-            break;
-        }
-    }
-
-    if (!hm || !hm->cache_valid)
-        return 0;
-
-    // Calcular nueva posición
-    float new_x = camera.x + cosf(camera.angle) * speed / 1.5f;
-    float new_y = camera.y + sinf(camera.angle) * speed / 1.5f;
-
-    // Verificar límites del mapa
-    clamp_camera_to_bounds(hm);
-
-    // Verificar si la nueva posición está dentro del mapa
-    if (new_x >= 2.0f && new_x < hm->width - 2.0f &&
-        new_y >= 2.0f && new_y < hm->height - 2.0f)
-    {
-        // Obtener altura del terreno en la nueva posición
-        float terrain_height = get_height_at(hm, new_x, new_y);
-        float min_height = terrain_height + 5.0f;
-
-        // Solo mover si no hay colisión vertical extrema (pendiente muy pronunciada)
-        float current_terrain_height = get_height_at(hm, camera.x, camera.y);
-        float height_diff = fabs(terrain_height - current_terrain_height);
-
-        // Permitir movimiento si la diferencia de altura no es muy grande
-        if (height_diff < 20.0f) // Máxima pendiente permitida
-        {
-            camera.x = new_x;
-            camera.y = new_y;
-
-            // Ajustar altura de cámara al terreno
-            if (camera.z < min_height)
-            {
-                camera.z = min_height;
-            }
-        }
-    }
-
-    return 1;
-}
-
-/* Versiones con colisión para todos los movimientos */
-int64_t libmod_heightmap_move_backward_with_collision(INSTANCE *my, int64_t *params)
-{
-    int64_t hm_id = params[0];
-    float speed = (params[1] > 0) ? (float)params[1] : move_speed;
-
-    HEIGHTMAP *hm = NULL;
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            hm = &heightmaps[i];
-            break;
-        }
-    }
-
-    if (!hm || !hm->cache_valid)
-        return 0;
-
-    float new_x = camera.x - cosf(camera.angle) * speed / 1.5f;
-    float new_y = camera.y - sinf(camera.angle) * speed / 1.5f;
-
-    if (new_x >= 2.0f && new_x < hm->width - 2.0f &&
-        new_y >= 2.0f && new_y < hm->height - 2.0f)
-    {
-        float terrain_height = get_height_at(hm, new_x, new_y);
-        float current_terrain_height = get_height_at(hm, camera.x, camera.y);
-        float height_diff = fabs(terrain_height - current_terrain_height);
-
-        if (height_diff < 20.0f)
-        {
-            camera.x = new_x;
-            camera.y = new_y;
-
-            float min_height = terrain_height + 5.0f;
-            if (camera.z < min_height)
-            {
-                camera.z = min_height;
-            }
-        }
-    }
-
-    return 1;
-}
-
-int64_t libmod_heightmap_strafe_left_with_collision(INSTANCE *my, int64_t *params)
-{
-    int64_t hm_id = params[0];
-    float speed = (params[1] > 0) ? (float)params[1] : move_speed;
-
-    HEIGHTMAP *hm = NULL;
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            hm = &heightmaps[i];
-            break;
-        }
-    }
-
-    if (!hm || !hm->cache_valid)
-        return 0;
-
-    float new_x = camera.x + cosf(camera.angle - M_PI_2) * speed / 2.0f;
-    float new_y = camera.y + sinf(camera.angle - M_PI_2) * speed / 2.0f;
-
-    if (new_x >= 2.0f && new_x < hm->width - 2.0f &&
-        new_y >= 2.0f && new_y < hm->height - 2.0f)
-    {
-        float terrain_height = get_height_at(hm, new_x, new_y);
-        float current_terrain_height = get_height_at(hm, camera.x, camera.y);
-        float height_diff = fabs(terrain_height - current_terrain_height);
-
-        if (height_diff < 20.0f)
-        {
-            camera.x = new_x;
-            camera.y = new_y;
-
-            float min_height = terrain_height + 5.0f;
-            if (camera.z < min_height)
-            {
-                camera.z = min_height;
-            }
-        }
-    }
-
-    return 1;
-}
-
-int64_t libmod_heightmap_strafe_right_with_collision(INSTANCE *my, int64_t *params)
-{
-    int64_t hm_id = params[0];
-    float speed = (params[1] > 0) ? (float)params[1] : move_speed;
-
-    HEIGHTMAP *hm = NULL;
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            hm = &heightmaps[i];
-            break;
-        }
-    }
-
-    if (!hm || !hm->cache_valid)
-        return 0;
-
-    float new_x = camera.x + cosf(camera.angle + M_PI_2) * speed / 2.0f;
-    float new_y = camera.y + sinf(camera.angle + M_PI_2) * speed / 2.0f;
-
-    if (new_x >= 2.0f && new_x < hm->width - 2.0f &&
-        new_y >= 2.0f && new_y < hm->height - 2.0f)
-    {
-        float terrain_height = get_height_at(hm, new_x, new_y);
-        float current_terrain_height = get_height_at(hm, camera.x, camera.y);
-        float height_diff = fabs(terrain_height - current_terrain_height);
-
-        if (height_diff < 20.0f)
-        {
-            camera.x = new_x;
-            camera.y = new_y;
-
-            float min_height = terrain_height + 5.0f;
-            if (camera.z < min_height)
-            {
-                camera.z = min_height;
-            }
-        }
-    }
-
-    return 1;
-}
 
 /* Obtener altura del terreno en coordenadas de sprite */
 int64_t libmod_heightmap_get_terrain_height_at_sprite(INSTANCE *my, int64_t *params)
@@ -2404,4 +2177,103 @@ int64_t libmod_heightmap_set_billboard_fov(INSTANCE *my, int64_t *params) {
 }
 
 
+// Funciones helper internas - NO exportadas  
+static void move_camera_direction(float angle_offset, float speed_factor, float speed) {  
+    float final_speed = (speed > 0) ? speed : move_speed;  
+    camera.x += cosf(camera.angle + angle_offset) * final_speed / speed_factor;  
+    camera.y += sinf(camera.angle + angle_offset) * final_speed / speed_factor;  
+}  
+  
+// Funciones exportadas simplificadas  
+int64_t libmod_heightmap_move_forward(INSTANCE *my, int64_t *params) {  
+    float speed = (params[0] > 0) ? (float)params[0] : move_speed;  
+    move_camera_direction(0.0f, 1.5f, speed);  
+    return 1;  
+}  
+  
+int64_t libmod_heightmap_move_backward(INSTANCE *my, int64_t *params) {  
+    float speed = (params[0] > 0) ? (float)params[0] : move_speed;  
+    move_camera_direction(M_PI, 1.5f, speed);  
+    return 1;  
+}  
+  
+int64_t libmod_heightmap_strafe_left(INSTANCE *my, int64_t *params) {  
+    float speed = (params[0] > 0) ? (float)params[0] : move_speed;  
+    move_camera_direction(-M_PI_2, 2.0f, speed);  
+    return 1;  
+}  
+  
+int64_t libmod_heightmap_strafe_right(INSTANCE *my, int64_t *params) {  
+    float speed = (params[0] > 0) ? (float)params[0] : move_speed;  
+    move_camera_direction(M_PI_2, 2.0f, speed);  
+    return 1;  
+}
+
+
+// Helper interno para movimiento con colisión - NO exportado  
+static int move_camera_with_collision(int64_t hm_id, float angle_offset, float speed_factor, float speed) {  
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+    if (!hm || !hm->cache_valid) return 0;  
+      
+    float new_x = camera.x + cosf(camera.angle + angle_offset) * speed / speed_factor;  
+    float new_y = camera.y + sinf(camera.angle + angle_offset) * speed / speed_factor;  
+      
+    return apply_terrain_collision(hm, new_x, new_y);  
+}  
+  
+// Helper para búsqueda de heightmap  
+static HEIGHTMAP* find_heightmap_by_id(int64_t hm_id) {  
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
+        if (heightmaps[i].id == hm_id) {  
+            return &heightmaps[i];  
+        }  
+    }  
+    return NULL;  
+}  
+  
+// Helper para aplicar colisión con terreno  
+static int apply_terrain_collision(HEIGHTMAP *hm, float new_x, float new_y) {  
+    if (new_x >= 2.0f && new_x < hm->width - 2.0f &&  
+        new_y >= 2.0f && new_y < hm->height - 2.0f) {  
+          
+        float terrain_height = get_height_at(hm, new_x, new_y);  
+        float current_terrain_height = get_height_at(hm, camera.x, camera.y);  
+        float height_diff = fabs(terrain_height - current_terrain_height);  
+          
+        if (height_diff < 20.0f) {  
+            camera.x = new_x;  
+            camera.y = new_y;  
+              
+            float min_height = terrain_height + 5.0f;  
+            if (camera.z < min_height) {  
+                camera.z = min_height;  
+            }  
+        }  
+    }  
+    return 1;  
+}
+
+int64_t libmod_heightmap_move_forward_with_collision(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    float speed = (params[1] > 0) ? (float)params[1] : move_speed;  
+    return move_camera_with_collision(hm_id, 0.0f, 1.5f, speed);  
+}  
+  
+int64_t libmod_heightmap_move_backward_with_collision(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    float speed = (params[1] > 0) ? (float)params[1] : move_speed;  
+    return move_camera_with_collision(hm_id, M_PI, 1.5f, speed);  
+}  
+  
+int64_t libmod_heightmap_strafe_left_with_collision(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    float speed = (params[1] > 0) ? (float)params[1] : move_speed;  
+    return move_camera_with_collision(hm_id, -M_PI_2, 2.0f, speed);  
+}  
+  
+int64_t libmod_heightmap_strafe_right_with_collision(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    float speed = (params[1] > 0) ? (float)params[1] : move_speed;  
+    return move_camera_with_collision(hm_id, M_PI_2, 2.0f, speed);  
+}
 #include "libmod_heightmap_exports.h"
