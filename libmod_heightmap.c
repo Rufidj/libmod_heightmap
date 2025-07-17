@@ -179,6 +179,11 @@ int64_t libmod_heightmap_project_billboard(INSTANCE *my, int64_t *params);
 static HEIGHTMAP* find_heightmap_by_id(int64_t hm_id);  
 static int apply_terrain_collision(HEIGHTMAP *hm, float new_x, float new_y);  
 static int move_camera_with_collision(int64_t hm_id, float angle_offset, float speed_factor, float speed);
+static float convert_screen_to_world_coordinate(int heightmap_id, float screen_coord, int is_x_axis);
+static void collect_visible_billboards_from_array(VOXEL_BILLBOARD *billboard_array, int array_size,   
+                                                  BILLBOARD_RENDER_DATA *visible_billboards,   
+                                                  int *visible_count, float terrain_fov);
+
 
 void libmod_heightmap_destroy_render_buffer() {  
     if (render_buffer) {  
@@ -378,15 +383,12 @@ int64_t libmod_heightmap_get_height(INSTANCE *my, int64_t *params)
     float x = (float)params[1];
     float y = (float)params[2];
 
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            float height = get_height_at(&heightmaps[i], x, y);
-            return (int64_t)(height * 1000);
-        }
-    }
-    return 0;
+  HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+if (hm) {  
+    float height = get_height_at(hm, x, y);  
+    return (int64_t)(height * 1000);  
+}  
+return 0;
 }
 
 float get_height_at(HEIGHTMAP *hm, float x, float y)
@@ -964,44 +966,12 @@ BILLBOARD_RENDER_DATA visible_billboards[MAX_STATIC_BILLBOARDS + MAX_DYNAMIC_BIL
 int visible_count = 0;    
     
 // PASO 4A: Recopilar billboards estáticos visibles    
-for (int i = 0; i < static_billboard_count; i++) {    
-    if (!static_billboards[i].active) continue;    
-        
-    VOXEL_BILLBOARD *bb = &static_billboards[i];    
-    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);    
-        
-    if (!billboard_graph) continue;    
-        
-    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);    
-    if (!proj.valid) continue;    
-        
-    // Agregar a la lista de renderizado    
-    visible_billboards[visible_count].billboard = bb;    
-    visible_billboards[visible_count].projection = proj;    
-    visible_billboards[visible_count].graph = billboard_graph;    
-    visible_billboards[visible_count].distance = proj.distance;    
-    visible_count++;    
-}    
+collect_visible_billboards_from_array(static_billboards, static_billboard_count,   
+                                     visible_billboards, &visible_count, terrain_fov); 
     
 // PASO 4B: Recopilar billboards dinámicos visibles    
-for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {    
-    if (!dynamic_billboards[i].active) continue;    
-        
-    VOXEL_BILLBOARD *bb = &dynamic_billboards[i];    
-    GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);    
-        
-    if (!billboard_graph) continue;    
-        
-    BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);    
-    if (!proj.valid) continue;    
-        
-    // Agregar a la lista de renderizado    
-    visible_billboards[visible_count].billboard = bb;    
-    visible_billboards[visible_count].projection = proj;    
-    visible_billboards[visible_count].graph = billboard_graph;    
-    visible_billboards[visible_count].distance = proj.distance;    
-    visible_count++;    
-}    
+collect_visible_billboards_from_array(dynamic_billboards, MAX_DYNAMIC_BILLBOARDS,   
+                                     visible_billboards, &visible_count, terrain_fov);
     
 // PASO 4C: Ordenar por distancia (más lejanos primero)    
 qsort(visible_billboards, visible_count, sizeof(BILLBOARD_RENDER_DATA), compare_billboards_by_distance);    
@@ -1946,45 +1916,6 @@ int64_t libmod_heightmap_project_billboard(INSTANCE *my, int64_t *params)
                      ((uint64_t)z_as_uint));  
 }
 
-float libmod_heightmap_convert_screen_to_world_x(INSTANCE *my, int64_t *params)  
-{  
-    int heightmap_id = params[0];  
-    float screen_x = *(float*)&params[1];  
-      
-    HEIGHTMAP *hm = NULL;  
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        if (heightmaps[i].id == heightmap_id) {  
-            hm = &heightmaps[i];  
-            break;  
-        }  
-    }  
-      
-    if (!hm) return 0.0f;  
-      
-    // Factor automático basado en el tamaño del heightmap  
-    float factor = hm->width / 640.0f; // Asumiendo pantalla de referencia 640px  
-    return screen_x / factor;  
-}  
-  
-float libmod_heightmap_convert_screen_to_world_y(INSTANCE *my, int64_t *params)  
-{  
-    int heightmap_id = params[0];  
-    float screen_y = *(float*)&params[1];  
-      
-    HEIGHTMAP *hm = NULL;  
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        if (heightmaps[i].id == heightmap_id) {  
-            hm = &heightmaps[i];  
-            break;  
-        }  
-    }  
-      
-    if (!hm) return 0.0f;  
-      
-    // Factor automático basado en el tamaño del heightmap  
-    float factor = hm->height / 480.0f; // Asumiendo pantalla de referencia 480px  
-    return screen_y / factor;  
-}
 
 // Función para añadir billboards directamente al sistema voxelspace  
 int64_t libmod_heightmap_add_voxel_billboard(INSTANCE *my, int64_t *params) {      
@@ -2276,4 +2207,50 @@ int64_t libmod_heightmap_strafe_right_with_collision(INSTANCE *my, int64_t *para
     float speed = (params[1] > 0) ? (float)params[1] : move_speed;  
     return move_camera_with_collision(hm_id, M_PI_2, 2.0f, speed);  
 }
+
+static float convert_screen_to_world_coordinate(int heightmap_id, float screen_coord, int is_x_axis) {  
+    HEIGHTMAP *hm = find_heightmap_by_id(heightmap_id);  
+    if (!hm) return 0.0f;  
+      
+    float reference_size = is_x_axis ? 640.0f : 480.0f;  
+    float map_size = is_x_axis ? hm->width : hm->height;  
+    float factor = map_size / reference_size;  
+      
+    return screen_coord / factor;  
+}
+
+float libmod_heightmap_convert_screen_to_world_x(INSTANCE *my, int64_t *params) {  
+    int heightmap_id = params[0];  
+    float screen_x = *(float*)&params[1];  
+    return convert_screen_to_world_coordinate(heightmap_id, screen_x, 1); // 1 = eje X  
+}  
+  
+float libmod_heightmap_convert_screen_to_world_y(INSTANCE *my, int64_t *params) {  
+    int heightmap_id = params[0];  
+    float screen_y = *(float*)&params[1];  
+    return convert_screen_to_world_coordinate(heightmap_id, screen_y, 0); // 0 = eje Y  
+}
+
+static void collect_visible_billboards_from_array(VOXEL_BILLBOARD *billboard_array, int array_size,   
+                                                  BILLBOARD_RENDER_DATA *visible_billboards,   
+                                                  int *visible_count, float terrain_fov) {  
+    for (int i = 0; i < array_size; i++) {  
+        if (!billboard_array[i].active) continue;  
+          
+        VOXEL_BILLBOARD *bb = &billboard_array[i];  
+        GRAPH *billboard_graph = bitmap_get(0, bb->graph_id);  
+          
+        if (!billboard_graph) continue;  
+          
+        BILLBOARD_PROJECTION proj = calculate_proyection(bb, billboard_graph, terrain_fov);  
+        if (!proj.valid) continue;  
+          
+        visible_billboards[*visible_count].billboard = bb;  
+        visible_billboards[*visible_count].projection = proj;  
+        visible_billboards[*visible_count].graph = billboard_graph;  
+        visible_billboards[*visible_count].distance = proj.distance;  
+        (*visible_count)++;  
+    }  
+}
+
 #include "libmod_heightmap_exports.h"
