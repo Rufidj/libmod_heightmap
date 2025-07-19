@@ -46,6 +46,7 @@ typedef struct {
     int scaled_width, scaled_height;    
     uint8_t alpha;    
     int valid;    
+    float fog_tint_factor;
 } BILLBOARD_PROJECTION;
 
 
@@ -72,6 +73,7 @@ extern int64_t libmod_heightmap_update_sprite_3d(INSTANCE *my, int64_t *params);
 extern int64_t libmod_heightmap_load_overlay_mask(INSTANCE *my, int64_t *params);  
 extern int64_t libmod_heightmap_load_bridge_texture(INSTANCE *my, int64_t *params);  
 extern int64_t libmod_heightmap_set_bridge_height(INSTANCE *my, int64_t *params);
+extern int64_t libmod_heightmap_update_billboard_graph(INSTANCE *my, int64_t *params);
 // Declaraciones forward para skybox  
 static uint32_t sample_sky_texture(float screen_x, float screen_y, float camera_angle, float camera_pitch, float time);  
 static void render_skybox(float camera_angle, float camera_pitch, float time, int quality_step);

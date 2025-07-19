@@ -703,6 +703,21 @@ static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *bil
     }  
       
     result.alpha = (Uint8)(255 * fog);  
+    // NUEVO: Aplicar tintado de niebla a billboards  
+if (fog_intensity > 0.0f && distance > max_render_distance * 0.3f) {  
+    float fog_start = max_render_distance * 0.3f;  
+    float fog_range = max_render_distance - fog_start;  
+    float fog_progress = (distance - fog_start) / fog_range;  
+    fog_progress = fog_progress * fog_progress;  
+      
+    float fog_tint_factor = fog_progress * fog_intensity * 0.3f;  
+    if (fog_tint_factor > 0.5f) fog_tint_factor = 0.5f;  
+      
+    // Almacenar el factor de tintado para usar en el renderizado  
+    result.fog_tint_factor = fog_tint_factor;  
+} else {  
+    result.fog_tint_factor = 0.0f;  
+}
       
     result.valid = 1;  
     return result;  
@@ -830,7 +845,7 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
             }    
             
             float terrain_height = get_height_at(hm, world_x, world_y);    
-                
+              
             // Renderizar terreno/agua según su altura real    
             float render_height;    
             int render_water = 0;    
@@ -840,6 +855,7 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
                 render_height = water_level + simple_wave;    
                 render_water = 1;    
             } else {    
+                
                 render_height = terrain_height;    
             }    
                 
@@ -943,7 +959,29 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
                         terrain_b = (Uint8)(base);    
                     }    
                         
-                    uint32_t terrain_color = SDL_MapRGB(gPixelFormat, terrain_r, terrain_g, terrain_b);    
+                 uint32_t terrain_color = SDL_MapRGB(gPixelFormat, terrain_r, terrain_g, terrain_b);  
+// NIEBLA FORZADA - después de la línea 946  
+if (fog_intensity > 0.0f) {  
+    // Aplicar niebla desde distancias más cercanas  
+    if (distance > max_render_distance * 0.2f) {  
+        float fog_progress = (distance - max_render_distance * 0.2f) / (max_render_distance * 0.8f);  
+          
+        // Factor de niebla MUY agresivo para que se vea  
+        float fog_factor = fog_progress * fog_intensity * 2.0f; // Multiplicador x2  
+          
+        if (fog_factor > 0.9f) fog_factor = 0.9f; // Permitir hasta 90% de niebla  
+          
+        if (fog_factor > 0.1f) { // Aplicar desde 10% en adelante  
+            float terrain_factor = 1.0f - fog_factor;  
+              
+            Uint8 final_r = (Uint8)(terrain_r * terrain_factor + fog_color_r * fog_factor);  
+            Uint8 final_g = (Uint8)(terrain_g * terrain_factor + fog_color_g * fog_factor);  
+            Uint8 final_b = (Uint8)(terrain_b * terrain_factor + fog_color_b * fog_factor);  
+              
+            terrain_color = SDL_MapRGB(gPixelFormat, final_r, final_g, final_b);  
+        }  
+    }  
+}
                     for (int y = screen_y; y < lowest_y; y++) {    
                         gr_put_pixel(render_buffer, screen_x, y, terrain_color);    
                         int depth_index = y * 320 + screen_x;    
@@ -2035,6 +2073,19 @@ int64_t libmod_heightmap_update_billboard(INSTANCE *my, int64_t *params) {
 
     return 0;  
 
+}
+
+int64_t libmod_heightmap_update_billboard_graph(INSTANCE *my, int64_t *params) {  
+    int64_t process_id = params[0];  
+    int64_t new_graph_id = params[1];  
+      
+    for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {  
+        if (dynamic_billboards[i].active && dynamic_billboards[i].process_id == process_id) {  
+            dynamic_billboards[i].graph_id = new_graph_id;  
+            return 1;  
+        }  
+    }  
+    return 0;  
 }
 
 int64_t libmod_heightmap_unregister_billboard(INSTANCE *my, int64_t *params) {      

@@ -81,6 +81,7 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC( "HEIGHTMAP_ADD_VOXEL_BILLBOARD", "FFIIF", TYPE_INT, libmod_heightmap_add_voxel_billboard ),  
     FUNC( "HEIGHTMAP_REGISTER_BILLBOARD", "IFFFII", TYPE_INT, libmod_heightmap_register_billboard),  
     FUNC( "HEIGHTMAP_UPDATE_BILLBOARD", "IFFF", TYPE_INT, libmod_heightmap_update_billboard),    
+    FUNC("HEIGHTMAP_UPDATE_BILLBOARD_GRAPH", "II", TYPE_INT, libmod_heightmap_update_billboard_graph),
     FUNC( "HEIGHTMAP_UNREGISTER_BILLBOARD", "I", TYPE_INT, libmod_heightmap_unregister_billboard),    
     FUNC("HEIGHTMAP_SET_BILLBOARD_FOV", "I", TYPE_INT, libmod_heightmap_set_billboard_fov),  
     FUNC(0, 0, 0, 0)};  
