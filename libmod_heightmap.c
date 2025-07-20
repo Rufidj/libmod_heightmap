@@ -298,117 +298,6 @@ int64_t libmod_heightmap_load(INSTANCE *my, int64_t *params)
     return heightmaps[slot].id;
 }
 
-int64_t libmod_heightmap_load_tiles_from_fpg(INSTANCE *my, int64_t *params)  
-{  
-    const char *fpg_filename = string_get(params[0]);  
-    int start_graph_id = (int)params[1];  
-    int tile_width = (int)params[2];  
-    int tile_height = (int)params[3];  
-    int world_tiles_x = (int)params[4];  
-    int world_tiles_y = (int)params[5];  
-      
-    // Cargar FPG usando el sistema de BennuGD2  
-    int64_t fpg_id = gr_load_fpg(fpg_filename);  
-    string_discard(params[0]);  
-      
-    if (!fpg_id) return 0;  
-      
-    // Encontrar slot libre (mismo patrón que la función original)  
-    int slot = -1;  
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        if (!heightmaps[i].heightmap && !heightmaps[i].is_fpg_tiled) {  
-            slot = i;  
-            break;  
-        }  
-    }  
-      
-    if (slot == -1) return 0;  
-      
-    // Configurar heightmap para FPG  
-    heightmaps[slot].id = next_heightmap_id++;  
-    heightmaps[slot].is_fpg_tiled = 1;  
-    heightmaps[slot].fpg_id = fpg_id;  
-    heightmaps[slot].start_graph_id = start_graph_id;  
-    heightmaps[slot].tile_width = tile_width;  
-    heightmaps[slot].tile_height = tile_height;  
-    heightmaps[slot].tiles_x = world_tiles_x;  
-    heightmaps[slot].tiles_y = world_tiles_y;  
-    heightmaps[slot].width = tile_width * world_tiles_x;  
-    heightmaps[slot].height = tile_height * world_tiles_y;  
-      
-    // Inicializar arrays  
-    int total_tiles = world_tiles_x * world_tiles_y;  
-    heightmaps[slot].tile_array = calloc(total_tiles, sizeof(GRAPH*));  
-    heightmaps[slot].tile_caches = calloc(total_tiles, sizeof(float*));  
-    heightmaps[slot].tile_loaded = calloc(total_tiles, sizeof(int));  
-      
-    return heightmaps[slot].id;  
-}
-
-void load_tile_from_fpg_on_demand(HEIGHTMAP *hm, int tile_x, int tile_y) {  
-    if (!hm->is_fpg_tiled) return;  
-      
-    int tile_index = tile_y * hm->tiles_x + tile_x;  
-    if (hm->tile_loaded[tile_index]) return;  
-      
-    int graph_id = hm->start_graph_id + tile_index;  
-    GRAPH *tile_graph = bitmap_get(hm->fpg_id, graph_id);  
-      
-    if (tile_graph) {  
-        hm->tile_array[tile_index] = tile_graph;  
-        build_tile_height_cache(hm, tile_index);  
-        hm->tile_loaded[tile_index] = 1;  
-    }  
-}
-
-void build_tile_height_cache(HEIGHTMAP *hm, int tile_index) {  
-    if (!hm->tile_array[tile_index]) return;  
-      
-    GRAPH *tile_graph = hm->tile_array[tile_index];  
-      
-    // Liberar cache anterior si existe  
-    if (hm->tile_caches[tile_index]) {  
-        free(hm->tile_caches[tile_index]);  
-    }  
-      
-    // Crear cache para este tile específico  
-    hm->tile_caches[tile_index] = malloc(hm->tile_width * hm->tile_height * sizeof(float));  
-      
-    if (!hm->tile_caches[tile_index]) return;  
-      
-    // Procesar pixels del tile (mismo patrón que build_height_cache)  
-    for (int y = 0; y < hm->tile_height; y++) {  
-        for (int x = 0; x < hm->tile_width; x++) {  
-            uint32_t pixel = gr_get_pixel(tile_graph, x, y);  
-            float height = (float)((pixel >> 16) & 0xFF);  
-            hm->tile_caches[tile_index][y * hm->tile_width + x] = height;  
-        }  
-    }  
-}
-
-float get_height_from_tile_cache(HEIGHTMAP *hm, int tile_index, float local_x, float local_y) {  
-    if (!hm->tile_caches[tile_index]) return 0.0f;  
-      
-    int ix = (int)local_x;  
-    int iy = (int)local_y;  
-      
-    if (ix < 0 || ix >= hm->tile_width - 1 || iy < 0 || iy >= hm->tile_height - 1)  
-        return 0.0f;  
-      
-    // Interpolación bilineal (mismo patrón que get_height_at)  
-    float fx = local_x - ix;  
-    float fy = local_y - iy;  
-      
-    float *cache = hm->tile_caches[tile_index];  
-    float h00 = cache[iy * hm->tile_width + ix];  
-    float h10 = cache[iy * hm->tile_width + (ix + 1)];  
-    float h01 = cache[(iy + 1) * hm->tile_width + ix];  
-    float h11 = cache[(iy + 1) * hm->tile_width + (ix + 1)];  
-      
-    float h0 = h00 + fx * (h10 - h00);  
-    float h1 = h01 + fx * (h11 - h01);  
-    return h0 + fy * (h1 - h0);  
-}
 
 /* Crear mapa de altura en memoria */
 int64_t libmod_heightmap_create(INSTANCE *my, int64_t *params)
@@ -453,58 +342,40 @@ int64_t libmod_heightmap_create(INSTANCE *my, int64_t *params)
 } // ← Esta llave de cierre faltaba
 
 /* Descargar mapa de altura */
-int64_t libmod_heightmap_unload(INSTANCE *my, int64_t *params)
-{
-    int64_t hm_id = params[0];
-
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            if (heightmaps[i].height_cache)
-            {
-                free(heightmaps[i].height_cache);
-                heightmaps[i].height_cache = NULL;
-            }
-
-            // Destruir correctamente la estructura GRAPH
-            if (heightmaps[i].heightmap)
-            {
-                bitmap_destroy(heightmaps[i].heightmap);
-                heightmaps[i].heightmap = NULL;
-            }
-
-            // Limpiar mapa de textura si existe
-            if (heightmaps[i].texturemap)
-            {
-                bitmap_destroy(heightmaps[i].texturemap);
-                heightmaps[i].texturemap = NULL;
-            }
-
-            memset(&heightmaps[i], 0, sizeof(HEIGHTMAP));
-            return 1;
-        }
-            if (heightmaps[i].is_fpg_tiled) {  
-    // Limpiar arrays de tiles  
-    if (heightmaps[i].tile_array) {  
-        free(heightmaps[i].tile_array);  
-    }  
-    if (heightmaps[i].tile_caches) {  
-        int total_tiles = heightmaps[i].tiles_x * heightmaps[i].tiles_y;  
-        for (int j = 0; j < total_tiles; j++) {  
-            if (heightmaps[i].tile_caches[j]) {  
-                free(heightmaps[i].tile_caches[j]);  
+int64_t libmod_heightmap_unload(INSTANCE *my, int64_t *params)  
+{  
+    int64_t hm_id = params[0];  
+  
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++)  
+    {  
+        if (heightmaps[i].id == hm_id)  
+        {  
+            if (heightmaps[i].height_cache)  
+            {  
+                free(heightmaps[i].height_cache);  
+                heightmaps[i].height_cache = NULL;  
             }  
+  
+            // Destruir correctamente la estructura GRAPH  
+            if (heightmaps[i].heightmap)  
+            {  
+                bitmap_destroy(heightmaps[i].heightmap);  
+                heightmaps[i].heightmap = NULL;  
+            }  
+  
+            // Limpiar mapa de textura si existe  
+            if (heightmaps[i].texturemap)  
+            {  
+                bitmap_destroy(heightmaps[i].texturemap);  
+                heightmaps[i].texturemap = NULL;  
+            }  
+  
+            memset(&heightmaps[i], 0, sizeof(HEIGHTMAP));  
+            return 1;  
         }  
-        free(heightmaps[i].tile_caches);  
     }  
-    if (heightmaps[i].tile_loaded) {  
-        free(heightmaps[i].tile_loaded);  
-    }  
-}
-    }
-    
-    return 0;
+      
+    return 0;  
 }
 
 /* Obtener altura */
@@ -522,54 +393,32 @@ if (hm) {
 return 0;
 }
 
-float get_height_at(HEIGHTMAP *hm, float x, float y) {  
-    // Verificar si es modo FPG tileado  
-    if (hm->is_fpg_tiled) {  
-        int tile_x = (int)(x / hm->tile_width);  
-        int tile_y = (int)(y / hm->tile_height);  
-          
-        if (tile_x < 0 || tile_x >= hm->tiles_x ||   
-            tile_y < 0 || tile_y >= hm->tiles_y) {  
-            return 0;  
-        }  
-          
-        int tile_index = tile_y * hm->tiles_x + tile_x;  
-          
-        // Cargar tile si no está cargado  
-        if (!hm->tile_loaded[tile_index]) {  
-            load_tile_from_fpg_on_demand(hm, tile_x, tile_y);  
-        }  
-          
-        // Obtener coordenadas locales dentro del tile  
-        float local_x = fmod(x, hm->tile_width);  
-        float local_y = fmod(y, hm->tile_height);  
-        return get_height_from_tile_cache(hm, tile_index, local_x, local_y);  
-    }  
-      
-    // Código original para heightmaps tradicionales  
-    if (!hm->cache_valid)  
-        return 0;  
-  
-    int ix = (int)x;  
-    int iy = (int)y;  
-  
-    if (ix < 0 || ix >= hm->width - 1 || iy < 0 || iy >= hm->height - 1)  
-        return 0;  
-  
-    float fx = x - ix;  
-    float fy = y - iy;  
-  
-    float h00 = hm->height_cache[iy * hm->width + ix];  
-    float h10 = hm->height_cache[iy * hm->width + (ix + 1)];  
-    float h01 = hm->height_cache[(iy + 1) * hm->width + ix];  
-    float h11 = hm->height_cache[(iy + 1) * hm->width + (ix + 1)];  
-  
-    float h0 = h00 + fx * (h10 - h00);  
-    float h1 = h01 + fx * (h11 - h01);  
-    float h = h0 + fy * (h1 - h0);  
-  
-    return h;  
+float get_height_at(HEIGHTMAP *hm, float x, float y) {    
+    // Código original para heightmaps tradicionales    
+    if (!hm->cache_valid)    
+        return 0;    
+    
+    int ix = (int)x;    
+    int iy = (int)y;    
+    
+    if (ix < 0 || ix >= hm->width - 1 || iy < 0 || iy >= hm->height - 1)    
+        return 0;    
+    
+    float fx = x - ix;    
+    float fy = y - iy;    
+    
+    float h00 = hm->height_cache[iy * hm->width + ix];    
+    float h10 = hm->height_cache[iy * hm->width + (ix + 1)];    
+    float h01 = hm->height_cache[(iy + 1) * hm->width + ix];    
+    float h11 = hm->height_cache[(iy + 1) * hm->width + (ix + 1)];    
+    
+    float h0 = h00 + fx * (h10 - h00);    
+    float h1 = h01 + fx * (h11 - h01);    
+    float h = h0 + fy * (h1 - h0);    
+    
+    return h;    
 }
+
 
 /* Configurar cámara 3D - Original */
 int64_t libmod_heightmap_set_camera(INSTANCE *my, int64_t *params)
@@ -2126,9 +1975,6 @@ if (static_billboard_count < MAX_STATIC_BILLBOARDS) {
     static_billboards[static_billboard_count].process_id = 0;      
     // AGREGAR ESTA LÍNEA CRÍTICA:    
     static_billboards[static_billboard_count].billboard_type = 0; // Tipo por defecto (estático)    
-      
-    printf("DEBUG BILLBOARD: Añadido billboard estático #%d en (%.2f,%.2f,%.2f) graph_id=%d\\n",   
-           static_billboard_count, world_x, world_y, final_world_z, graph_id);  
               
     return static_billboard_count++;      
 }          

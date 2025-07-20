@@ -22,25 +22,17 @@
 
   
 /* Estructuras para el módulo de heightmap */  
-typedef struct {    
-    int64_t id;    
-    GRAPH *heightmap;        // Para modo tradicional  
-    GRAPH *texturemap;         
-    int64_t width;    
-    int64_t height;    
-    float *height_cache;       
-    int cache_valid;  
-      
-    // CAMPOS PARA FPG TILES  
-    int is_fpg_tiled;        // Flag para modo FPG  
-    int64_t fpg_id;          // ID del archivo FPG cargado  
-    int start_graph_id;      // ID inicial en el FPG  
-    int tile_width, tile_height;  
-    int tiles_x, tiles_y;  
-    GRAPH **tile_array;      // Array de tiles del FPG  
-    float **tile_caches;       
-    int *tile_loaded;          
+typedef struct {      
+    int64_t id;      
+    GRAPH *heightmap;        // Para modo tradicional    
+    GRAPH *texturemap;           
+    int64_t width;      
+    int64_t height;      
+    float *height_cache;         
+    int cache_valid;    
 } HEIGHTMAP;
+
+
   
 typedef struct {  
     float x, y, z;  
@@ -61,7 +53,7 @@ typedef struct {
 
 
 /* Constantes */  
-#define MAX_HEIGHTMAPS 256  
+#define MAX_HEIGHTMAPS 512  
 #define DEFAULT_FOV 60.0f  
 #define DEFAULT_NEAR 1.0f  
 #define DEFAULT_FAR 1000.0f  
@@ -97,5 +89,10 @@ static float calculate_volumetric_fog(float world_z, float distance);
 /* Funciones internas */  
 extern float get_height_at(HEIGHTMAP *hm, float x, float y);  
 extern void build_height_cache(HEIGHTMAP *hm);  
-  
+/* Funciones internas para tiles */  
+extern void build_tile_height_cache(HEIGHTMAP *hm, int tile_index);  
+extern void load_tile_from_folder_on_demand(HEIGHTMAP *hm, int tile_x, int tile_y);  
+extern void load_tile_from_fpg_on_demand(HEIGHTMAP *hm, int tile_x, int tile_y);  
+extern float get_height_from_tile_cache(HEIGHTMAP *hm, int tile_index, float local_x, float local_y);  
+extern int64_t libmod_heightmap_load_tiles_from_folder(INSTANCE *my, int64_t *params);
 #endif
