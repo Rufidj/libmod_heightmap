@@ -22,6 +22,7 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
   
     // Funciones existentes del heightmap  
     FUNC("HEIGHTMAP_LOAD", "S", TYPE_INT, libmod_heightmap_load),  
+    FUNC("HEIGHTMAP_LOAD_TILES_FROM_FPG", "SIIIIII", TYPE_INT, libmod_heightmap_load_tiles_from_fpg),
     FUNC("HEIGHTMAP_RENDER_3D", "III", TYPE_INT, libmod_heightmap_render_voxelspace),  
     FUNC("HEIGHTMAP_SET_CAMERA", "IIIIII", TYPE_INT, libmod_heightmap_set_camera),  
     FUNC("HEIGHTMAP_SET_LIGHT", "I", TYPE_INT, libmod_heightmap_set_light),  

@@ -22,15 +22,25 @@
 
   
 /* Estructuras para el módulo de heightmap */  
-typedef struct {  
-    int64_t id;  
-    GRAPH *heightmap;  
-    GRAPH *texturemap; // Nuevo: Mapa de texturas  
-    int64_t width;  
-    int64_t height;  
-    float *height_cache;  
+typedef struct {    
+    int64_t id;    
+    GRAPH *heightmap;        // Para modo tradicional  
+    GRAPH *texturemap;         
+    int64_t width;    
+    int64_t height;    
+    float *height_cache;       
     int cache_valid;  
-} HEIGHTMAP;  
+      
+    // CAMPOS PARA FPG TILES  
+    int is_fpg_tiled;        // Flag para modo FPG  
+    int64_t fpg_id;          // ID del archivo FPG cargado  
+    int start_graph_id;      // ID inicial en el FPG  
+    int tile_width, tile_height;  
+    int tiles_x, tiles_y;  
+    GRAPH **tile_array;      // Array de tiles del FPG  
+    float **tile_caches;       
+    int *tile_loaded;          
+} HEIGHTMAP;
   
 typedef struct {  
     float x, y, z;  
