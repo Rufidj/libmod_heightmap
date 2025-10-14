@@ -96,7 +96,10 @@ static int current_heightmap_id = 0;
 static GRAPH *render_buffer = NULL;
 static float *fog_table = NULL;      
 static int fog_table_size = 0;      
-static int fog_table_initialized = 0;     
+static int fog_table_initialized = 0;   
+
+static float cached_fog_intensity = -1.0f;  
+static Uint8 cached_fog_r = 0, cached_fog_g = 0, cached_fog_b = 0;
 
 #define BILLBOARD_TYPE_STATIC     0  
 #define BILLBOARD_TYPE_PLAYER     1  
@@ -282,8 +285,16 @@ int64_t libmod_heightmap_load(INSTANCE *my, int64_t *params)
         }
     }
 
-    if (slot == -1)
-        return 0;
+        if (slot == -1) {  
+        fprintf(stderr, "Error: MAX_HEIGHTMAPS (%d) alcanzado\n", MAX_HEIGHTMAPS);  
+        return 0;  
+    }  
+      
+    // Verificar que next_heightmap_id no desborde  
+    if (next_heightmap_id >= INT64_MAX - 1) {  
+        fprintf(stderr, "Error: next_heightmap_id overflow\n");  
+        return 0;  
+    }
 
     heightmaps[slot].id = next_heightmap_id++;
     heightmaps[slot].heightmap = graph;
@@ -319,8 +330,16 @@ int64_t libmod_heightmap_create(INSTANCE *my, int64_t *params)
         }
     }
 
-    if (slot == -1)
-        return 0;
+       if (slot == -1) {  
+        fprintf(stderr, "Error: MAX_HEIGHTMAPS (%d) alcanzado\n", MAX_HEIGHTMAPS);  
+        return 0;  
+    }  
+      
+    // Verificar que next_heightmap_id no desborde  
+    if (next_heightmap_id >= INT64_MAX - 1) {  
+        fprintf(stderr, "Error: next_heightmap_id overflow\n");  
+        return 0;  
+    }
 
     heightmaps[slot].id = next_heightmap_id++;
     heightmaps[slot].heightmap = graph;
@@ -802,17 +821,19 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
         fog_table_initialized = 1;    
     }    
      
-    for (int screen_x = 0; screen_x < 320; screen_x += quality_step) {    
-        float angle = base_angle + screen_x * angle_step;    
-            
-        float camera_fov_half = terrain_fov * 0.5f;    
-        float min_angle = camera.angle - camera_fov_half;    
-        float max_angle = camera.angle + camera_fov_half;    
-        if (angle < min_angle || angle > max_angle)    
-            continue;    
-            
-        float cos_angle = cosf(angle);    
-        float sin_angle = sinf(angle);    
+        // Precalcular límites de FOV (ANTES del loop)  
+        float camera_fov_half = terrain_fov * 0.5f;      
+        float min_angle = camera.angle - camera_fov_half;      
+        float max_angle = camera.angle + camera_fov_half;  
+  
+        for (int screen_x = 0; screen_x < 320; screen_x += quality_step) {      
+        float angle = base_angle + screen_x * angle_step;      
+          
+        if (angle < min_angle || angle > max_angle)      
+        continue;      
+          
+        float cos_angle = cosf(angle);      
+        float sin_angle = sinf(angle);   
         int lowest_y = 240;    
             
         for (float distance = 1.0f; distance < max_render_distance; distance += (distance < 50.0f ? 0.2f : distance < 200.0f ? 0.5f : 1.0f)) {    
@@ -861,20 +882,19 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
                     
                 if (render_water) {    
                     // Renderizar agua (sin cambios)  
-                    if (water_texture) {    
-                        float u = (world_x * 0.01f + cached_water_time * 0.1f);    
-                        float v = (world_y * 0.01f + cached_water_time * 0.05f);    
-                            
-                        u = u - floor(u);    
-                        v = v - floor(v);    
-                            
-                        int tex_x = (int)(u * water_texture->width);    
-                        int tex_y = (int)(v * water_texture->height);    
-                            
-                        tex_x = tex_x % water_texture->width;    
-                        tex_y = tex_y % water_texture->height;    
-                        if (tex_x < 0) tex_x += water_texture->width;    
-                        if (tex_y < 0) tex_y += water_texture->height;    
+                if (water_texture && water_texture->width > 0 && water_texture->height > 0) {  
+                float u = (world_x * 0.01f + cached_water_time * 0.1f);  
+                float v = (world_y * 0.01f + cached_water_time * 0.05f);  
+      
+                u = u - floor(u);  
+                v = v - floor(v);  
+      
+                int tex_x = (int)(u * water_texture->width);  
+                int tex_y = (int)(v * water_texture->height);  
+      
+                 // Clamp en lugar de modulo para evitar valores negativos  
+                tex_x = (tex_x < 0) ? 0 : (tex_x >= water_texture->width) ? water_texture->width - 1 : tex_x;  
+                tex_y = (tex_y < 0) ? 0 : (tex_y >= water_texture->height) ? water_texture->height - 1 : tex_y;   
                             
                       //                        uint32_t water_color = gr_get_pixel(water_texture, tex_x, tex_y);
 //
@@ -1068,28 +1088,21 @@ void build_height_cache(HEIGHTMAP *hm)
         return;
 
 
-    if (hm->height_cache)
-
-    {
-
-        free(hm->height_cache);
-
-        hm->height_cache = NULL;
-
-    }
-
-
-    hm->height_cache = malloc(hm->width * hm->height * sizeof(float));
-
-    if (!hm->height_cache)
-
-    {
-
-        hm->cache_valid = 0;
-
-        return;
-
-    }
+   if (hm->height_cache)  
+{  
+    free(hm->height_cache);  
+    hm->height_cache = NULL;  
+    hm->cache_valid = 0;  
+}  
+  
+hm->height_cache = malloc(hm->width * hm->height * sizeof(float));  
+if (!hm->height_cache)  
+{  
+    hm->cache_valid = 0;  
+    fprintf(stderr, "Error: No se pudo asignar height_cache para heightmap %dx%d\n",   
+            (int)hm->width, (int)hm->height);  
+    return;  
+}
 
 
     for (int y = 0; y < hm->height; y++)
@@ -1156,20 +1169,24 @@ uint32_t get_texture_color_bilinear(GRAPH *texture, float x, float y) {
     Uint8 r01, g01, b01, a01 = 255;  
     Uint8 r11, g11, b11, a11 = 255;  
   
-    // Manejar diferentes formatos de pixel  
-    if (gPixelFormat->BytesPerPixel == 4) {  
-        // RGBA format  
-        SDL_GetRGBA(c00, gPixelFormat, &r00, &g00, &b00, &a00);  
-        SDL_GetRGBA(c10, gPixelFormat, &r10, &g10, &b10, &a10);  
-        SDL_GetRGBA(c01, gPixelFormat, &r01, &g01, &b01, &a01);  
-        SDL_GetRGBA(c11, gPixelFormat, &r11, &g11, &b11, &a11);  
-    } else {  
-        // RGB format  
-        SDL_GetRGB(c00, gPixelFormat, &r00, &g00, &b00);  
-        SDL_GetRGB(c10, gPixelFormat, &r10, &g10, &b10);  
-        SDL_GetRGB(c01, gPixelFormat, &r01, &g01, &b01);  
-        SDL_GetRGB(c11, gPixelFormat, &r11, &g11, &b11);  
-    }  
+  // Al inicio de la función, después de las validaciones  
+static int cached_bytes_per_pixel = 0;  
+if (cached_bytes_per_pixel == 0) {  
+    cached_bytes_per_pixel = gPixelFormat->BytesPerPixel;  
+}  
+  
+// Luego usar el valor cacheado  
+if (cached_bytes_per_pixel == 4) {  
+    SDL_GetRGBA(c00, gPixelFormat, &r00, &g00, &b00, &a00);  
+    SDL_GetRGBA(c10, gPixelFormat, &r10, &g10, &b10, &a10);  
+    SDL_GetRGBA(c01, gPixelFormat, &r01, &g01, &b01, &a01);  
+    SDL_GetRGBA(c11, gPixelFormat, &r11, &g11, &b11, &a11);  
+} else {  
+    SDL_GetRGB(c00, gPixelFormat, &r00, &g00, &b00);  
+    SDL_GetRGB(c10, gPixelFormat, &r10, &g10, &b10);  
+    SDL_GetRGB(c01, gPixelFormat, &r01, &g01, &b01);  
+    SDL_GetRGB(c11, gPixelFormat, &r11, &g11, &b11);  
+}
   
     // Interpolación bilineal mejorada  
     float r0 = r00 + fx * (r10 - r00);  
@@ -1417,8 +1434,16 @@ int64_t libmod_heightmap_create_procedural(INSTANCE *my, int64_t *params)
         }
     }
 
-    if (slot == -1)
-        return 0;
+    if (slot == -1) {  
+        fprintf(stderr, "Error: MAX_HEIGHTMAPS (%d) alcanzado\n", MAX_HEIGHTMAPS);  
+        return 0;  
+    }  
+      
+    // Verificar que next_heightmap_id no desborde  
+    if (next_heightmap_id >= INT64_MAX - 1) {  
+        fprintf(stderr, "Error: next_heightmap_id overflow\n");  
+        return 0;  
+    }
 
     heightmaps[slot].id = next_heightmap_id++;
     heightmaps[slot].heightmap = graph;
@@ -1454,15 +1479,7 @@ int64_t libmod_heightmap_check_terrain_collision(INSTANCE *my, int64_t *params)
 {
     int64_t hm_id = params[0];
 
-    HEIGHTMAP *hm = NULL;
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            hm = &heightmaps[i];
-            break;
-        }
-    }
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);
 
     if (!hm || !hm->cache_valid)
         return 0;
@@ -1505,11 +1522,11 @@ int64_t libmod_heightmap_get_terrain_height_at_sprite(INSTANCE *my, int64_t *par
         return 0;
 
     // Convertir coordenadas de sprite a coordenadas del heightmap
-    float world_x = (float)sprite_x / 10.0f; // Ajusta el factor según tu escala
-    float world_y = (float)sprite_y / 10.0f;
+    float world_x = (float)sprite_x / WORLD_TO_SPRITE_SCALE;  
+    float world_y = (float)sprite_y / WORLD_TO_SPRITE_SCALE;
 
     float terrain_height = get_height_at(hm, world_x, world_y);
-    return (int64_t)(terrain_height * 10.0f); // Devolver en coordenadas de sprite
+    return (int64_t)(terrain_height * WORLD_TO_SPRITE_SCALE);// Devolver en coordenadas de sprite
 }
 
 /* Verificar si un sprite puede moverse a una posición sin atravesar terreno */
@@ -1520,22 +1537,14 @@ int64_t libmod_heightmap_can_sprite_move_to(INSTANCE *my, int64_t *params)
     int64_t new_y = params[2];
     int64_t sprite_height = params[3]; // Altura del sprite sobre el suelo
 
-    HEIGHTMAP *hm = NULL;
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            hm = &heightmaps[i];
-            break;
-        }
-    }
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);
 
     if (!hm || !hm->cache_valid)
         return 1; // Permitir movimiento si no hay heightmap
 
     // Convertir a coordenadas del heightmap
-    float world_x = (float)new_x / 10.0f;
-    float world_y = (float)new_y / 10.0f;
+    float world_x = (float)new_x / WORLD_TO_SPRITE_SCALE;  
+    float world_y = (float)new_y / WORLD_TO_SPRITE_SCALE;
 
     // Verificar límites del mapa
     if (world_x < 0 || world_x >= hm->width - 1 ||
@@ -1543,7 +1552,7 @@ int64_t libmod_heightmap_can_sprite_move_to(INSTANCE *my, int64_t *params)
         return 0; // No permitir movimiento fuera del mapa
 
     float terrain_height = get_height_at(hm, world_x, world_y);
-    float required_height = terrain_height + (float)sprite_height / 10.0f;
+    float required_height = terrain_height + (float)sprite_height / WORLD_TO_SPRITE_SCALE;
 
     // Verificar si hay suficiente espacio vertical
     // Puedes añadir lógica adicional aquí para verificar pendientes, etc.
@@ -1645,30 +1654,28 @@ int64_t libmod_heightmap_get_terrain_lighting(INSTANCE *my, int64_t *params)
     int64_t sprite_x = params[1];
     int64_t sprite_y = params[2];
 
-    HEIGHTMAP *hm = NULL;
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)
-    {
-        if (heightmaps[i].id == hm_id)
-        {
-            hm = &heightmaps[i];
-            break;
-        }
-    }
-
-    if (!hm || !hm->cache_valid)
-        return 255; // Iluminación completa por defecto
-
-    float world_x = (float)sprite_x / 10.0f;
-    float world_y = (float)sprite_y / 10.0f;
-
-    // Calcular distancia a la cámara para fog
-    float dx = world_x - camera.x;
-    float dy = world_y - camera.y;
-    float distance = sqrtf(dx * dx + dy * dy);
-
-    float fog = 1.0f - (distance / 800.0f);
-    if (fog < 0.6f)
-        fog = 0.6f;
+HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+  
+if (!hm || !hm->cache_valid)  
+    return 255;  
+  
+float world_x = (float)sprite_x / WORLD_TO_SPRITE_SCALE;  
+float world_y = (float)sprite_y / WORLD_TO_SPRITE_SCALE;  
+  
+// Validar coordenadas  
+if (world_x < 0 || world_x >= hm->width ||   
+    world_y < 0 || world_y >= hm->height) {  
+    return 255; // Fuera de límites, iluminación completa  
+}  
+  
+// Calcular distancia a la cámara para fog  
+float dx = world_x - camera.x;  
+float dy = world_y - camera.y;  
+float distance = sqrtf(dx * dx + dy * dy);  
+  
+float fog = 1.0f - (distance / FOG_MAX_DISTANCE);  
+if (fog < FOG_MIN_VISIBILITY)  
+    fog = FOG_MIN_VISIBILITY;
 
     float total_light = (light_intensity / 255.0f) * fog;
 
@@ -1777,33 +1784,48 @@ int64_t libmod_heightmap_set_sky_color(INSTANCE *my, int64_t *params)
 }
 
 // Nueva función para configurar distancia de dibujado
-int64_t libmod_heightmap_set_render_distance(INSTANCE *my, int64_t *params)
-{
-    float requested = (float)params[0];  // Añadir esta línea  
-    max_render_distance = (float)params[0];
-    if (max_render_distance < 100.0f)
-        max_render_distance = 100.0f;
-    if (max_render_distance > 2000.0f)
-        max_render_distance = 2000.0f;
-    return 1;
+int64_t libmod_heightmap_set_render_distance(INSTANCE *my, int64_t *params)  
+{  
+    float requested = (float)params[0];  
+      
+    if (requested < 0.0f) {  
+        fprintf(stderr, "Error: render_distance no puede ser negativa\n");  
+        return 0;  
+    }  
+      
+    max_render_distance = requested;  
+    if (max_render_distance < 100.0f)  
+        max_render_distance = 100.0f;  
+    if (max_render_distance > 2000.0f)  
+        max_render_distance = 2000.0f;  
+      
+    return 1;  
 }
 
 // Nueva función para configurar chunks
-int64_t libmod_heightmap_set_chunk_config(INSTANCE *my, int64_t *params)
-{
-    chunk_size = (int)params[0];
-    chunk_radius = (int)params[1];
-
-    if (chunk_size < 32)
-        chunk_size = 32;
-    if (chunk_size > 256)
-        chunk_size = 256;
-    if (chunk_radius < 2)
-        chunk_radius = 2;
-    if (chunk_radius > 10)
-        chunk_radius = 10;
-
-    return 1;
+int64_t libmod_heightmap_set_chunk_config(INSTANCE *my, int64_t *params)  
+{  
+    int requested_size = (int)params[0];  
+    int requested_radius = (int)params[1];  
+      
+    if (requested_size <= 0 || requested_radius <= 0) {  
+        fprintf(stderr, "Error: chunk_size y chunk_radius deben ser positivos\n");  
+        return 0;  
+    }  
+      
+    chunk_size = requested_size;  
+    chunk_radius = requested_radius;  
+  
+    if (chunk_size < 32)  
+        chunk_size = 32;  
+    if (chunk_size > 256)  
+        chunk_size = 256;  
+    if (chunk_radius < 2)  
+        chunk_radius = 2;  
+    if (chunk_radius > 10)  
+        chunk_radius = 10;  
+  
+    return 1;  
 }
 
 /* Marcar una instancia como billboard */  
@@ -2125,10 +2147,22 @@ int64_t libmod_heightmap_set_camera_follow(INSTANCE *my, int64_t *params)
 
 int64_t libmod_heightmap_set_fog_color(INSTANCE *my, int64_t *params)  
 {  
-    fog_color_r = (Uint8)params[0];  
-    fog_color_g = (Uint8)params[1];  
-    fog_color_b = (Uint8)params[2];  
-    fog_intensity = (float)params[3] / 1000.0f; // Pasar como entero *1000  
+    Uint8 new_r = (Uint8)params[0];  
+    Uint8 new_g = (Uint8)params[1];  
+    Uint8 new_b = (Uint8)params[2];  
+    float new_intensity = (float)params[3] / 1000.0f;  
+      
+    // Invalidar tabla si los parámetros cambiaron  
+    if (new_r != fog_color_r || new_g != fog_color_g ||   
+        new_b != fog_color_b || new_intensity != fog_intensity) {  
+        fog_table_initialized = 0;  
+    }  
+      
+    fog_color_r = new_r;  
+    fog_color_g = new_g;  
+    fog_color_b = new_b;  
+    fog_intensity = new_intensity;  
+      
     return 1;  
 }
 

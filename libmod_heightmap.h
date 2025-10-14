@@ -32,6 +32,36 @@ typedef struct {
     int cache_valid;    
 } HEIGHTMAP;
 
+// Constantes de conversión de coordenadas  
+#define WORLD_TO_SPRITE_SCALE 10.0f  
+#define SPRITE_TO_WORLD_SCALE 0.1f  
+  
+// Constantes de renderizado  
+#define DEFAULT_MAX_RENDER_DISTANCE 8000.0f  
+#define DEFAULT_CHUNK_SIZE 512  
+#define DEFAULT_CHUNK_RADIUS 15  
+  
+// Constantes de fog  
+#define FOG_MIN_VISIBILITY 0.6f  
+#define FOG_MAX_DISTANCE 800.0f
+
+// Constantes de proyección  
+#define PROJECTION_HEIGHT_SCALE 300.0f  
+#define PROJECTION_CENTER_Y 120.0f  
+  
+// Constantes de calidad de renderizado  
+#define QUALITY_STEP_NEAR 0.2f  
+#define QUALITY_STEP_MID 0.5f  
+#define QUALITY_STEP_FAR 1.0f  
+#define QUALITY_DISTANCE_NEAR 50.0f  
+#define QUALITY_DISTANCE_MID 200.0f  
+  
+// Constantes de agua  
+#define WATER_WAVE_FREQUENCY 0.05f  
+#define WATER_UV_SCALE 0.01f  
+#define WATER_TIME_SCALE_U 0.1f  
+#define WATER_TIME_SCALE_V 0.05f
+
 
   
 typedef struct {  
