@@ -139,7 +139,7 @@ static float fog_vertical_gradient = 0.5f;
 static Uint8 fog_color_r = 200;  
 static Uint8 fog_color_g = 200;   
 static Uint8 fog_color_b = 200;  
-static float fog_intensity = 1.0f;
+static float fog_intensity = 0.0f;
 
 
 // Variables globales para el color y la transparencia del agua
@@ -769,7 +769,7 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
         
     static float last_camera_x = 0, last_camera_y = 0, last_camera_angle = 0;    
     float movement = fabs(camera.x - last_camera_x) + fabs(camera.y - last_camera_y) + fabs(camera.angle - last_camera_angle);    
-    int quality_step = 1;
+    int quality_step = (movement > 15.0f) ? 2 : 1;  // Umbral más alto
     last_camera_x = camera.x;    
     last_camera_y = camera.y;    
     last_camera_angle = camera.angle;    
@@ -814,13 +814,26 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
         fog_table_size = (int)max_render_distance;    
         fog_table = malloc(fog_table_size * sizeof(float));    
             
-        for (int i = 0; i < fog_table_size; i++) {    
-            float fog = 1.0f - (i / (float)fog_table_size);    
-            fog_table[i] = (fog < 0.6f) ? 0.6f : fog;    
-        }    
+        for (int i = 0; i < fog_table_size; i++) {      
+        float fog = 1.0f - (i / (float)fog_table_size);  
+        // Solo aplicar mínimo si fog_intensity > 0  
+        if (fog_intensity > 0.0f) {  
+        fog_table[i] = (fog < 0.6f) ? 0.6f : fog;  
+        } else {  
+        fog_table[i] = fog;  // Sin mínimo cuando fog_intensity = 0  
+    }  
+}
         fog_table_initialized = 1;    
     }    
      
+        // NUEVO: Precalcular cos/sin para todas las columnas  
+        static float cos_cache[320];  
+        static float sin_cache[320];  
+        for (int i = 0; i < 320; i++) {  
+        float angle = base_angle + i * angle_step;  
+        cos_cache[i] = cosf(angle);  
+        sin_cache[i] = sinf(angle);  
+    }
         // Precalcular límites de FOV (ANTES del loop)  
         float camera_fov_half = terrain_fov * 0.5f;      
         float min_angle = camera.angle - camera_fov_half;      
@@ -832,11 +845,12 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
         if (angle < min_angle || angle > max_angle)      
         continue;      
           
-        float cos_angle = cosf(angle);      
-        float sin_angle = sinf(angle);   
+        float cos_angle = cos_cache[screen_x];  
+        float sin_angle = sin_cache[screen_x];  
         int lowest_y = 240;    
             
-        for (float distance = 1.0f; distance < max_render_distance; distance += (distance < 50.0f ? 0.2f : distance < 200.0f ? 0.5f : 1.0f)) {    
+        for (float distance = 1.0f; distance < max_render_distance;   
+        distance += (distance < 50.0f ? 0.3f : distance < 200.0f ? 0.8f : 1.5f)){    
             float world_x = camera.x + cos_angle * distance;    
             float world_y = camera.y + sin_angle * distance;    
             

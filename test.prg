@@ -26,9 +26,8 @@ GLOBAL
 PROCESS main()      
 BEGIN      
     set_mode(640, 480);      
-    set_fps(60, 0);      
-    window_set_title("Test Skybox Heightmap");      
-      
+    set_fps(0, 0);      
+    window_set_title("Test Skybox Heightmap FOG");      
     base_path = get_base_path();      
     assets_path = base_path + "assets/";      
         
@@ -73,8 +72,8 @@ BEGIN
     HEIGHTMAP_LOAD_TEXTURE(heightmap_id, assets_path + "terrain_texture.png");      
     HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(heightmap_id);      
     HEIGHTMAP_SET_LIGHT(200);      
-    HEIGHTMAP_SET_RENDER_DISTANCE(5000);      
-    HEIGHTMAP_SET_CHUNK_CONFIG(512, 512);    
+    HEIGHTMAP_SET_RENDER_DISTANCE(1000);      
+    HEIGHTMAP_SET_CHUNK_CONFIG(128, 0);    
     HEIGHTMAP_SET_WATER_TEXTURE(assets_path + "water.png", 30);    
     HEIGHTMAP_SET_WATER_LEVEL(20);    
     HEIGHTMAP_SET_WAVE_AMPLITUDE(20.0);    
@@ -84,8 +83,8 @@ BEGIN
     HEIGHTMAP_SET_SKY_COLOR(135, 206, 235, 255);      
 
     // Añadir niebla
-    HEIGHTMAP_SET_FOG_COLOR(255,255,255,1200);
-    HEIGHTMAP_SET_BILLBOARD_FOV(2000);  // 1.5 radianes ≈ 86 grados
+    HEIGHTMAP_SET_FOG_COLOR(255,255,255,200);
+    HEIGHTMAP_SET_BILLBOARD_FOV(0);  // 1.5 radianes ≈ 86 grados
       
     // Crear procesos  
     terrain_display();      
