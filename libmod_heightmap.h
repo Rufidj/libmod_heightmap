@@ -106,6 +106,8 @@ extern int64_t libmod_heightmap_load_overlay_mask(INSTANCE *my, int64_t *params)
 extern int64_t libmod_heightmap_load_bridge_texture(INSTANCE *my, int64_t *params);  
 extern int64_t libmod_heightmap_set_bridge_height(INSTANCE *my, int64_t *params);
 extern int64_t libmod_heightmap_update_billboard_graph(INSTANCE *my, int64_t *params);
+// Declaración para renderizado GPU  
+extern int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params);
 // Declaraciones forward para skybox  
 static uint32_t sample_sky_texture(float screen_x, float screen_y, float camera_angle, float camera_pitch, float time);  
 static void render_skybox(float camera_angle, float camera_pitch, float time, int quality_step);

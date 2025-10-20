@@ -3,34 +3,40 @@ import "libmod_input";
 import "libmod_misc";      
 import "libmod_heightmap";      
       
-GLOBAL      
-    int heightmap_id;      
-    string base_path;      
-    string assets_path;      
-    int tree_graph;    
-    int nave_graph;    
-    float camera_distance = 30.0;    
-    float camera_height = 15.0;    
-    float current_angle;      
-    float nave_x, nave_y, nave_z;  // Cambiar a int para coordenadas de proceso  
+GLOBAL  
+    int heightmap_id;  
+    string base_path;  
+    string assets_path;  
+    int tree_graph;  
+    int nave_graph;  
+    float camera_distance = 30.0;  
+    float camera_height = 15.0;  
+    float current_angle;  
+    float nave_x, nave_y, nave_z;  
     int nave_id;  
-    int bullet_graph;
-    float bullet_X, bullet_y, bullet_z; // Coordenadas de prueba disparo
-    int bullet_id;
-    float enemy_x, enemy_y, enemy_z;
-    int enemy_graph;
-    int enemy_id;
-    float enemy_shoot_x, enemy_shoot_y, enemy_shoot_z; 
-    float exact_enemy_x, exact_enemy_y, exact_enemy_z;
-    float global_enemy_shoot_x, global_enemy_shoot_y, global_enemy_shoot_z;
+    int bullet_graph;  
+    float bullet_X, bullet_y, bullet_z;  
+    int bullet_id;  
+    float enemy_x, enemy_y, enemy_z;  
+    int enemy_graph;  
+    int enemy_id;  
+    float enemy_shoot_x, enemy_shoot_y, enemy_shoot_z;  
+    float exact_enemy_x, exact_enemy_y, exact_enemy_z;  
+    float global_enemy_shoot_x, global_enemy_shoot_y, global_enemy_shoot_z;  
+    int voxel_shader_id;  
+    int voxel_shader_params_id;  
+      
+    // NUEVA VARIABLE PARA CONTROLAR GPU/CPU  
+    int use_gpu = 0;  // 0 = CPU, 1 = GPU
+
 PROCESS main()      
 BEGIN      
-    set_mode(640, 480);      
-    set_fps(0, 0);      
+    set_mode(640, 480);
+    set_fps(120, 0);      
     window_set_title("Test Skybox Heightmap FOG");      
     base_path = get_base_path();      
-    assets_path = base_path + "assets/";      
-        
+    assets_path = base_path + "assets/";        
+         
     // Verificar carga de gráficos    
     tree_graph = map_load(assets_path + "tree.png");    
     if (!tree_graph)    
@@ -113,84 +119,99 @@ HEIGHTMAP_SET_CAMERA_FOLLOW(
 );
 // En el bucle principal, actualizar el seguimiento  
 LOOP      
-    HEIGHTMAP_UPDATE_WATER_TIME();  
+      HEIGHTMAP_UPDATE_WATER_TIME();  
       
     if (nave_id != 0)  
-          HEIGHTMAP_UPDATE_CAMERA_FOLLOW(heightmap_id, nave_x, nave_y, nave_z); 
-       say("Pos nave: " + nave_x + "," + nave_y + "," + nave_z);
+        HEIGHTMAP_UPDATE_CAMERA_FOLLOW(heightmap_id, nave_x, nave_y, nave_z);  
+        say("Pos nave: " + nave_x + "," + nave_y + "," + nave_z);  
     end  
       
-    if(key(_esc)) exit(); end      
-    FRAME;      
+    // NUEVO: Cambiar entre GPU y CPU con la tecla G  
+    if (key(_g))  
+        use_gpu = !use_gpu;  
+        say("Cambiado a modo: " + (use_gpu ? "GPU" : "CPU"));  
+        while(key(_g)) FRAME; end  // Esperar a que se suelte la tecla  
+    end  
+      
+    if(key(_esc)) exit(); end  
+    FRAME;  
 END
-end 
+end
          
       
-PROCESS display_info()        
+PROCESS display_info()  
 PRIVATE  
     int cam_x, cam_y, cam_z, cam_angle, cam_pitch;  
     int debug_counter = 0;  
-BEGIN        
-    LOOP        
-        // Obtener posición actual de la cámara  
+BEGIN  
+    LOOP  
         HEIGHTMAP_GET_CAMERA_POSITION(&cam_x, &cam_y, &cam_z, &cam_angle, &cam_pitch);  
           
-        write(0, 10, 10, 0, "FPS: " + frame_info.fps);        
-        write(0, 10, 30, 0, "WASD: Mover nave | QE: Subir/Bajar");        
-        write(0, 10, 50, 0, "ESC: Salir");    
-        write(0, 10, 70, 0, "Pos nave: " + nave_x + "," + nave_y + "," + nave_z);  
+        write(0, 10, 10, 0, "FPS: " + frame_info.fps);  
+        write(0, 10, 30, 0, "WASD: Mover nave | QE: Subir/Bajar");  
           
-        // Debug de cámara en pantalla  
-        write(0, 10, 90, 0, "Cam pos: " + cam_x + "," + cam_y + "," + cam_z);  
-        write(0, 10, 110, 0, "Cam angle: " + cam_angle + " pitch: " + cam_pitch);  
-        write(0, 10, 130, 0, "Distancia nave-cam: " + sqrt((nave_x-cam_x)*(nave_x-cam_x) + (nave_y-cam_y)*(nave_y-cam_y)));  
+        // NUEVA LÍNEA: Mostrar modo de renderizado  
+        if (use_gpu)  
+            write(0, 10, 50, 0, "Modo: GPU (Presiona G para cambiar)");  
+        else  
+            write(0, 10, 50, 0, "Modo: CPU (Presiona G para cambiar)");  
+        end  
           
-        // Debug con say() cada 60 frames (1 segundo a 60fps)  
+        write(0, 10, 70, 0, "ESC: Salir");  
+        write(0, 10, 90, 0, "Pos nave: " + nave_x + "," + nave_y + "," + nave_z);  
+          
+        write(0, 10, 110, 0, "Cam pos: " + cam_x + "," + cam_y + "," + cam_z);  
+        write(0, 10, 130, 0, "Cam angle: " + cam_angle + " pitch: " + cam_pitch);  
+        write(0, 10, 150, 0, "Distancia nave-cam: " + sqrt((nave_x-cam_x)*(nave_x-cam_x) + (nave_y-cam_y)*(nave_y-cam_y)));  
+          
         debug_counter++;  
-        if (debug_counter >= 60) 
+        if (debug_counter >= 60)  
             say("=== DEBUG CAMARA ===");  
             say("Nave: " + nave_x + "," + nave_y + "," + nave_z);  
             say("Cam: " + cam_x + "," + cam_y + "," + cam_z);  
             say("Angle: " + cam_angle + " Pitch: " + cam_pitch);  
             say("Distancia: " + sqrt((nave_x-cam_x)*(nave_x-cam_x) + (nave_y-cam_y)*(nave_y-cam_y)));  
-            say ("====DISPARO====");
-            say ("Disparo " + bullet_x + "," + bullet_y + "," + bullet_z);
+            say("Modo renderizado: " + (use_gpu ? "GPU" : "CPU"));  
             say("==================");  
             debug_counter = 0;  
         end  
-            
-        FRAME;        
-        write_delete(all_text);        
-    END        
+          
+        FRAME;  
+        write_delete(all_text);  
+    END  
 END
 
- PROCESS terrain_display()          
-PRIVATE    
+ PROCESS terrain_display()  
+PRIVATE  
     int static_billboards_created = 0;  
     int i, j;  
     float tree_x, tree_y;  
     int trees_created = 0;  
-    int grid_size = 6; // 14x14 = 196 árboles (cerca de 200)  
+    int grid_size = 6;  
     float spacing_x, spacing_y;  
-BEGIN          
-    LOOP          
-        graph = HEIGHTMAP_RENDER_3D(heightmap_id, 320, 240);          
-        x = 320;          
-        y = 240;          
-        size = 200;          
-        
+BEGIN  
+    LOOP  
+        // MODIFICADO: Usar GPU o CPU según la variable global  
+        if (use_gpu)  
+            graph = HEIGHTMAP_RENDER_3D_GPU(heightmap_id, 320, 240);  
+        else  
+            graph = HEIGHTMAP_RENDER_3D(heightmap_id, 320, 240);  
+        end  
+          
+        x = 320;  
+        y = 240;  
+        size = 200;  
+          
         if (!static_billboards_created)  
             say("Creando árboles en grid " + grid_size + "x" + grid_size + "...");  
               
-            spacing_x = 1900.0 / grid_size; // Espaciado en X  
-            spacing_y = 1900.0 / grid_size; // Espaciado en Y  
+            spacing_x = 1900.0 / grid_size;  
+            spacing_y = 1900.0 / grid_size;  
             for (i = 0; i < grid_size; i++)  
                 for (j = 0; j < grid_size; j++)  
-                    // Posición base del grid con variación aleatoria  
                     tree_x = 100 + (i * spacing_x) + rand(-30, 30);  
                     tree_y = 100 + (j * spacing_y) + rand(-30, 30);  
                       
-                    // Asegurar que está dentro de los límites  
                     if (tree_x < 100) tree_x = 100; end  
                     if (tree_x > 2000) tree_x = 2000; end  
                     if (tree_y < 100) tree_y = 100; end  
@@ -203,11 +224,11 @@ BEGIN
             end  
               
             say("Árboles creados: " + trees_created);  
-            static_billboards_created = 1;    
-        end    
-            
-        FRAME;          
-    END          
+            static_billboards_created = 1;  
+        end  
+          
+        FRAME;  
+    END  
 END
   
 PROCESS nave()                  
@@ -229,8 +250,8 @@ BEGIN
             
         if (key(_s)) new_y -= speed; end        
         if (key(_w)) new_y += speed; end        
-        if (key(_a)) new_x -= speed; end        
-        if (key(_d)) new_x += speed; end        
+        if (key(_d)) new_x -= speed; end        
+        if (key(_a)) new_x += speed; end        
             
         // Límites con float  
         if (new_x < 100.0) new_x = 100.0; end             

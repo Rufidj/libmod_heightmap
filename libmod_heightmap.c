@@ -8,6 +8,8 @@
 #include <math.h>
 #include <stdio.h>
 #include "libbggfx.h"  
+#include <GL/glew.h>
+#include <inttypes.h>  
 
 // Si aún tienes problemas, puedes definir manualmente los offsets:  
 #ifndef CTYPE  
@@ -100,6 +102,16 @@ static int fog_table_initialized = 0;
 
 static float cached_fog_intensity = -1.0f;  
 static Uint8 cached_fog_r = 0, cached_fog_g = 0, cached_fog_b = 0;
+
+// Variables globales para renderizado GPU  
+// DESPUÉS (BennuGD2):  
+static BGD_SHADER *voxel_shader = NULL;  
+static BGD_SHADER_PARAMETERS *voxel_params = NULL;
+static GLuint voxel_heightmap_texture = 0;  
+static GLuint voxel_texturemap_texture = 0;
+static int glew_initialized = 0;  // ESTA VARIABLE ES LA QUE FALTA
+static GLuint voxel_fbo = 0;  
+static GLuint voxel_render_texture = 0;
 
 #define BILLBOARD_TYPE_STATIC     0  
 #define BILLBOARD_TYPE_PLAYER     1  
@@ -960,7 +972,12 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
                                 ty += texture_to_use->height;    
                             tex = gr_get_pixel(texture_to_use, tx, ty);    
                         }    
-                        SDL_GetRGB(tex, gPixelFormat, &terrain_r, &terrain_g, &terrain_b);    
+
+                    // DESPUÉS (versión correcta):  
+                    terrain_r = (tex >> gPixelFormat->Rshift) & 0xFF;  
+                    terrain_g = (tex >> gPixelFormat->Gshift) & 0xFF;  
+                    terrain_b = (tex >> gPixelFormat->Bshift) & 0xFF;
+
                     } else {    
                         int base = (int)(terrain_height * 2.5f) + 20;    
                         if (base > 255) base = 255;    
@@ -1091,7 +1108,461 @@ for (int i = 0; i < visible_count; i++) {
       
     return render_buffer->code;  
 }
-                               
+ 
+// ============================================================================  
+// RENDERIZADO GPU CON SHADERS  
+// ============================================================================  
+  
+// Vertex Shader  
+
+// Vertex Shader  
+static const char* voxel_vertex_shader_source =     
+"#version 120\n"    
+"attribute vec2 bgd_Vertex;\n"  
+"varying vec2 v_uv;\n"    
+"void main() {\n"    
+"    v_uv = bgd_Vertex * 0.5 + 0.5;\n"    
+"    gl_Position = vec4(bgd_Vertex, 0.0, 1.0);\n"    
+"}\n";  
+  
+// Fragment Shader  
+static const char* voxel_fragment_shader_source =     
+"#version 120\n"    
+"varying vec2 v_uv;\n"    
+"\n"    
+"uniform sampler2D u_heightmap;\n"    
+"uniform sampler2D u_texturemap;\n"    
+"uniform vec3 u_camera_pos;\n"    
+"uniform float u_camera_angle;\n"    
+"uniform float u_camera_pitch;\n"    
+"uniform float u_fov;\n"    
+"uniform float u_max_distance;\n"    
+"uniform float u_water_level;\n"    
+"uniform float u_light_intensity;\n"    
+"uniform vec2 u_heightmap_size;\n"    
+"uniform vec3 u_sky_color;\n"    
+"\n"    
+"void main() {\n"    
+"    float screen_x = v_uv.x * 320.0;\n"    
+"    float angle_step = u_fov / 320.0;\n"    
+"    float base_angle = u_camera_angle - u_fov * 0.5;\n"    
+"    float column_angle = base_angle + screen_x * angle_step;\n"    
+"    \n"    
+"    float cos_angle = cos(column_angle);\n"    
+"    float sin_angle = sin(column_angle);\n"    
+"    float pitch_offset = u_camera_pitch * 40.0;\n"    
+"    \n"    
+"    float lowest_y = 1.0;\n"    
+"    vec3 final_color = u_sky_color;\n"    
+"    \n"    
+"    for (float distance = 1.0; distance < u_max_distance; distance += 1.0) {\n"    
+"        vec2 world_pos = u_camera_pos.xy + vec2(cos_angle, sin_angle) * distance;\n"    
+"        \n"    
+"        vec2 uv = world_pos / u_heightmap_size;\n"    
+"        uv = fract(uv);\n"    
+"        \n"    
+"        float terrain_height = texture2D(u_heightmap, uv).r * 255.0;\n"    
+"        \n"    
+"        bool is_water = false;\n"    
+"        float render_height;\n"    
+"        \n"    
+"        if (terrain_height < u_water_level) {\n"    
+"            render_height = u_water_level;\n"    
+"            is_water = true;\n"    
+"        } else {\n"    
+"            render_height = terrain_height;\n"    
+"        }\n"    
+"        \n"    
+"        float height_on_screen = (u_camera_pos.z - render_height) / distance * 300.0 + 120.0;\n"    
+"        height_on_screen += pitch_offset;\n"    
+"        \n"    
+"        float screen_y = height_on_screen / 240.0;\n"    
+"        \n"    
+"        if (screen_y < 0.0) screen_y = 0.0;\n"    
+"        if (screen_y >= 1.0) continue;\n"    
+"        \n"    
+"        if (screen_y < lowest_y) {\n"    
+"            float fog = 1.0 - (distance / u_max_distance);\n"    
+"            fog = max(fog, 0.6);\n"    
+"            \n"    
+"            if (is_water) {\n"    
+"                float depth = (u_water_level - terrain_height) * 0.01;\n"    
+"                vec3 water_color = mix(vec3(0.25, 0.5, 1.0), vec3(0.1, 0.2, 0.5), clamp(depth, 0.0, 1.0));\n"    
+"                final_color = water_color * fog;\n"    
+"            } else {\n"    
+"                vec3 terrain_color = texture2D(u_texturemap, uv).rgb;\n"    
+"                terrain_color *= u_light_intensity;\n"    
+"                terrain_color = terrain_color * fog + u_sky_color * (1.0 - fog);\n"    
+"                final_color = terrain_color;\n"    
+"            }\n"    
+"            \n"    
+"            lowest_y = screen_y;\n"    
+"        }\n"    
+"        \n"    
+"        if (lowest_y <= 0.0) break;\n"    
+"    }\n"    
+"    \n"    
+"    gl_FragColor = vec4(final_color, 1.0);\n"    
+"}\n";
+
+// Compilar un shader  
+static GLuint compile_shader(GLenum type, const char* source) {  
+    GLuint shader = glCreateShader(type);  
+    glShaderSource(shader, 1, &source, NULL);  
+    glCompileShader(shader);  
+      
+    // IMPORTANTE: Verificar errores de compilación  
+    GLint success;  
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);  
+    if (!success) {  
+        char info_log[512];  
+        glGetShaderInfoLog(shader, 512, NULL, info_log);  
+        fprintf(stderr, "ERROR compilando shader:\n%s\n", info_log);  
+        return 0;  
+    }  
+      
+    fprintf(stderr, "Shader compilado OK\n");  
+    return shader;  
+}
+  
+// Crear programa de shaders  
+static int create_voxelspace_shader() {  
+    voxel_shader = shader_create((char*)voxel_vertex_shader_source, (char*)voxel_fragment_shader_source);  
+    if (!voxel_shader) {  
+        return 0;  
+    }  
+    return 1;  
+}
+
+
+static int setup_shader_parameters(HEIGHTMAP *hm) {  
+    if (!voxel_shader) return 0;  
+      
+    if (!voxel_params) {  
+        voxel_params = shader_create_parameters(11);  
+        if (!voxel_params) {  
+            return 0;  
+        }  
+    }  
+      
+    // Obtener ubicaciones de uniforms  
+    int loc_heightmap = shader_getuniformlocation(voxel_shader, "u_heightmap");  
+    int loc_texturemap = shader_getuniformlocation(voxel_shader, "u_texturemap");  
+    int loc_camera_pos = shader_getuniformlocation(voxel_shader, "u_camera_pos");  
+    int loc_camera_angle = shader_getuniformlocation(voxel_shader, "u_camera_angle");  
+    int loc_camera_pitch = shader_getuniformlocation(voxel_shader, "u_camera_pitch");  
+    int loc_fov = shader_getuniformlocation(voxel_shader, "u_fov");  
+    int loc_max_distance = shader_getuniformlocation(voxel_shader, "u_max_distance");  
+    int loc_water_level = shader_getuniformlocation(voxel_shader, "u_water_level");  
+    int loc_light_intensity = shader_getuniformlocation(voxel_shader, "u_light_intensity");  
+    int loc_heightmap_size = shader_getuniformlocation(voxel_shader, "u_heightmap_size");  
+    int loc_sky_color = shader_getuniformlocation(voxel_shader, "u_sky_color");  
+      
+    // CRÍTICO: Clamping de cámara para evitar coordenadas negativas  
+    if (camera.x < 0.0f) camera.x = 0.0f;  
+    if (camera.y < 0.0f) camera.y = 0.0f;  
+    if (camera.z < 0.0f) camera.z = 0.0f;  
+      
+    if (camera.x >= hm->width) camera.x = hm->width - 1.0f;  
+    if (camera.y >= hm->height) camera.y = hm->height - 1.0f;  
+      
+    // CRÍTICO: Conversión de miliradianes a radianes  
+    float angle_radians = camera.angle / 1000.0f;  
+    float pitch_radians = camera.pitch / 1000.0f;  
+      
+    // Calcular max_distance seguro basado en distancia a bordes  
+    float dist_to_right = hm->width - camera.x;  
+    float dist_to_left = camera.x;  
+    float dist_to_bottom = hm->height - camera.y;  
+    float dist_to_top = camera.y;  
+      
+    float min_dist_to_edge = dist_to_right;  
+    if (dist_to_left < min_dist_to_edge) min_dist_to_edge = dist_to_left;  
+    if (dist_to_bottom < min_dist_to_edge) min_dist_to_edge = dist_to_bottom;  
+    if (dist_to_top < min_dist_to_edge) min_dist_to_edge = dist_to_top;  
+      
+    float safe_max_distance = min_dist_to_edge * 0.9f;  
+    if (safe_max_distance > max_render_distance) safe_max_distance = max_render_distance;  
+    if (safe_max_distance < 100.0f) safe_max_distance = 100.0f;  
+      
+    // Configurar texturas (SHADER_IMAGE)  
+    if (loc_heightmap >= 0 && hm->heightmap) {  
+        shader_set_param(voxel_params, SHADER_IMAGE, loc_heightmap, 0,   
+                        (void*)hm->heightmap, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_texturemap >= 0 && hm->texturemap) {  
+        shader_set_param(voxel_params, SHADER_IMAGE, loc_texturemap, 1,   
+                        (void*)hm->texturemap, 0, 0, 0, 0, 0);  
+    }  
+      
+    // Configurar vec3 u_camera_pos (UNIFORM_FLOAT3_ARRAY)  
+    if (loc_camera_pos >= 0) {  
+        float camera_pos[3] = { camera.x, camera.y, camera.z };  
+        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_camera_pos, 1,   
+                        camera_pos, 0, 0, 0, 0, 0);  
+    }  
+      
+    // Configurar floats individuales (UNIFORM_FLOAT)  
+    if (loc_camera_angle >= 0) {  
+        float angle_val = angle_radians;  
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_angle, 0,   
+                        (void*)(intptr_t)*(int32_t*)&angle_val, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_camera_pitch >= 0) {  
+        float pitch_val = pitch_radians;  
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_pitch, 0,   
+                        (void*)(intptr_t)*(int32_t*)&pitch_val, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_fov >= 0) {  
+        float fov_val = 0.7f;  
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_fov, 0,   
+                        (void*)(intptr_t)*(int32_t*)&fov_val, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_max_distance >= 0) {  
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_max_distance, 0,   
+                        (void*)(intptr_t)*(int32_t*)&safe_max_distance, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_water_level >= 0) {  
+        float water_val = 0.0f;  
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_water_level, 0,   
+                        (void*)(intptr_t)*(int32_t*)&water_val, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_light_intensity >= 0) {  
+        float light_val = 1.0f;  
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_light_intensity, 0,   
+                        (void*)(intptr_t)*(int32_t*)&light_val, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_heightmap_size >= 0) {  
+        float heightmap_size[2] = { (float)hm->width, (float)hm->height };  
+        shader_set_param(voxel_params, UNIFORM_FLOAT2_ARRAY, loc_heightmap_size, 1,   
+                        heightmap_size, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_sky_color >= 0) {  
+        float sky_color[3] = {   
+            sky_color_r / 255.0f,   
+            sky_color_g / 255.0f,   
+            sky_color_b / 255.0f   
+        };  
+        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_sky_color, 1,   
+                        sky_color, 0, 0, 0, 0, 0);  
+    }  
+      
+    return 1;  
+}
+
+// Subir texturas a GPU  
+static void upload_voxelspace_textures(HEIGHTMAP *hm) {    
+    // CORREGIDO: Volver a RGBA con todos los canales iguales  
+    uint8_t *heightmap_buffer = malloc(hm->width * hm->height * 4);    
+    if (!heightmap_buffer) return;    
+        
+    for (int y = 0; y < hm->height; y++) {    
+        for (int x = 0; x < hm->width; x++) {    
+            uint32_t pixel = gr_get_pixel(hm->heightmap, x, y);  
+              
+            // Extraer canal rojo (ajusta según el formato real)  
+            uint8_t height = (pixel >> 16) & 0xFF;  
+              
+            // Escribir el mismo valor en todos los canales RGBA  
+            int idx = (y * hm->width + x) * 4;  
+            heightmap_buffer[idx + 0] = height;  // R  
+            heightmap_buffer[idx + 1] = height;  // G  
+            heightmap_buffer[idx + 2] = height;  // B  
+            heightmap_buffer[idx + 3] = 255;     // A  
+        }    
+    }    
+        
+    if (voxel_heightmap_texture == 0) {    
+        glGenTextures(1, &voxel_heightmap_texture);    
+    }    
+        
+    glBindTexture(GL_TEXTURE_2D, voxel_heightmap_texture);  
+    // Volver a GL_RGBA  
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, hm->width, hm->height, 0,     
+                 GL_RGBA, GL_UNSIGNED_BYTE, heightmap_buffer);    
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);    
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);  
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);  
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);  
+        
+    free(heightmap_buffer);    
+      
+    fprintf(stderr, "Heightmap subido: %dx%d (RGBA)\n", hm->width, hm->height);  
+        
+    // Texturemap sin cambios  
+    if (hm->texturemap) {    
+        uint32_t *texture_buffer = malloc(hm->texturemap->width * hm->texturemap->height * sizeof(uint32_t));    
+        if (!texture_buffer) return;    
+            
+        for (int y = 0; y < hm->texturemap->height; y++) {    
+            for (int x = 0; x < hm->texturemap->width; x++) {    
+                texture_buffer[y * hm->texturemap->width + x] = gr_get_pixel(hm->texturemap, x, y);    
+            }    
+        }    
+            
+        if (voxel_texturemap_texture == 0) {    
+            glGenTextures(1, &voxel_texturemap_texture);    
+        }    
+            
+        glBindTexture(GL_TEXTURE_2D, voxel_texturemap_texture);    
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, hm->texturemap->width,     
+                     hm->texturemap->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, texture_buffer);    
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);    
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);  
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);  
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);  
+            
+        free(texture_buffer);  
+        fprintf(stderr, "Texturemap subido: %dx%d\n", hm->texturemap->width, hm->texturemap->height);  
+    }    
+}
+  
+// Función principal de renderizado con shader  
+static int64_t render_voxelspace_with_shader(HEIGHTMAP *hm, int width, int height) {  
+    if (!voxel_shader) {  
+        if (!create_voxelspace_shader()) {  
+            return 0;  
+        }  
+    }  
+      
+    if (!setup_shader_parameters(hm)) {  
+        return 0;  
+    }  
+      
+    // Crear render_buffer si no existe o si el tamaño cambió  
+    if (!render_buffer || render_buffer->width != width || render_buffer->height != height) {  
+        if (render_buffer) {  
+            bitmap_destroy(render_buffer);  
+        }  
+        render_buffer = bitmap_new_syslib(width, height);  
+        if (!render_buffer) {  
+            return 0;  
+        }  
+    }  
+      
+    // Crear un GRAPH dummy de 1x1 píxel como source  
+    // El shader ignorará este contenido y generará su propia salida  
+    static GRAPH *dummy_source = NULL;  
+    if (!dummy_source) {  
+        dummy_source = bitmap_new_syslib(1, 1);  
+        if (!dummy_source) {  
+            return 0;  
+        }  
+    }  
+      
+    // Activar shader y aplicar parámetros  
+    shader_activate(voxel_shader);  
+    shader_apply_parameters(voxel_params);  
+      
+    // Renderizar usando gr_blit con el shader activo  
+    // El shader se ejecutará durante el blit y generará el terreno voxel  
+    gr_blit(  
+        render_buffer,           // Destino: nuestro buffer de renderizado  
+        NULL,                    // Sin clipping  
+        width / 2.0,             // Centro X  
+        height / 2.0,            // Centro Y  
+        0,                       // Sin flags  
+        0,                       // Sin rotación  
+        width * 100.0,           // Scale X para cubrir todo el buffer  
+        height * 100.0,          // Scale Y para cubrir todo el buffer  
+        0.5,                     // Centro X del source (normalizado)  
+        0.5,                     // Centro Y del source (normalizado)  
+        dummy_source,            // Source dummy (el shader lo ignora)  
+        NULL,                    // Sin clip del source  
+        255,                     // Alpha completo  
+        255, 255, 255,           // Color blanco (sin tinte)  
+        BLEND_DISABLED,          // Sin blending  
+        NULL                     // Sin custom blend mode  
+    );  
+      
+    shader_deactivate();  
+      
+    return render_buffer->code;  
+}
+  
+// Función principal exportada a BennuGD2  
+int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    int64_t render_width = params[1];  
+    int64_t render_height = params[2];  
+      
+    // Buscar heightmap  
+    HEIGHTMAP *hm = NULL;  
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
+        if (heightmaps[i].id == hm_id) {  
+            hm = &heightmaps[i];  
+            break;  
+        }  
+    }  
+      
+    if (!hm || !hm->cache_valid) {  
+        return 0;  
+    }  
+      
+    // Crear shader si no existe  
+    if (!voxel_shader) {  
+        if (!create_voxelspace_shader()) {  
+            return 0;  
+        }  
+    }  
+      
+    // Configurar parámetros del shader  
+    if (!setup_shader_parameters(hm)) {  
+        return 0;  
+    }  
+      
+    // Crear render_buffer si no existe o si el tamaño cambió  
+    if (!render_buffer || render_buffer->width != render_width || render_buffer->height != render_height) {  
+        if (render_buffer) {  
+            bitmap_destroy(render_buffer);  
+        }  
+        render_buffer = bitmap_new_syslib(render_width, render_height);  
+        if (!render_buffer) {  
+            return 0;  
+        }  
+    }  
+      
+    // Activar shader y aplicar parámetros  
+    shader_activate(voxel_shader);  
+    shader_apply_parameters(voxel_params);  
+      
+    // Renderizar usando gr_blit con el shader activo  
+    // El shader se aplicará automáticamente durante el blit  
+    gr_blit(  
+    render_buffer,           // dest  
+    NULL,                    // clip  
+    width / 2.0,            // scrx (centro X)  
+    height / 2.0,           // scry (centro Y)  
+    0,                      // flags  
+    0,                      // angle  
+    100.0,                  // scalex (100% = tamaño original)  
+    100.0,                  // scaley  
+    width / 2.0,            // centerx  
+    height / 2.0,           // centery  
+    dummy_source,           // source (GRAPH dummy)  
+    NULL,                   // gr_clip  
+    255,                    // alpha  
+    255, 255, 255,          // color RGB  
+    BLEND_DISABLED,         // blend_mode  
+    NULL                    // custom_blendmode  
+);
+      
+    // Desactivar shader  
+    shader_deactivate();  
+      
+    // Devolver el código del GRAPH renderizado  
+    return render_buffer->code;  
+}
+
+
 /* Funciones auxiliares */
 void build_height_cache(HEIGHTMAP *hm)
 
@@ -1189,17 +1660,45 @@ if (cached_bytes_per_pixel == 0) {
     cached_bytes_per_pixel = gPixelFormat->BytesPerPixel;  
 }  
   
-// Luego usar el valor cacheado  
+// Extraer componentes usando los shifts correctos del formato  
 if (cached_bytes_per_pixel == 4) {  
-    SDL_GetRGBA(c00, gPixelFormat, &r00, &g00, &b00, &a00);  
-    SDL_GetRGBA(c10, gPixelFormat, &r10, &g10, &b10, &a10);  
-    SDL_GetRGBA(c01, gPixelFormat, &r01, &g01, &b01, &a01);  
-    SDL_GetRGBA(c11, gPixelFormat, &r11, &g11, &b11, &a11);  
+    // RGBA de 32 bits  
+    r00 = (c00 >> gPixelFormat->Rshift) & 0xFF;   
+    g00 = (c00 >> gPixelFormat->Gshift) & 0xFF;   
+    b00 = (c00 >> gPixelFormat->Bshift) & 0xFF;   
+    a00 = (c00 >> gPixelFormat->Ashift) & 0xFF;  
+      
+    r10 = (c10 >> gPixelFormat->Rshift) & 0xFF;   
+    g10 = (c10 >> gPixelFormat->Gshift) & 0xFF;   
+    b10 = (c10 >> gPixelFormat->Bshift) & 0xFF;   
+    a10 = (c10 >> gPixelFormat->Ashift) & 0xFF;  
+      
+    r01 = (c01 >> gPixelFormat->Rshift) & 0xFF;   
+    g01 = (c01 >> gPixelFormat->Gshift) & 0xFF;   
+    b01 = (c01 >> gPixelFormat->Bshift) & 0xFF;   
+    a01 = (c01 >> gPixelFormat->Ashift) & 0xFF;  
+      
+    r11 = (c11 >> gPixelFormat->Rshift) & 0xFF;   
+    g11 = (c11 >> gPixelFormat->Gshift) & 0xFF;   
+    b11 = (c11 >> gPixelFormat->Bshift) & 0xFF;   
+    a11 = (c11 >> gPixelFormat->Ashift) & 0xFF;  
 } else {  
-    SDL_GetRGB(c00, gPixelFormat, &r00, &g00, &b00);  
-    SDL_GetRGB(c10, gPixelFormat, &r10, &g10, &b10);  
-    SDL_GetRGB(c01, gPixelFormat, &r01, &g01, &b01);  
-    SDL_GetRGB(c11, gPixelFormat, &r11, &g11, &b11);  
+    // RGB de 24 bits  
+    r00 = (c00 >> gPixelFormat->Rshift) & 0xFF;   
+    g00 = (c00 >> gPixelFormat->Gshift) & 0xFF;   
+    b00 = (c00 >> gPixelFormat->Bshift) & 0xFF;  
+      
+    r10 = (c10 >> gPixelFormat->Rshift) & 0xFF;   
+    g10 = (c10 >> gPixelFormat->Gshift) & 0xFF;   
+    b10 = (c10 >> gPixelFormat->Bshift) & 0xFF;  
+      
+    r01 = (c01 >> gPixelFormat->Rshift) & 0xFF;   
+    g01 = (c01 >> gPixelFormat->Gshift) & 0xFF;   
+    b01 = (c01 >> gPixelFormat->Bshift) & 0xFF;  
+      
+    r11 = (c11 >> gPixelFormat->Rshift) & 0xFF;   
+    g11 = (c11 >> gPixelFormat->Gshift) & 0xFF;   
+    b11 = (c11 >> gPixelFormat->Bshift) & 0xFF;  
 }
   
     // Interpolación bilineal mejorada  
