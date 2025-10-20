@@ -198,7 +198,7 @@ static float convert_screen_to_world_coordinate(int heightmap_id, float screen_c
 static void collect_visible_billboards_from_array(VOXEL_BILLBOARD *billboard_array, int array_size,   
                                                   BILLBOARD_RENDER_DATA *visible_billboards,   
                                                   int *visible_count, float terrain_fov);
-
+static void upload_voxelspace_textures(HEIGHTMAP *hm);
 
 void libmod_heightmap_destroy_render_buffer() {  
     if (render_buffer) {  
@@ -1235,129 +1235,129 @@ static int create_voxelspace_shader() {
 }
 
 
-static int setup_shader_parameters(HEIGHTMAP *hm) {  
-    if (!voxel_shader) return 0;  
-      
-    if (!voxel_params) {  
-        voxel_params = shader_create_parameters(11);  
-        if (!voxel_params) {  
-            return 0;  
-        }  
-    }  
-      
-    // Obtener ubicaciones de uniforms  
-    int loc_heightmap = shader_getuniformlocation(voxel_shader, "u_heightmap");  
-    int loc_texturemap = shader_getuniformlocation(voxel_shader, "u_texturemap");  
-    int loc_camera_pos = shader_getuniformlocation(voxel_shader, "u_camera_pos");  
-    int loc_camera_angle = shader_getuniformlocation(voxel_shader, "u_camera_angle");  
-    int loc_camera_pitch = shader_getuniformlocation(voxel_shader, "u_camera_pitch");  
-    int loc_fov = shader_getuniformlocation(voxel_shader, "u_fov");  
-    int loc_max_distance = shader_getuniformlocation(voxel_shader, "u_max_distance");  
-    int loc_water_level = shader_getuniformlocation(voxel_shader, "u_water_level");  
-    int loc_light_intensity = shader_getuniformlocation(voxel_shader, "u_light_intensity");  
-    int loc_heightmap_size = shader_getuniformlocation(voxel_shader, "u_heightmap_size");  
-    int loc_sky_color = shader_getuniformlocation(voxel_shader, "u_sky_color");  
-      
-    // CRÍTICO: Clamping de cámara para evitar coordenadas negativas  
-    if (camera.x < 0.0f) camera.x = 0.0f;  
-    if (camera.y < 0.0f) camera.y = 0.0f;  
-    if (camera.z < 0.0f) camera.z = 0.0f;  
-      
-    if (camera.x >= hm->width) camera.x = hm->width - 1.0f;  
-    if (camera.y >= hm->height) camera.y = hm->height - 1.0f;  
-      
-    // CRÍTICO: Conversión de miliradianes a radianes  
-    float angle_radians = camera.angle / 1000.0f;  
-    float pitch_radians = camera.pitch / 1000.0f;  
-      
-    // Calcular max_distance seguro basado en distancia a bordes  
-    float dist_to_right = hm->width - camera.x;  
-    float dist_to_left = camera.x;  
-    float dist_to_bottom = hm->height - camera.y;  
-    float dist_to_top = camera.y;  
-      
-    float min_dist_to_edge = dist_to_right;  
-    if (dist_to_left < min_dist_to_edge) min_dist_to_edge = dist_to_left;  
-    if (dist_to_bottom < min_dist_to_edge) min_dist_to_edge = dist_to_bottom;  
-    if (dist_to_top < min_dist_to_edge) min_dist_to_edge = dist_to_top;  
-      
-    float safe_max_distance = min_dist_to_edge * 0.9f;  
-    if (safe_max_distance > max_render_distance) safe_max_distance = max_render_distance;  
-    if (safe_max_distance < 100.0f) safe_max_distance = 100.0f;  
-      
-    // Configurar texturas (SHADER_IMAGE)  
-    if (loc_heightmap >= 0 && hm->heightmap) {  
-        shader_set_param(voxel_params, SHADER_IMAGE, loc_heightmap, 0,   
-                        (void*)hm->heightmap, 0, 0, 0, 0, 0);  
-    }  
-      
-    if (loc_texturemap >= 0 && hm->texturemap) {  
-        shader_set_param(voxel_params, SHADER_IMAGE, loc_texturemap, 1,   
-                        (void*)hm->texturemap, 0, 0, 0, 0, 0);  
-    }  
-      
-    // Configurar vec3 u_camera_pos (UNIFORM_FLOAT3_ARRAY)  
-    if (loc_camera_pos >= 0) {  
-        float camera_pos[3] = { camera.x, camera.y, camera.z };  
-        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_camera_pos, 1,   
-                        camera_pos, 0, 0, 0, 0, 0);  
-    }  
-      
-    // Configurar floats individuales (UNIFORM_FLOAT)  
-    if (loc_camera_angle >= 0) {  
-        float angle_val = angle_radians;  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_angle, 0,   
-                        (void*)(intptr_t)*(int32_t*)&angle_val, 0, 0, 0, 0, 0);  
-    }  
-      
-    if (loc_camera_pitch >= 0) {  
-        float pitch_val = pitch_radians;  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_pitch, 0,   
-                        (void*)(intptr_t)*(int32_t*)&pitch_val, 0, 0, 0, 0, 0);  
-    }  
-      
-    if (loc_fov >= 0) {  
-        float fov_val = 0.7f;  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_fov, 0,   
-                        (void*)(intptr_t)*(int32_t*)&fov_val, 0, 0, 0, 0, 0);  
-    }  
-      
-    if (loc_max_distance >= 0) {  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_max_distance, 0,   
-                        (void*)(intptr_t)*(int32_t*)&safe_max_distance, 0, 0, 0, 0, 0);  
-    }  
-      
-    if (loc_water_level >= 0) {  
-        float water_val = 0.0f;  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_water_level, 0,   
-                        (void*)(intptr_t)*(int32_t*)&water_val, 0, 0, 0, 0, 0);  
-    }  
-      
-    if (loc_light_intensity >= 0) {  
-        float light_val = 1.0f;  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_light_intensity, 0,   
-                        (void*)(intptr_t)*(int32_t*)&light_val, 0, 0, 0, 0, 0);  
-    }  
-      
-    if (loc_heightmap_size >= 0) {  
-        float heightmap_size[2] = { (float)hm->width, (float)hm->height };  
-        shader_set_param(voxel_params, UNIFORM_FLOAT2_ARRAY, loc_heightmap_size, 1,   
-                        heightmap_size, 0, 0, 0, 0, 0);  
-    }  
-      
-    if (loc_sky_color >= 0) {  
-        float sky_color[3] = {   
-            sky_color_r / 255.0f,   
-            sky_color_g / 255.0f,   
-            sky_color_b / 255.0f   
-        };  
-        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_sky_color, 1,   
-                        sky_color, 0, 0, 0, 0, 0);  
-    }  
-      
-    return 1;  
-}
 
+static int setup_shader_parameters(HEIGHTMAP *hm) {    
+    if (!voxel_shader) return 0;    
+        
+    if (!voxel_params) {    
+        voxel_params = shader_create_parameters(11);    
+        if (!voxel_params) {    
+            return 0;    
+        }    
+    }    
+        
+    // Obtener ubicaciones de uniforms    
+    int loc_heightmap = shader_getuniformlocation(voxel_shader, "u_heightmap");    
+    int loc_texturemap = shader_getuniformlocation(voxel_shader, "u_texturemap");    
+    int loc_camera_pos = shader_getuniformlocation(voxel_shader, "u_camera_pos");    
+    int loc_camera_angle = shader_getuniformlocation(voxel_shader, "u_camera_angle");    
+    int loc_camera_pitch = shader_getuniformlocation(voxel_shader, "u_camera_pitch");    
+    int loc_fov = shader_getuniformlocation(voxel_shader, "u_fov");    
+    int loc_max_distance = shader_getuniformlocation(voxel_shader, "u_max_distance");    
+    int loc_water_level = shader_getuniformlocation(voxel_shader, "u_water_level");    
+    int loc_light_intensity = shader_getuniformlocation(voxel_shader, "u_light_intensity");    
+    int loc_heightmap_size = shader_getuniformlocation(voxel_shader, "u_heightmap_size");    
+    int loc_sky_color = shader_getuniformlocation(voxel_shader, "u_sky_color");    
+        
+    // Clamping de cámara    
+    if (camera.x < 0.0f) camera.x = 0.0f;    
+    if (camera.y < 0.0f) camera.y = 0.0f;    
+    if (camera.z < 0.0f) camera.z = 0.0f;    
+    if (camera.x >= hm->width) camera.x = hm->width - 1.0f;    
+    if (camera.y >= hm->height) camera.y = hm->height - 1.0f;    
+        
+    // Conversión de miliradianes a radianes    
+    float angle_radians = camera.angle / 1000.0f;    
+    float pitch_radians = camera.pitch / 1000.0f;    
+        
+    // Calcular max_distance seguro    
+    float dist_to_right = hm->width - camera.x;    
+    float dist_to_left = camera.x;    
+    float dist_to_bottom = hm->height - camera.y;    
+    float dist_to_top = camera.y;    
+        
+    float min_dist_to_edge = dist_to_right;    
+    if (dist_to_left < min_dist_to_edge) min_dist_to_edge = dist_to_left;    
+    if (dist_to_bottom < min_dist_to_edge) min_dist_to_edge = dist_to_bottom;    
+    if (dist_to_top < min_dist_to_edge) min_dist_to_edge = dist_to_top;    
+        
+    float safe_max_distance = min_dist_to_edge * 0.9f;    
+    if (safe_max_distance > max_render_distance) safe_max_distance = max_render_distance;    
+    if (safe_max_distance < 100.0f) safe_max_distance = 100.0f;    
+        
+    // CRÍTICO: Usar texture IDs de OpenGL  
+  // Configurar texturas usando los GLuint texture IDs  
+if (loc_heightmap >= 0) {    
+    shader_set_param(voxel_params, SHADER_IMAGE, loc_heightmap, 0,     
+                    (void*)(intptr_t)voxel_heightmap_texture, 0, 0, 0, 0, 0);    
+}    
+    
+if (loc_texturemap >= 0) {    
+    shader_set_param(voxel_params, SHADER_IMAGE, loc_texturemap, 1,     
+                    (void*)(intptr_t)voxel_texturemap_texture, 0, 0, 0, 0, 0);    
+}
+        
+    // Configurar vec3 u_camera_pos    
+    if (loc_camera_pos >= 0) {    
+        float camera_pos[3] = { camera.x, camera.y, camera.z };    
+        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_camera_pos, 1,     
+                        camera_pos, 0, 0, 0, 0, 0);    
+    }    
+        
+    // Configurar floats individuales    
+    if (loc_camera_angle >= 0) {    
+        float angle_val = angle_radians;    
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_angle, 0,     
+                        (void*)(intptr_t)*(int32_t*)&angle_val, 0, 0, 0, 0, 0);    
+    }    
+        
+    if (loc_camera_pitch >= 0) {    
+        float pitch_val = pitch_radians;    
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_pitch, 0,     
+                        (void*)(intptr_t)*(int32_t*)&pitch_val, 0, 0, 0, 0, 0);    
+    }    
+        
+    if (loc_fov >= 0) {    
+        float fov_val = 0.7f;    
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_fov, 0,     
+                        (void*)(intptr_t)*(int32_t*)&fov_val, 0, 0, 0, 0, 0);    
+    }    
+        
+    if (loc_max_distance >= 0) {    
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_max_distance, 0,     
+                        (void*)(intptr_t)*(int32_t*)&safe_max_distance, 0, 0, 0, 0, 0);    
+    }    
+        
+    if (loc_water_level >= 0) {    
+        float water_val = water_level;    
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_water_level, 0,     
+                        (void*)(intptr_t)*(int32_t*)&water_val, 0, 0, 0, 0, 0);    
+    }    
+        
+    if (loc_light_intensity >= 0) {    
+        float light_val = light_intensity / 255.0f;    
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_light_intensity, 0,     
+                        (void*)(intptr_t)*(int32_t*)&light_val, 0, 0, 0, 0, 0);    
+    }    
+        
+    if (loc_heightmap_size >= 0) {    
+        float heightmap_size[2] = { (float)hm->width, (float)hm->height };    
+        shader_set_param(voxel_params, UNIFORM_FLOAT2_ARRAY, loc_heightmap_size, 1,     
+                        heightmap_size, 0, 0, 0, 0, 0);    
+    }    
+        
+    if (loc_sky_color >= 0) {    
+        float sky_color[3] = {     
+            sky_color_r / 255.0f,     
+            sky_color_g / 255.0f,     
+            sky_color_b / 255.0f     
+        };    
+        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_sky_color, 1,     
+                        sky_color, 0, 0, 0, 0, 0);    
+    }    
+        
+    return 1;    
+}
 // Subir texturas a GPU  
 static void upload_voxelspace_textures(HEIGHTMAP *hm) {    
     // CORREGIDO: Volver a RGBA con todos los canales iguales  
@@ -1464,24 +1464,24 @@ static int64_t render_voxelspace_with_shader(HEIGHTMAP *hm, int width, int heigh
       
     // Renderizar usando gr_blit con el shader activo  
     // El shader se ejecutará durante el blit y generará el terreno voxel  
-    gr_blit(  
-        render_buffer,           // Destino: nuestro buffer de renderizado  
-        NULL,                    // Sin clipping  
-        width / 2.0,             // Centro X  
-        height / 2.0,            // Centro Y  
-        0,                       // Sin flags  
-        0,                       // Sin rotación  
-        width * 100.0,           // Scale X para cubrir todo el buffer  
-        height * 100.0,          // Scale Y para cubrir todo el buffer  
-        0.5,                     // Centro X del source (normalizado)  
-        0.5,                     // Centro Y del source (normalizado)  
-        dummy_source,            // Source dummy (el shader lo ignora)  
-        NULL,                    // Sin clip del source  
-        255,                     // Alpha completo  
-        255, 255, 255,           // Color blanco (sin tinte)  
-        BLEND_DISABLED,          // Sin blending  
-        NULL                     // Sin custom blend mode  
-    );  
+gr_blit(  
+    render_buffer,  
+    NULL,  
+    width / 2.0,             // ✓ Usar 'width' del parámetro  
+    height / 2.0,            // ✓ Usar 'height' del parámetro  
+    0,  
+    0,  
+    width * 100.0,           // ✓ Usar 'width' del parámetro  
+    height * 100.0,          // ✓ Usar 'height' del parámetro  
+    0.5,  
+    0.5,  
+    dummy_source,  
+    NULL,  
+    255,  
+    255, 255, 255,  
+    BLEND_DISABLED,  
+    NULL  
+);
       
     shader_deactivate();  
       
@@ -1489,79 +1489,122 @@ static int64_t render_voxelspace_with_shader(HEIGHTMAP *hm, int width, int heigh
 }
   
 // Función principal exportada a BennuGD2  
-int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {  
-    int64_t hm_id = params[0];  
-    int64_t render_width = params[1];  
-    int64_t render_height = params[2];  
+int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {    
+    fprintf(stderr, "DEBUG: Inicio render GPU\n");  
       
-    // Buscar heightmap  
-    HEIGHTMAP *hm = NULL;  
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        if (heightmaps[i].id == hm_id) {  
-            hm = &heightmaps[i];  
-            break;  
-        }  
-    }  
+    int64_t hm_id = params[0];    
+    int64_t render_width = params[1];    
+    int64_t render_height = params[2];    
+        
+    // Buscar heightmap    
+    HEIGHTMAP *hm = NULL;    
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {    
+        if (heightmaps[i].id == hm_id) {    
+            hm = &heightmaps[i];    
+            break;    
+        }    
+    }    
+        
+    if (!hm || !hm->cache_valid) {    
+        fprintf(stderr, "ERROR: Heightmap no encontrado o cache inválido\n");  
+        return 0;    
+    }    
       
-    if (!hm || !hm->cache_valid) {  
-        return 0;  
-    }  
+    fprintf(stderr, "DEBUG: Heightmap encontrado (ID: %ld, %ldx%ld)\n",   
+            hm_id, hm->width, hm->height);  
+        
+    // Crear shader si no existe    
+    if (!voxel_shader) {    
+        fprintf(stderr, "DEBUG: Creando shader...\n");  
+        if (!create_voxelspace_shader()) {    
+            fprintf(stderr, "ERROR: No se pudo crear shader\n");  
+            return 0;    
+        }    
+        fprintf(stderr, "DEBUG: Shader creado exitosamente\n");  
+    }    
       
-    // Crear shader si no existe  
-    if (!voxel_shader) {  
-        if (!create_voxelspace_shader()) {  
-            return 0;  
-        }  
-    }  
+    // CRÍTICO: Subir texturas a GPU ANTES de configurar parámetros  
+    fprintf(stderr, "DEBUG: Subiendo texturas a GPU...\n");  
+    upload_voxelspace_textures(hm);  
+    fprintf(stderr, "DEBUG: Texturas subidas correctamente\n");  
+        
+    // Configurar parámetros del shader    
+    fprintf(stderr, "DEBUG: Configurando parámetros del shader...\n");  
+    if (!setup_shader_parameters(hm)) {    
+        fprintf(stderr, "ERROR: setup_shader_parameters falló\n");  
+        return 0;    
+    }    
+    fprintf(stderr, "DEBUG: Parámetros configurados correctamente\n");  
+        
+    // Crear render_buffer si no existe o si el tamaño cambió    
+    fprintf(stderr, "DEBUG: Verificando render_buffer (%ldx%ld)...\n",   
+            render_width, render_height);  
+    if (!render_buffer || render_buffer->width != render_width || render_buffer->height != render_height) {    
+        if (render_buffer) {    
+            bitmap_destroy(render_buffer);    
+        }    
+        render_buffer = bitmap_new_syslib(render_width, render_height);    
+        if (!render_buffer) {    
+            fprintf(stderr, "ERROR: No se pudo crear render_buffer\n");  
+            return 0;    
+        }    
+        fprintf(stderr, "DEBUG: render_buffer creado: %ldx%ld\n",   
+                render_width, render_height);  
+    }    
+        
+    // Crear dummy_source    
+    static GRAPH *dummy_source = NULL;    
+    if (!dummy_source) {    
+        fprintf(stderr, "DEBUG: Creando dummy_source...\n");  
+        dummy_source = bitmap_new_syslib(1, 1);    
+        if (!dummy_source) {    
+            fprintf(stderr, "ERROR: No se pudo crear dummy_source\n");  
+            return 0;    
+        }    
+        fprintf(stderr, "DEBUG: dummy_source creado (1x1)\n");  
+    }    
+        
+    // Activar shader y aplicar parámetros    
+    fprintf(stderr, "DEBUG: Activando shader...\n");  
+    shader_activate(voxel_shader);    
+    fprintf(stderr, "DEBUG: Shader activado\n");  
       
-    // Configurar parámetros del shader  
-    if (!setup_shader_parameters(hm)) {  
-        return 0;  
-    }  
-      
-    // Crear render_buffer si no existe o si el tamaño cambió  
-    if (!render_buffer || render_buffer->width != render_width || render_buffer->height != render_height) {  
-        if (render_buffer) {  
-            bitmap_destroy(render_buffer);  
-        }  
-        render_buffer = bitmap_new_syslib(render_width, render_height);  
-        if (!render_buffer) {  
-            return 0;  
-        }  
-    }  
-      
-    // Activar shader y aplicar parámetros  
-    shader_activate(voxel_shader);  
-    shader_apply_parameters(voxel_params);  
-      
-    // Renderizar usando gr_blit con el shader activo  
-    // El shader se aplicará automáticamente durante el blit  
-    gr_blit(  
-    render_buffer,           // dest  
-    NULL,                    // clip  
-    width / 2.0,            // scrx (centro X)  
-    height / 2.0,           // scry (centro Y)  
-    0,                      // flags  
-    0,                      // angle  
-    100.0,                  // scalex (100% = tamaño original)  
-    100.0,                  // scaley  
-    width / 2.0,            // centerx  
-    height / 2.0,           // centery  
-    dummy_source,           // source (GRAPH dummy)  
-    NULL,                   // gr_clip  
-    255,                    // alpha  
-    255, 255, 255,          // color RGB  
-    BLEND_DISABLED,         // blend_mode  
-    NULL                    // custom_blendmode  
-);
-      
-    // Desactivar shader  
-    shader_deactivate();  
-      
-    // Devolver el código del GRAPH renderizado  
-    return render_buffer->code;  
+    fprintf(stderr, "DEBUG: Aplicando parámetros del shader...\n");  
+    shader_apply_parameters(voxel_params);    
+    fprintf(stderr, "DEBUG: Parámetros aplicados\n");  
+        
+    // Renderizar usando gr_blit con el shader activo    
+    fprintf(stderr, "DEBUG: Ejecutando gr_blit...\n");  
+    gr_blit(    
+        render_buffer,    
+        NULL,    
+        render_width / 2.0,    
+        render_height / 2.0,    
+        0,    
+        0,    
+        render_width * 100.0,    
+        render_height * 100.0,    
+        0.5,    
+        0.5,    
+        dummy_source,    
+        NULL,    
+        255,    
+        255, 255, 255,    
+        BLEND_DISABLED,    
+        NULL    
+    );    
+    fprintf(stderr, "DEBUG: gr_blit completado exitosamente\n");  
+        
+    // Desactivar shader    
+    fprintf(stderr, "DEBUG: Desactivando shader...\n");  
+    shader_deactivate();    
+    fprintf(stderr, "DEBUG: Shader desactivado\n");  
+        
+    // Devolver el código del GRAPH renderizado    
+    fprintf(stderr, "DEBUG: Retornando render_buffer->code: %d\n",   
+            render_buffer->code);  
+    return render_buffer->code;    
 }
-
 
 /* Funciones auxiliares */
 void build_height_cache(HEIGHTMAP *hm)
