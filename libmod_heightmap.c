@@ -95,7 +95,6 @@ static int static_billboard_count = 0;
 static int dynamic_billboard_count = 0;  
 
 static int current_heightmap_id = 0; 
-static GRAPH *render_buffer = NULL;
 static float *fog_table = NULL;      
 static int fog_table_size = 0;      
 static int fog_table_initialized = 0;   
@@ -103,24 +102,10 @@ static int fog_table_initialized = 0;
 static float cached_fog_intensity = -1.0f;  
 static Uint8 cached_fog_r = 0, cached_fog_g = 0, cached_fog_b = 0;
 
-// Variables globales para renderizado GPU  
+// Variables para el sistema de shaders de BennuGD2  
 static BGD_SHADER *voxel_shader = NULL;  
 static BGD_SHADER_PARAMETERS *voxel_params = NULL;  
-static int glew_initialized = 0;  
-static int gpu_textures_uploaded = 0;  // NUEVO: flag para evitar subir texturas cada frame  
-static int64_t gpu_current_heightmap_id = -1;  // NUEVO: track cual heightmap está en GPU
-static GLuint voxel_fbo = 0;    
-static GLuint voxel_render_texture = 0;
-// NUEVO: Variables para OpenGL directo  
-static GLuint gl_shader_program = 0;  
-static GLuint gl_vertex_shader = 0;  
-static GLuint gl_fragment_shader = 0;  
-static GLuint gl_vao = 0;  
-static GLuint gl_vbo = 0;  
-static GLuint gl_heightmap_tex = 0;  
-static GLuint gl_texturemap_tex = 0;
-static int64_t cached_heightmap_id = -1;  
-static int upload_textures_to_opengl(HEIGHTMAP *hm);
+static GRAPH *render_buffer = NULL;
 
 #define BILLBOARD_TYPE_STATIC     0  
 #define BILLBOARD_TYPE_PLAYER     1  
@@ -208,72 +193,20 @@ static void collect_visible_billboards_from_array(VOXEL_BILLBOARD *billboard_arr
                                                   BILLBOARD_RENDER_DATA *visible_billboards,   
                                                   int *visible_count, float terrain_fov);
 
-static int initialize_glew_if_needed() {  
-    if (glew_initialized) return 1;  
-      
-    GLenum err = glewInit();  
-    if (err != GLEW_OK) {  
-        fprintf(stderr, "ERROR: glewInit falló: %s\n", glewGetErrorString(err));  
-        return 0;  
+static void cleanup_gpu_resources(void) {  
+    // Limpiar shader de BennuGD2  
+    if (voxel_shader) {  
+        shader_free(voxel_shader);  
+        voxel_shader = NULL;  
     }  
       
-    fprintf(stderr, "GLEW inicializado correctamente\n");  
-    glew_initialized = 1;  
-    return 1;  
+    // Limpiar parámetros del shader  
+    if (voxel_params) {  
+        shader_free_parameters(voxel_params);  
+        voxel_params = NULL;  
+    }  
+      
 }
-
-static void cleanup_gpu_resources() {  
-    voxel_shader = NULL;  
-    voxel_params = NULL;  
-      
-    if (voxel_fbo) {  
-        glDeleteFramebuffers(1, &voxel_fbo);  
-        voxel_fbo = 0;  
-    }  
-      
-    if (voxel_render_texture) {  
-        glDeleteTextures(1, &voxel_render_texture);  
-        voxel_render_texture = 0;  
-    }  
-      
-    if (gl_shader_program) {  
-        glDeleteProgram(gl_shader_program);  
-        gl_shader_program = 0;  
-    }  
-      
-    if (gl_vertex_shader) {  
-        glDeleteShader(gl_vertex_shader);  
-        gl_vertex_shader = 0;  
-    }  
-      
-    if (gl_fragment_shader) {  
-        glDeleteShader(gl_fragment_shader);  
-        gl_fragment_shader = 0;  
-    }  
-      
-    if (gl_vao) {  
-        glDeleteVertexArrays(1, &gl_vao);  
-        gl_vao = 0;  
-    }  
-      
-    if (gl_vbo) {  
-        glDeleteBuffers(1, &gl_vbo);  
-        gl_vbo = 0;  
-    }  
-      
-    if (gl_heightmap_tex) {  
-        glDeleteTextures(1, &gl_heightmap_tex);  
-        gl_heightmap_tex = 0;  
-    }  
-      
-    if (gl_texturemap_tex) {  
-        glDeleteTextures(1, &gl_texturemap_tex);  
-        gl_texturemap_tex = 0;  
-    }  
-      
-    cached_heightmap_id = -1;  
-}
-
 void libmod_heightmap_destroy_render_buffer() {  
     if (render_buffer) {  
         bitmap_destroy(render_buffer);  
@@ -839,7 +772,7 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
         return 0;    
             
     if (!render_buffer) {    
-        render_buffer = bitmap_new_syslib(320, 240);    
+        render_buffer = bitmap_new_syslib(160, 120);    
         if (!render_buffer) return 0;    
     }    
         
@@ -1190,160 +1123,120 @@ for (int i = 0; i < visible_count; i++) {
   
 
 
-// Vertex shader (igual a tu original, pasa UV)
-static const char* voxel_vertex_shader_source =   
-"#version 120\n"  
-"attribute vec2 position;\n"      // CAMBIO CRÍTICO: usar 'position' no 'bgd_Vertex'  
-"attribute vec2 texCoord;\n"      // CAMBIO CRÍTICO: agregar texCoord explícito  
-"varying vec2 v_uv;\n"  
-"void main() {\n"  
-"    v_uv = texCoord;\n"          // CAMBIO CRÍTICO: pasar texCoord directamente  
-"    gl_Position = vec4(position, 0.0, 1.0);\n"  
+// Vertex shader    
+static const char* voxel_vertex_shader_source =      
+"#version 330 core\n"  
+"\n"  
+"in vec2 bgd_Vertex;\n"      
+"in vec2 bgd_TexCoord;\n"      
+"out vec2 v_uv;\n"      
+"\n"      
+"void main() {\n"      
+"    v_uv = bgd_TexCoord;\n"      
+"    gl_Position = vec4(bgd_Vertex, 0.0, 1.0);\n"      
+"}\n";    
+    
+// Fragment shader  
+static const char* voxel_fragment_shader_source =      
+"#version 330 core\n"  
+"\n"      
+"in vec2 v_uv;\n"      
+"\n"      
+"uniform sampler2D u_heightmap;\n"      
+"uniform sampler2D u_texturemap;\n"      
+"uniform vec3 u_camera_pos;\n"      
+"uniform float u_camera_angle;\n"      
+"uniform float u_camera_pitch;\n"      
+"uniform float u_fov;\n"      
+"uniform float u_max_distance;\n"      
+"uniform float u_water_level;\n"      
+"uniform float u_light_intensity;\n"      
+"uniform vec2 u_heightmap_size;\n"      
+"uniform vec3 u_sky_color;\n"      
+"uniform float u_current_distance;\n"    
+"\n"  
+"out vec4 FragColor;\n"  
+"\n"      
+"void main() {\n"      
+"    float column_angle = u_camera_angle - u_fov * 0.5 + v_uv.x * u_fov;\n"      
+"    \n"      
+"    float cos_angle = cos(column_angle);\n"      
+"    float sin_angle = sin(column_angle);\n"      
+"    \n"      
+"    vec2 world_pos = u_camera_pos.xy + vec2(cos_angle, sin_angle) * u_current_distance;\n"      
+"    vec2 uv = mod(world_pos / u_heightmap_size, 1.0);\n"      
+"    \n"      
+"    float terrain_height = texture(u_heightmap, uv).r * 255.0;\n"      
+"    \n"      
+"    bool is_water = terrain_height < u_water_level;\n"      
+"    float render_height = is_water ? u_water_level : terrain_height;\n"      
+"    \n"      
+"    float height_diff = u_camera_pos.z - render_height;\n"      
+"    float projected_y = height_diff / u_current_distance * 150.0;\n"      
+"    projected_y += u_camera_pitch * 20.0;\n"      
+"    \n"      
+"    float screen_y = 0.5 - (projected_y / 240.0);\n"      
+"    \n"      
+"    if (v_uv.y >= screen_y) {\n"      
+"        float fog = 1.0 - (u_current_distance / u_max_distance);\n"      
+"        fog = clamp(fog, 0.3, 1.0);\n"      
+"        \n"      
+"        if (is_water) {\n"      
+"            vec3 water_color = vec3(0.25, 0.5, 1.0);\n"      
+"            FragColor = vec4(mix(u_sky_color, water_color, fog), 1.0);\n"      
+"        } else {\n"      
+"            vec3 terrain_color = texture(u_texturemap, uv).rgb;\n"      
+"            terrain_color *= u_light_intensity;\n"      
+"            FragColor = vec4(mix(u_sky_color, terrain_color, fog), 1.0);\n"      
+"        }\n"      
+"    } else {\n"      
+"        discard;\n"      
+"    }\n"      
 "}\n";
 
-// fragment shader
-static const char* voxel_fragment_shader_source =   
-"#version 120\n"  
-"varying vec2 v_uv;\n"  
-"\n"  
-"uniform sampler2D u_heightmap;\n"  
-"uniform sampler2D u_texturemap;\n"  
-"uniform vec3 u_camera_pos;\n"  
-"uniform float u_camera_angle;\n"  
-"uniform float u_camera_pitch;\n"  
-"uniform float u_fov;\n"  
-"uniform float u_max_distance;\n"  
-"uniform float u_water_level;\n"  
-"uniform float u_light_intensity;\n"  
-"uniform vec2 u_heightmap_size;\n"  
-"uniform vec3 u_sky_color;\n"  
-"\n"  
-"void main() {\n"  
-"    float screen_x = v_uv.x * 320.0;\n"  
-"    float angle_step = u_fov / 320.0;\n"  
-"    float base_angle = u_camera_angle - u_fov * 0.5;\n"  
-"    float column_angle = base_angle + screen_x * angle_step;\n"  
-"    \n"  
-"    float cos_angle = cos(column_angle);\n"  
-"    float sin_angle = sin(column_angle);\n"  
-"    float pitch_offset = u_camera_pitch * 40.0;\n"  
-"    \n"  
-"    float lowest_y = 1.0;\n"  
-"    vec3 final_color = u_sky_color;\n"  
-"    \n"  
-"    for (float distance = 1.0; distance < u_max_distance; distance += 1.5) {\n"  
-"        vec2 world_pos = u_camera_pos.xy + vec2(cos_angle, sin_angle) * distance;\n"  
-"        \n"  
-"        // CRÍTICO: Normalizar coordenadas correctamente\n"  
-"        vec2 uv = mod(world_pos / u_heightmap_size, 1.0);\n"  
-"        \n"  
-"        float terrain_height = texture2D(u_heightmap, uv).r * 255.0;\n"  
-"        \n"  
-"        bool is_water = false;\n"  
-"        float render_height;\n"  
-"        \n"  
-"        if (terrain_height < u_water_level) {\n"  
-"            render_height = u_water_level;\n"  
-"            is_water = true;\n"  
-"        } else {\n"  
-"            render_height = terrain_height;\n"  
-"        }\n"  
-"        \n"  
-"        float height_on_screen = (u_camera_pos.z - render_height) / distance * 300.0 + 120.0;\n"  
-"        height_on_screen += pitch_offset;\n"  
-"        \n"  
-"        float screen_y = height_on_screen / 240.0;\n"  
-"        \n"  
-"        if (screen_y < 0.0) screen_y = 0.0;\n"  
-"        if (screen_y >= 1.0) continue;\n"  
-"        \n"  
-"        if (screen_y < lowest_y) {\n"  
-"            float fog = 1.0 - (distance / u_max_distance);\n"  
-"            fog = max(fog, 0.3);\n"  
-"            \n"  
-"            if (is_water) {\n"  
-"                float depth = (u_water_level - terrain_height) * 0.01;\n"  
-"                vec3 water_color = mix(vec3(0.25, 0.5, 1.0), vec3(0.1, 0.2, 0.5), clamp(depth, 0.0, 1.0));\n"  
-"                final_color = water_color * fog + u_sky_color * (1.0 - fog);\n"  
-"            } else {\n"  
-"                // CRÍTICO: Leer texturemap con las mismas coordenadas UV\n"  
-"                vec3 terrain_color = texture2D(u_texturemap, uv).rgb;\n"  
-"                terrain_color *= u_light_intensity;\n"  
-"                terrain_color = terrain_color * fog + u_sky_color * (1.0 - fog);\n"  
-"                final_color = terrain_color;\n"  
-"            }\n"  
-"            \n"  
-"            lowest_y = screen_y;\n"  
-"        }\n"  
-"        \n"  
-"        if (lowest_y <= 0.0) break;\n"  
-"    }\n"  
-"    \n"  
-"    gl_FragColor = vec4(final_color, 1.0);\n"  
-"}\n";
 
-// Compilar un shader  
-static GLuint compile_gl_shader(GLenum type, const char* source) {  
-    GLuint shader = glCreateShader(type);  
-    glShaderSource(shader, 1, &source, NULL);  
-    glCompileShader(shader);  
+static int create_voxelspace_shader() {  
+    if (voxel_shader) return 1;  
       
-    GLint success;  
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);  
-    if (!success) {  
-        char info_log[512];  
-        glGetShaderInfoLog(shader, 512, NULL, info_log);  
-        fprintf(stderr, "ERROR compilando shader OpenGL:\n%s\n", info_log);  
-        glDeleteShader(shader);  
+    voxel_shader = shader_create(  
+        (char*)voxel_vertex_shader_source,  
+        (char*)voxel_fragment_shader_source  
+    );  
+      
+    if (!voxel_shader) {  
+        fprintf(stderr, "ERROR: No se pudo crear shader de voxelspace\n");  
         return 0;  
     }  
       
-    fprintf(stderr, "Shader OpenGL compilado exitosamente\n");  
-    return shader;  
-}
-  
-// Crear programa de shaders  
-static int create_gl_shader_program() {  
-       if (gl_shader_program) return 1;  
-      
-    gl_vertex_shader = compile_gl_shader(GL_VERTEX_SHADER, voxel_vertex_shader_source);  
-    if (!gl_vertex_shader) {  
-        fprintf(stderr, "ERROR: No se pudo compilar vertex shader\n");  
-        return 0;  
+    fprintf(stderr, "Shader de voxelspace creado exitosamente\n");  
+     // AÑADIR AQUÍ - Crear parámetros del shader  
+    if (!voxel_params) {  
+        voxel_params = shader_create_parameters(12); // 12 uniforms  
+        if (!voxel_params) {  
+            fprintf(stderr, "ERROR: No se pudo crear parámetros del shader\n");  
+            return 0;  
+        }  
+        fprintf(stderr, "Parámetros del shader creados exitosamente\n");  
     }  
+
+     // AÑADIR AQUÍ - Verificar ubicaciones de uniforms  
+    int loc_heightmap = shader_getuniformlocation(voxel_shader, "u_heightmap");  
+    int loc_texturemap = shader_getuniformlocation(voxel_shader, "u_texturemap");  
+    int loc_camera_pos = shader_getuniformlocation(voxel_shader, "u_camera_pos");  
+    int loc_current_distance = shader_getuniformlocation(voxel_shader, "u_current_distance");  
       
-    gl_fragment_shader = compile_gl_shader(GL_FRAGMENT_SHADER, voxel_fragment_shader_source);  
-    if (!gl_fragment_shader) {  
-        fprintf(stderr, "ERROR: No se pudo compilar fragment shader\n");  
-        glDeleteShader(gl_vertex_shader);  
-        return 0;  
+    fprintf(stderr, "Uniform locations:\n");  
+    fprintf(stderr, "  u_heightmap: %d\n", loc_heightmap);  
+    fprintf(stderr, "  u_texturemap: %d\n", loc_texturemap);  
+    fprintf(stderr, "  u_camera_pos: %d\n", loc_camera_pos);  
+    fprintf(stderr, "  u_current_distance: %d\n", loc_current_distance);  
+      
+    if (loc_heightmap < 0 || loc_texturemap < 0) {  
+        fprintf(stderr, "WARNING: Algunos uniforms críticos no se encontraron\n");  
     }  
-      
-    gl_shader_program = glCreateProgram();  
-    glAttachShader(gl_shader_program, gl_vertex_shader);  
-    glAttachShader(gl_shader_program, gl_fragment_shader);  
-      
-    // CRÍTICO: Vincular atributos ANTES de linkear  
-    glBindAttribLocation(gl_shader_program, 0, "position");  
-    glBindAttribLocation(gl_shader_program, 1, "texCoord");  
-    glLinkProgram(gl_shader_program);  
-      
-    GLint success;  
-    glGetProgramiv(gl_shader_program, GL_LINK_STATUS, &success);  
-    if (!success) {  
-        char info_log[512];  
-        glGetProgramInfoLog(gl_shader_program, 512, NULL, info_log);  
-        fprintf(stderr, "ERROR linkeando programa shader:\n%s\n", info_log);  
-        glDeleteShader(gl_vertex_shader);  
-        glDeleteShader(gl_fragment_shader);  
-        glDeleteProgram(gl_shader_program);  
-        return 0;  
-    }  
-      
-    fprintf(stderr, "Programa shader OpenGL creado exitosamente\n");  
     return 1;  
-}
 
+}
 
 static int setup_shader_parameters(HEIGHTMAP *hm) {  
     if (!voxel_shader) return 0;  
@@ -1351,6 +1244,7 @@ static int setup_shader_parameters(HEIGHTMAP *hm) {
     if (!voxel_params) {  
         voxel_params = shader_create_parameters(11);  
         if (!voxel_params) {  
+            fprintf(stderr, "ERROR: No se pudo crear parámetros del shader\n");  
             return 0;  
         }  
     }  
@@ -1368,99 +1262,73 @@ static int setup_shader_parameters(HEIGHTMAP *hm) {
     int loc_heightmap_size = shader_getuniformlocation(voxel_shader, "u_heightmap_size");  
     int loc_sky_color = shader_getuniformlocation(voxel_shader, "u_sky_color");  
       
-    // Clamping de cámara  
-    if (camera.x < 0.0f) camera.x = 0.0f;  
-    if (camera.y < 0.0f) camera.y = 0.0f;  
-    if (camera.z < 0.0f) camera.z = 0.0f;  
-    if (camera.x >= hm->width) camera.x = hm->width - 1.0f;  
-    if (camera.y >= hm->height) camera.y = hm->height - 1.0f;  
-      
-    // Conversión de miliradianes a radianes  
-    float angle_radians = camera.angle / 1000.0f;  
-    float pitch_radians = camera.pitch / 1000.0f;  
-      
-    // Calcular max_distance seguro  
-    float dist_to_right = hm->width - camera.x;  
-    float dist_to_left = camera.x;  
-    float dist_to_bottom = hm->height - camera.y;  
-    float dist_to_top = camera.y;  
-      
-    float min_dist_to_edge = dist_to_right;  
-    if (dist_to_left < min_dist_to_edge) min_dist_to_edge = dist_to_left;  
-    if (dist_to_bottom < min_dist_to_edge) min_dist_to_edge = dist_to_bottom;  
-    if (dist_to_top < min_dist_to_edge) min_dist_to_edge = dist_to_top;  
-      
-    float safe_max_distance = min_dist_to_edge * 0.9f;  
-    if (safe_max_distance > max_render_distance) safe_max_distance = max_render_distance;  
-    if (safe_max_distance < 100.0f) safe_max_distance = 100.0f;  
-      
-    // CORRECCIÓN CRÍTICA: Pasar GRAPH* directamente, no texture IDs  
+    // Configurar texturas (pasar GRAPH* directamente)  
     if (loc_heightmap >= 0) {  
-        shader_set_param(voxel_params, SHADER_IMAGE, loc_heightmap, 0,   
+        shader_set_param(voxel_params, SHADER_IMAGE, loc_heightmap, 0,  
                         hm->heightmap, 0, 0, 0, 0, 0);  
     }  
       
     if (loc_texturemap >= 0 && hm->texturemap) {  
-        shader_set_param(voxel_params, SHADER_IMAGE, loc_texturemap, 1,   
+        shader_set_param(voxel_params, SHADER_IMAGE, loc_texturemap, 1,  
                         hm->texturemap, 0, 0, 0, 0, 0);  
     }  
       
     // Configurar vec3 u_camera_pos  
     if (loc_camera_pos >= 0) {  
         float camera_pos[3] = { camera.x, camera.y, camera.z };  
-        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_camera_pos, 1,   
+        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_camera_pos, 1,  
                         camera_pos, 0, 0, 0, 0, 0);  
     }  
       
     // Configurar floats individuales  
     if (loc_camera_angle >= 0) {  
-        float angle_val = angle_radians;  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_angle, 0,   
+        float angle_val = camera.angle / 1000.0f;  
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_angle, 0,  
                         (void*)(intptr_t)*(int32_t*)&angle_val, 0, 0, 0, 0, 0);  
     }  
       
     if (loc_camera_pitch >= 0) {  
-        float pitch_val = pitch_radians;  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_pitch, 0,   
+        float pitch_val = camera.pitch / 1000.0f;  
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_pitch, 0,  
                         (void*)(intptr_t)*(int32_t*)&pitch_val, 0, 0, 0, 0, 0);  
     }  
       
     if (loc_fov >= 0) {  
         float fov_val = 0.7f;  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_fov, 0,   
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_fov, 0,  
                         (void*)(intptr_t)*(int32_t*)&fov_val, 0, 0, 0, 0, 0);  
     }  
       
     if (loc_max_distance >= 0) {  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_max_distance, 0,   
-                        (void*)(intptr_t)*(int32_t*)&safe_max_distance, 0, 0, 0, 0, 0);  
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_max_distance, 0,  
+                        (void*)(intptr_t)*(int32_t*)&max_render_distance, 0, 0, 0, 0, 0);  
     }  
       
     if (loc_water_level >= 0) {  
         float water_val = water_level;  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_water_level, 0,   
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_water_level, 0,  
                         (void*)(intptr_t)*(int32_t*)&water_val, 0, 0, 0, 0, 0);  
     }  
       
     if (loc_light_intensity >= 0) {  
         float light_val = light_intensity / 255.0f;  
-        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_light_intensity, 0,   
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_light_intensity, 0,  
                         (void*)(intptr_t)*(int32_t*)&light_val, 0, 0, 0, 0, 0);  
     }  
       
     if (loc_heightmap_size >= 0) {  
         float heightmap_size[2] = { (float)hm->width, (float)hm->height };  
-        shader_set_param(voxel_params, UNIFORM_FLOAT2_ARRAY, loc_heightmap_size, 1,   
+        shader_set_param(voxel_params, UNIFORM_FLOAT2_ARRAY, loc_heightmap_size, 1,  
                         heightmap_size, 0, 0, 0, 0, 0);  
     }  
       
     if (loc_sky_color >= 0) {  
-        float sky_color[3] = {   
-            sky_color_r / 255.0f,   
-            sky_color_g / 255.0f,   
-            sky_color_b / 255.0f   
+        float sky_color[3] = {  
+            sky_color_r / 255.0f,  
+            sky_color_g / 255.0f,  
+            sky_color_b / 255.0f  
         };  
-        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_sky_color, 1,   
+        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_sky_color, 1,  
                         sky_color, 0, 0, 0, 0, 0);  
     }  
       
@@ -1468,332 +1336,222 @@ static int setup_shader_parameters(HEIGHTMAP *hm) {
 }
 
 
-
-// Función principal de renderizado con shader  
-static int64_t render_voxelspace_with_shader(HEIGHTMAP *hm, int width, int height) {  
-    if (!voxel_shader) {  
-        if (!create_voxelspace_shader()) {  
-            return 0;  
-        }  
-    }  
-      
-    if (!setup_shader_parameters(hm)) {  
-        return 0;  
-    }  
-      
-    // Crear render_buffer si no existe o si el tamaño cambió  
-    if (!render_buffer || render_buffer->width != width || render_buffer->height != height) {  
-        if (render_buffer) {  
-            bitmap_destroy(render_buffer);  
-        }  
-        render_buffer = bitmap_new_syslib(width, height);  
-        if (!render_buffer) {  
-            return 0;  
-        }  
-    }  
-      
-    // Crear un GRAPH dummy de 1x1 píxel como source  
-    // El shader ignorará este contenido y generará su propia salida  
-    static GRAPH *dummy_source = NULL;  
-    if (!dummy_source) {  
-        dummy_source = bitmap_new_syslib(1, 1);  
-        if (!dummy_source) {  
-            return 0;  
-        }  
-    }  
-      
-    // Activar shader y aplicar parámetros  
-    shader_activate(voxel_shader);  
-    shader_apply_parameters(voxel_params);  
-      
-    // Renderizar usando gr_blit con el shader activo  
-    // El shader se ejecutará durante el blit y generará el terreno voxel  
-gr_blit(  
-    render_buffer,  
-    NULL,  
-    width / 2.0,             // ✓ Usar 'width' del parámetro  
-    height / 2.0,            // ✓ Usar 'height' del parámetro  
-    0,  
-    0,  
-    width * 100.0,           // ✓ Usar 'width' del parámetro  
-    height * 100.0,          // ✓ Usar 'height' del parámetro  
-    0.5,  
-    0.5,  
-    dummy_source,  
-    NULL,  
-    255,  
-    255, 255, 255,  
-    BLEND_DISABLED,  
-    NULL  
-);
-      
-    shader_deactivate();  
-    fprintf(stderr, "DEBUG: Shader desactivado, verificando render_buffer...\n");  
-  
-// Verificar que render_buffer tiene contenido  
-uint32_t test_pixel = gr_get_pixel(render_buffer, 160, 120);  
-fprintf(stderr, "DEBUG: Pixel central del render_buffer: 0x%08X\n", test_pixel);  
-    return render_buffer->code;  
-}
-  
-// Función principal exportada a BennuGD2  
-int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {  
-    int64_t hm_id = params[0];  
-    int64_t render_width = params[1];  
-    int64_t render_height = params[2];  
-      
-    // Inicializar GLEW si es necesario  
-    if (!initialize_glew_if_needed()) {  
-        fprintf(stderr, "ERROR: No se pudo inicializar GLEW\n");  
-        return 0;  
-    }  
-      
-    // Buscar heightmap  
-    HEIGHTMAP *hm = NULL;  
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        if (heightmaps[i].id == hm_id) {  
-            hm = &heightmaps[i];  
-            break;  
-        }  
-    }  
-      
-    if (!hm || !hm->cache_valid) {  
-        fprintf(stderr, "ERROR: Heightmap no encontrado o cache inválido\n");  
-        return 0;  
-    }  
-      
-    // Crear shader program si no existe  
-    if (!create_gl_shader_program()) {  
-        fprintf(stderr, "ERROR: No se pudo crear shader program\n");  
-        return 0;  
-    }  
-      
-    // Subir texturas a OpenGL  
-    if (!upload_textures_to_opengl(hm)) {  
-        fprintf(stderr, "ERROR: No se pudieron subir texturas\n");  
-        return 0;  
-    }  
-      
-    // Crear FBO si no existe o cambió el tamaño  
-    static int64_t last_width = 0, last_height = 0;  
-    if (!voxel_fbo || !voxel_render_texture || last_width != render_width || last_height != render_height) {  
-        if (voxel_fbo) glDeleteFramebuffers(1, &voxel_fbo);  
-        if (voxel_render_texture) glDeleteTextures(1, &voxel_render_texture);  
+// GPU...
+int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {      
+    int64_t hm_id = params[0];      
+    int64_t render_width = params[1];      
+    int64_t render_height = params[2];      
           
-        glGenFramebuffers(1, &voxel_fbo);  
-        glGenTextures(1, &voxel_render_texture);  
+    // Buscar heightmap      
+    HEIGHTMAP *hm = NULL;      
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {      
+        if (heightmaps[i].id == hm_id) {      
+            hm = &heightmaps[i];      
+            break;      
+        }      
+    }      
           
-        glBindTexture(GL_TEXTURE_2D, voxel_render_texture);  
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, render_width, render_height, 0,  
-                     GL_RGBA, GL_UNSIGNED_BYTE, NULL);  
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);  
+    if (!hm || !hm->cache_valid) {      
+        fprintf(stderr, "ERROR: Heightmap no encontrado o cache inválido\n");      
+        return 0;      
+    }      
           
-        glBindFramebuffer(GL_FRAMEBUFFER, voxel_fbo);  
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,  
-                              GL_TEXTURE_2D, voxel_render_texture, 0);  
+    // Crear shader si no existe      
+    if (!create_voxelspace_shader()) {      
+        return 0;      
+    }      
           
-        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);  
-        if (status != GL_FRAMEBUFFER_COMPLETE) {  
-            fprintf(stderr, "ERROR: Framebuffer incompleto: 0x%x\n", status);  
-            return 0;  
-        }  
+    // Crear render_buffer si no existe o cambió el tamaño      
+    if (!render_buffer || render_buffer->width != render_width ||       
+        render_buffer->height != render_height) {      
+        if (render_buffer) {      
+            bitmap_destroy(render_buffer);      
+        }      
+        render_buffer = bitmap_new_syslib(render_width, render_height);      
+        if (!render_buffer) {      
+            fprintf(stderr, "ERROR: No se pudo crear render_buffer\n");      
+            return 0;      
+        }      
+    }      
           
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);  
-        last_width = render_width;  
-        last_height = render_height;  
-        fprintf(stderr, "FBO creado: %ldx%ld\n", render_width, render_height);  
-    }  
-      
-    // Crear render_buffer si no existe  
-    if (!render_buffer || render_buffer->width != render_width || render_buffer->height != render_height) {  
-        if (render_buffer) {  
-            bitmap_destroy(render_buffer);  
-        }  
-        render_buffer = bitmap_new_syslib(render_width, render_height);  
-        if (!render_buffer) {  
-            fprintf(stderr, "ERROR: No se pudo crear render_buffer\n");  
-            return 0;  
-        }  
-    }  
-      
-    // Crear VAO/VBO para quad fullscreen si no existe  
-    if (!gl_vao) {  
-        float quad_vertices[] = {  
-            // pos      // texCoords  
-            -1.0f,  1.0f,  0.0f, 1.0f,  
-            -1.0f, -1.0f,  0.0f, 0.0f,  
-             1.0f, -1.0f,  1.0f, 0.0f,  
-            -1.0f,  1.0f,  0.0f, 1.0f,  
-             1.0f, -1.0f,  1.0f, 0.0f,  
-             1.0f,  1.0f,  1.0f, 1.0f  
-        };  
+    // Limpiar buffer con color del cielo      
+    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, 255);      
+    gr_clear_as(render_buffer, sky_color);      
           
-        glGenVertexArrays(1, &gl_vao);  
-        glGenBuffers(1, &gl_vbo);  
+    // CAMBIO CRÍTICO: Crear quad source de 2x2 píxeles (no del tamaño del render_buffer)  
+    static GRAPH *quad_source = NULL;    
+        
+    if (!quad_source) {    
+        quad_source = bitmap_new_syslib(2, 2);    
+        if (!quad_source) {    
+            fprintf(stderr, "ERROR: No se pudo crear quad_source\n");    
+            return 0;    
+        }    
+        gr_clear_as(quad_source, SDL_MapRGBA(gPixelFormat, 255, 255, 255, 255));    
+        fprintf(stderr, "DEBUG: quad_source creado: 2x2\n");    
+    }    
           
-        glBindVertexArray(gl_vao);  
-        glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);  
-        glBufferData(GL_ARRAY_BUFFER, sizeof(quad_vertices), quad_vertices, GL_STATIC_DRAW);  
+    // Configurar parámetros base del shader    
+    if (!voxel_params) {      
+        voxel_params = shader_create_parameters(12);    
+        if (!voxel_params) {      
+            fprintf(stderr, "ERROR: No se pudo crear parámetros del shader\n");      
+            return 0;      
+        }      
+    }      
           
-        // Atributo de posición (location = 0)  
-        glEnableVertexAttribArray(0);  
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);  
+    // Obtener ubicaciones de uniforms (cachear en variables estáticas)    
+    static int loc_heightmap = -1;    
+    static int loc_texturemap = -1;    
+    static int loc_camera_pos = -1;    
+    static int loc_camera_angle = -1;    
+    static int loc_camera_pitch = -1;    
+    static int loc_fov = -1;    
+    static int loc_max_distance = -1;    
+    static int loc_water_level = -1;    
+    static int loc_light_intensity = -1;    
+    static int loc_heightmap_size = -1;    
+    static int loc_sky_color = -1;    
+    static int loc_current_distance = -1;    
+        
+    // Solo obtener ubicaciones la primera vez    
+    static int locations_initialized = 0;    
+    if (!locations_initialized) {    
+        loc_heightmap = shader_getuniformlocation(voxel_shader, "u_heightmap");      
+        loc_texturemap = shader_getuniformlocation(voxel_shader, "u_texturemap");      
+        loc_camera_pos = shader_getuniformlocation(voxel_shader, "u_camera_pos");      
+        loc_camera_angle = shader_getuniformlocation(voxel_shader, "u_camera_angle");      
+        loc_camera_pitch = shader_getuniformlocation(voxel_shader, "u_camera_pitch");      
+        loc_fov = shader_getuniformlocation(voxel_shader, "u_fov");      
+        loc_max_distance = shader_getuniformlocation(voxel_shader, "u_max_distance");      
+        loc_water_level = shader_getuniformlocation(voxel_shader, "u_water_level");      
+        loc_light_intensity = shader_getuniformlocation(voxel_shader, "u_light_intensity");      
+        loc_heightmap_size = shader_getuniformlocation(voxel_shader, "u_heightmap_size");      
+        loc_sky_color = shader_getuniformlocation(voxel_shader, "u_sky_color");      
+        loc_current_distance = shader_getuniformlocation(voxel_shader, "u_current_distance");    
+        locations_initialized = 1;    
+    }    
+        
+    // Arrays estáticos para uniforms (deben persistir hasta shader_apply_parameters)    
+    static float camera_pos[3];    
+    static float heightmap_size[2];    
+    static float sky_color_arr[3];    
           
-        // Atributo de texCoords (location = 1)  
-        glEnableVertexAttribArray(1);  
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));  
+    // Configurar parámetros que no cambian entre pasadas      
+    if (loc_heightmap >= 0) {      
+        shader_set_param(voxel_params, SHADER_IMAGE, loc_heightmap, 0,      
+                        (void*)hm->heightmap, 0, 0, 0, 0, 0);      
+    }      
           
-        glBindVertexArray(0);  
-        fprintf(stderr, "VAO/VBO creado para quad fullscreen\n");  
-    }  
-      
-    // Renderizar a FBO usando OpenGL directo  
-    glBindFramebuffer(GL_FRAMEBUFFER, voxel_fbo);  
-    glViewport(0, 0, render_width, render_height);  
-    glClearColor(sky_color_r / 255.0f, sky_color_g / 255.0f, sky_color_b / 255.0f, 1.0f);  
-    glClear(GL_COLOR_BUFFER_BIT);  
-      
-    // Usar shader program  
-    glUseProgram(gl_shader_program);  
-      
-    // Configurar uniforms  
-    glUniform1i(glGetUniformLocation(gl_shader_program, "u_heightmap"), 0);  
-    glUniform1i(glGetUniformLocation(gl_shader_program, "u_texturemap"), 1);  
-    glUniform3f(glGetUniformLocation(gl_shader_program, "u_camera_pos"), camera.x, camera.y, camera.z);  
-    glUniform1f(glGetUniformLocation(gl_shader_program, "u_camera_angle"), camera.angle / 1000.0f);  
-    glUniform1f(glGetUniformLocation(gl_shader_program, "u_camera_pitch"), camera.pitch / 1000.0f);  
-    glUniform1f(glGetUniformLocation(gl_shader_program, "u_fov"), 0.7f);  
-    glUniform1f(glGetUniformLocation(gl_shader_program, "u_max_distance"), max_render_distance);  
-    glUniform1f(glGetUniformLocation(gl_shader_program, "u_water_level"), water_level);  
-    glUniform1f(glGetUniformLocation(gl_shader_program, "u_light_intensity"), light_intensity / 255.0f);  
-    glUniform2f(glGetUniformLocation(gl_shader_program, "u_heightmap_size"), (float)hm->width, (float)hm->height);  
-    glUniform3f(glGetUniformLocation(gl_shader_program, "u_sky_color"),   
-                sky_color_r / 255.0f, sky_color_g / 255.0f, sky_color_b / 255.0f);  
-      
-    // Bind texturas  
-    glActiveTexture(GL_TEXTURE0);  
-    glBindTexture(GL_TEXTURE_2D, gl_heightmap_tex);  
-    glActiveTexture(GL_TEXTURE1);  
-    glBindTexture(GL_TEXTURE_2D, gl_texturemap_tex);  
-      
-    // Renderizar quad fullscreen  
-    glBindVertexArray(gl_vao);  
-    glDrawArrays(GL_TRIANGLES, 0, 6);  
-    glBindVertexArray(0);  
-      
-    // Desactivar shader  
-    glUseProgram(0);  
-      
-    // Copiar resultado del FBO a render_buffer píxel por píxel  
-    uint8_t *pixel_data = malloc(render_width * render_height * 4);  
-    if (!pixel_data) {  
-        fprintf(stderr, "ERROR: No se pudo asignar memoria para pixel_data\n");  
-        return 0;  
-    }  
-      
-    glBindFramebuffer(GL_FRAMEBUFFER, voxel_fbo);  
-    glReadPixels(0, 0, render_width, render_height, GL_RGBA, GL_UNSIGNED_BYTE, pixel_data);  
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);  
-      
-    // Copiar píxeles a render_buffer usando gr_put_pixel  
-    for (int y = 0; y < render_height; y++) {  
-        for (int x = 0; x < render_width; x++) {  
-            int idx = (y * render_width + x) * 4;  
-            uint8_t r = pixel_data[idx + 0];  
-            uint8_t g = pixel_data[idx + 1];  
-            uint8_t b = pixel_data[idx + 2];  
-            uint8_t a = pixel_data[idx + 3];  
+    if (loc_texturemap >= 0 && hm->texturemap) {      
+        shader_set_param(voxel_params, SHADER_IMAGE, loc_texturemap, 0,      
+                        (void*)hm->texturemap, 1, 0, 0, 0, 0);    
+    }      
+          
+    if (loc_camera_pos >= 0) {      
+        camera_pos[0] = camera.x;    
+        camera_pos[1] = camera.y;    
+        camera_pos[2] = camera.z;    
+        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_camera_pos, 1,      
+                        (void*)camera_pos, 0, 0, 0, 0, 0);      
+    }      
+          
+    if (loc_camera_angle >= 0) {      
+        float angle_val = camera.angle / 1000.0f;      
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_angle, 0,      
+                        *(int32_t*)&angle_val, 0, 0, 0, 0, 0);      
+    }      
+          
+    if (loc_camera_pitch >= 0) {      
+        float pitch_val = camera.pitch / 1000.0f;      
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_camera_pitch, 0,      
+                        *(int32_t*)&pitch_val, 0, 0, 0, 0, 0);      
+    }      
+          
+    if (loc_fov >= 0) {      
+        float fov_val = 0.7f;      
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_fov, 0,      
+                        *(int32_t*)&fov_val, 0, 0, 0, 0, 0);      
+    }      
+          
+    if (loc_max_distance >= 0) {      
+        float safe_distance = (max_render_distance > 300.0f) ? 300.0f : max_render_distance;      
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_max_distance, 0,      
+                        *(int32_t*)&safe_distance, 0, 0, 0, 0, 0);      
+    }      
+          
+    if (loc_water_level >= 0) {      
+        float water_val = water_level;      
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_water_level, 0,      
+                        *(int32_t*)&water_val, 0, 0, 0, 0, 0);      
+    }      
+          
+    if (loc_light_intensity >= 0) {      
+        float light_val = light_intensity / 255.0f;      
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_light_intensity, 0,      
+                        *(int32_t*)&light_val, 0, 0, 0, 0, 0);      
+    }      
+          
+    if (loc_heightmap_size >= 0) {      
+        heightmap_size[0] = (float)hm->width;    
+        heightmap_size[1] = (float)hm->height;    
+        shader_set_param(voxel_params, UNIFORM_FLOAT2_ARRAY, loc_heightmap_size, 1,      
+                        (void*)heightmap_size, 0, 0, 0, 0, 0);      
+    }      
+          
+    if (loc_sky_color >= 0) {      
+        sky_color_arr[0] = sky_color_r / 255.0f;    
+        sky_color_arr[1] = sky_color_g / 255.0f;    
+        sky_color_arr[2] = sky_color_b / 255.0f;    
+        shader_set_param(voxel_params, UNIFORM_FLOAT3_ARRAY, loc_sky_color, 1,      
+                        (void*)sky_color_arr, 0, 0, 0, 0, 0);      
+    }      
+          
+    // Activar shader      
+    shader_activate(voxel_shader);      
+          
+    // Renderizar en múltiples pasadas desde lejos hacia cerca      
+    float max_dist = (max_render_distance > 300.0f) ? 300.0f : max_render_distance;      
+    for (float distance = max_dist; distance >= 1.0; distance -= 2.0) {      
+        // Actualizar uniform de distancia para esta pasada      
+        if (loc_current_distance >= 0) {      
+            shader_set_param(voxel_params, UNIFORM_FLOAT, loc_current_distance, 0,      
+                            *(int32_t*)&distance, 0, 0, 0, 0, 0);      
+        }      
               
-            uint32_t color = SDL_MapRGBA(gPixelFormat, r, g, b, a);  
-            gr_put_pixel(render_buffer, x, y, color);  
-        }  
-    }  
-      
-    free(pixel_data);  
-      
-    fprintf(stderr, "DEBUG: Renderizado GPU completado\n");  
-      
-    return render_buffer->code;  
-}
-
-static int upload_textures_to_opengl(HEIGHTMAP *hm) {  
-    // Solo subir si cambió el heightmap  
-    if (cached_heightmap_id == hm->id && gl_heightmap_tex != 0 && gl_texturemap_tex != 0) {  
-        return 1;  // Ya están subidas  
-    }  
-      
-    // Subir heightmap  
-    if (gl_heightmap_tex == 0) {  
-        glGenTextures(1, &gl_heightmap_tex);  
-    }  
-      
-    uint8_t *heightmap_buffer = malloc(hm->width * hm->height * 4);  
-    if (!heightmap_buffer) {  
-        fprintf(stderr, "ERROR: No se pudo asignar memoria para heightmap_buffer\n");  
-        return 0;  
-    }  
-      
-    for (int y = 0; y < hm->height; y++) {  
-        for (int x = 0; x < hm->width; x++) {  
-            uint32_t pixel = gr_get_pixel(hm->heightmap, x, y);  
-            uint8_t height = (pixel >> 16) & 0xFF;  
+        // Aplicar parámetros actualizados      
+        shader_apply_parameters(voxel_params);      
               
-            int idx = (y * hm->width + x) * 4;  
-            heightmap_buffer[idx + 0] = height;  
-            heightmap_buffer[idx + 1] = height;  
-            heightmap_buffer[idx + 2] = height;  
-            heightmap_buffer[idx + 3] = 255;  
-        }  
-    }  
-      
-    glBindTexture(GL_TEXTURE_2D, gl_heightmap_tex);  
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, hm->width, hm->height, 0,  
-                 GL_RGBA, GL_UNSIGNED_BYTE, heightmap_buffer);  
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);  
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);  
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);  
-      
-    free(heightmap_buffer);  
-    fprintf(stderr, "Heightmap subido a GPU: %ldx%ld (texture ID: %u)\n",   
-            hm->width, hm->height, gl_heightmap_tex);  
-      
-    // Subir texturemap  
-    if (hm->texturemap) {  
-        if (gl_texturemap_tex == 0) {  
-            glGenTextures(1, &gl_texturemap_tex);  
-        }  
+        // CAMBIO CRÍTICO: Escalar quad de 2x2 para cubrir todo el render_buffer  
+        // La escala se calcula como: (tamaño_deseado / tamaño_source) * 100  
+        // Para x: (render_width / 2) * 100  
+        // Para y: (render_height / 2) * 100  
+        gr_blit(      
+            render_buffer,    
+            NULL,    
+            render_width / 2.0,    
+            render_height / 2.0,    
+            0,    
+            0,    
+            (render_width / 2.0) * 100.0,  // Escala para cubrir todo el ancho  
+            (render_height / 2.0) * 100.0, // Escala para cubrir todo el alto  
+            POINT_UNDEFINED,    
+            POINT_UNDEFINED,    
+            quad_source,    
+            NULL,    
+            255,    
+            255, 255, 255,    
+            BLEND_SET,    
+            NULL    
+        );    
+    }      
           
-        uint32_t *texture_buffer = malloc(hm->texturemap->width * hm->texturemap->height * sizeof(uint32_t));  
-        if (!texture_buffer) {  
-            fprintf(stderr, "ERROR: No se pudo asignar memoria para texture_buffer\n");  
-            return 0;  
-        }  
+    // Desactivar shader      
+    shader_deactivate();      
           
-        for (int y = 0; y < hm->texturemap->height; y++) {  
-            for (int x = 0; x < hm->texturemap->width; x++) {  
-                texture_buffer[y * hm->texturemap->width + x] = gr_get_pixel(hm->texturemap, x, y);  
-            }  
-        }  
+    fprintf(stderr, "DEBUG: Renderizado GPU multi-pasada completado, retornando graph ID: %d\n", render_buffer->code);      
           
-        glBindTexture(GL_TEXTURE_2D, gl_texturemap_tex);  
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, hm->texturemap->width,  
-                     hm->texturemap->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, texture_buffer);  
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);  
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);  
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);  
-          
-        free(texture_buffer);  
-        fprintf(stderr, "Texturemap subido a GPU: %lux%lu (texture ID: %u)\n",   
-                hm->texturemap->width, hm->texturemap->height, gl_texturemap_tex);  
-    } else {  
-        fprintf(stderr, "ADVERTENCIA: hm->texturemap es NULL - no se subió textura de color\n");  
-    }  
-      
-    cached_heightmap_id = hm->id;  
-    return 1;  
+    return render_buffer->code;      
 }
 
 /* Funciones auxiliares */
