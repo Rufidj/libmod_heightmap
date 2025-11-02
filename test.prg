@@ -1,316 +1,338 @@
-import "libmod_gfx";      
-import "libmod_input";      
-import "libmod_misc";      
-import "libmod_heightmap";      
-      
-GLOBAL  
-    int heightmap_id;  
-    string base_path;  
-    string assets_path;  
-    int tree_graph;  
-    int nave_graph;  
-    float camera_distance = 30.0;  
-    float camera_height = 15.0;  
-    float current_angle;  
-    float nave_x, nave_y, nave_z;  
-    int nave_id;  
-    int bullet_graph;  
-    float bullet_X, bullet_y, bullet_z;  
-    int bullet_id;  
-    float enemy_x, enemy_y, enemy_z;  
-    int enemy_graph;  
-    int enemy_id;  
-    float enemy_shoot_x, enemy_shoot_y, enemy_shoot_z;  
-    float exact_enemy_x, exact_enemy_y, exact_enemy_z;  
-    float global_enemy_shoot_x, global_enemy_shoot_y, global_enemy_shoot_z;  
-    int voxel_shader_id;  
-    int voxel_shader_params_id;  
-      
-    // NUEVA VARIABLE PARA CONTROLAR GPU/CPU  
-    int use_gpu = 0;  // 0 = CPU, 1 = GPU
-
-PROCESS main()      
-BEGIN      
-    set_mode(640, 480);
-    set_fps(120, 0);      
-    window_set_title("Test Skybox Heightmap FOG");      
-    base_path = get_base_path();      
-    assets_path = base_path + "assets/";        
-         
-    // Verificar carga de gráficos    
-    tree_graph = map_load(assets_path + "tree.png");    
-    if (!tree_graph)    
-        say("Error: No se pudo cargar palmtree.png");    
-    else    
-        say("Palmtree cargado correctamente: ID " + tree_graph);    
-    end    
-
-    bullet_graph = map_load(assets_path + "bullet.png");    
-    if (!tree_graph)    
-        say("Error: No se pudo cargar bullet.png");    
-    else    
-        say("Bullet cargado correctamente: ID " + bullet_graph);    
-    end    
-
-    enemy_graph = map_load(assets_path + "enemy.png");    
-    if (!tree_graph)    
-        say("Error: No se pudo cargar enemy.png");    
-    else    
-        say("Enemy cargado correctamente: ID " + Enemy_graph);    
-    end 
+import "libmod_gfx";        
+import "libmod_input";        
+import "libmod_misc";        
+import "libmod_heightmap";        
         
-    nave_graph = map_load(assets_path + "sprite.png");    
-    if (!nave_graph)    
-        say("Error: No se pudo cargar sprite.png - La nave no aparecerá");    
-        return;    
-    else    
-        say("Nave cargada correctamente: ID " + nave_graph);    
-    end    
-        
-    // Cargar terreno      
-    heightmap_id = HEIGHTMAP_LOAD(assets_path + "terrain.png");      
-    if (!heightmap_id)      
-        say("No se pudo cargar el terreno");      
-        return;      
+GLOBAL    
+    int heightmap_id;    
+    string base_path;    
+    string assets_path;    
+    int tree_graph;    
+    int nave_graph;    
+    float camera_distance = 30.0;    
+    float camera_height = 15.0;    
+    float current_angle;    
+    float nave_x, nave_y, nave_z;    
+    int nave_id;    
+    int bullet_graph;    
+    float bullet_X, bullet_y, bullet_z;    
+    int bullet_id;    
+    float enemy_x, enemy_y, enemy_z;    
+    int enemy_graph;    
+    int enemy_id;    
+    float enemy_shoot_x, enemy_shoot_y, enemy_shoot_z;    
+    float exact_enemy_x, exact_enemy_y, exact_enemy_z;    
+    float global_enemy_shoot_x, global_enemy_shoot_y, global_enemy_shoot_z;    
+    int voxel_shader_id;    
+    int voxel_shader_params_id;    
+    int use_gpu = 0;  
+    int auto_rotate = 0;  // NUEVO: Variable para rotación automática  
+END  
+  
+PROCESS main()  
+PRIVATE  
+    int using_manual_control = 0;  // NUEVO: Declarar aquí, no dentro del LOOP  
+BEGIN        
+    set_mode(640, 480);  
+    set_fps(0, 0);        
+    window_set_title("Test Skybox Heightmap FOG");        
+    base_path = get_base_path();        
+    assets_path = base_path + "assets/";          
+           
+    // ... código de carga de gráficos ...  
+      
+    tree_graph = map_load(assets_path + "tree.png");      
+    if (!tree_graph)      
+        say("Error: No se pudo cargar palmtree.png");      
+    else      
+        say("Palmtree cargado correctamente: ID " + tree_graph);      
+    end  
+  
+    bullet_graph = map_load(assets_path + "bullet.png");      
+    if (!bullet_graph)      
+        say("Error: No se pudo cargar bullet.png");      
+    else      
+        say("Bullet cargado correctamente: ID " + bullet_graph);      
     end      
+  
+    enemy_graph = map_load(assets_path + "enemy.png");      
+    if (!enemy_graph)      
+        say("Error: No se pudo cargar enemy.png");      
+    else      
+        say("Enemy cargado correctamente: ID " + enemy_graph);      
+    end   
+          
+    nave_graph = map_load(assets_path + "sprite.png");      
+    if (!nave_graph)      
+        say("Error: No se pudo cargar sprite.png - La nave no aparecerá");      
+        return;      
+    else      
+        say("Nave cargada correctamente: ID " + nave_graph);      
+    end      
+          
+    heightmap_id = HEIGHTMAP_LOAD(assets_path + "terrain.png");        
+    if (!heightmap_id)        
+        say("No se pudo cargar el terreno");        
+        return;        
+    end        
+        
+    HEIGHTMAP_LOAD_TEXTURE(heightmap_id, assets_path + "terrain_texture.png");        
+    HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(heightmap_id);        
+    HEIGHTMAP_SET_LIGHT(200);        
+    HEIGHTMAP_SET_RENDER_DISTANCE(1000);        
+    HEIGHTMAP_SET_CHUNK_CONFIG(128, 0);      
+    HEIGHTMAP_SET_WATER_TEXTURE(assets_path + "water.png", 30);      
+    HEIGHTMAP_SET_WATER_LEVEL(20);      
+    HEIGHTMAP_SET_WAVE_AMPLITUDE(20.0);      
       
-    // Configuración básica      
-    HEIGHTMAP_LOAD_TEXTURE(heightmap_id, assets_path + "terrain_texture.png");      
-    HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(heightmap_id);      
-    HEIGHTMAP_SET_LIGHT(200);      
-    HEIGHTMAP_SET_RENDER_DISTANCE(1000);      
-    HEIGHTMAP_SET_CHUNK_CONFIG(128, 0);    
-    HEIGHTMAP_SET_WATER_TEXTURE(assets_path + "water.png", 30);    
-    HEIGHTMAP_SET_WATER_LEVEL(20);    
-    HEIGHTMAP_SET_WAVE_AMPLITUDE(20.0);    
+    HEIGHTMAP_SET_SKY_TEXTURE(assets_path + "skybox.png", 1000);        
+    HEIGHTMAP_SET_SKY_COLOR(135, 206, 235, 255);        
+    HEIGHTMAP_SET_FOG_COLOR(255,255,255,200);  
+    HEIGHTMAP_SET_BILLBOARD_FOV(0);  
+        
+    terrain_display();        
+    display_info();        
+  
+    nave_id = nave();    
+    enemy_id = enemy();  
     
-    // Cargar textura del skybox      
-    HEIGHTMAP_SET_SKY_TEXTURE(assets_path + "skybox.png", 1000);      
-    HEIGHTMAP_SET_SKY_COLOR(135, 206, 235, 255);      
-
-    // Añadir niebla
-    HEIGHTMAP_SET_FOG_COLOR(255,255,255,200);
-    HEIGHTMAP_SET_BILLBOARD_FOV(0);  // 1.5 radianes ≈ 86 grados
-      
-    // Crear procesos  
-    terrain_display();      
-    display_info();      
-// En el proceso main, después de crear la nave  
-nave_id = nave();  
-enemy_id = enemy();
+    HEIGHTMAP_SET_CAMERA(    
+        nave_x - 80,  
+        nave_y,  
+        nave_z + 30,  
+        0,  
+        -300,  
+        60000  
+    );    
+     
+    HEIGHTMAP_SET_CAMERA_FOLLOW(      
+        nave_id,          
+        0,  
+        -4500,  
+        30,  
+        8  
+    );  
   
-// Posicionar cámara inicialmente en la posición de la nave  
-HEIGHTMAP_SET_CAMERA(  
-    nave_x - 80,    // X detrás de la nave (usando offset)  
-    nave_y,         // Y igual que la nave  
-    nave_z + 30,    // Z un poco más alto  
-    0,              // Ángulo horizontal  
-    -300,           // Pitch hacia abajo (en milésimas)  
-    60000           // FOV  
-);  
-   
-// Configurar el seguimiento automático con la rotación corregida  
-HEIGHTMAP_SET_CAMERA_FOLLOW(    
-    nave_id,        
-    0,              // Offset X  
-    -4500,           // Offset Y hacia atrás    
-    30,             // Altura de la cámara  
-    8               // Velocidad de seguimiento  
-);
-// En el bucle principal, actualizar el seguimiento  
-LOOP      
-      HEIGHTMAP_UPDATE_WATER_TIME();  
-      
-    if (nave_id != 0)  
-        HEIGHTMAP_UPDATE_CAMERA_FOLLOW(heightmap_id, nave_x, nave_y, nave_z);  
-        say("Pos nave: " + nave_x + "," + nave_y + "," + nave_z);  
-    end  
-      
-    // NUEVO: Cambiar entre GPU y CPU con la tecla G  
-    if (key(_g))  
-        use_gpu = !use_gpu;  
-        say("Cambiado a modo: " + (use_gpu ? "GPU" : "CPU"));  
-        while(key(_g)) FRAME; end  // Esperar a que se suelte la tecla  
-    end  
-      
-    if(key(_esc)) exit(); end  
-    FRAME;  
-END
-end
-         
-      
-PROCESS display_info()  
-PRIVATE  
-    int cam_x, cam_y, cam_z, cam_angle, cam_pitch;  
-    int debug_counter = 0;  
-BEGIN  
-    LOOP  
-        HEIGHTMAP_GET_CAMERA_POSITION(&cam_x, &cam_y, &cam_z, &cam_angle, &cam_pitch);  
+    LOOP        
+        HEIGHTMAP_UPDATE_WATER_TIME();    
           
-        write(0, 10, 10, 0, "FPS: " + frame_info.fps);  
-        write(0, 10, 30, 0, "WASD: Mover nave | QE: Subir/Bajar");  
+        // Resetear el flag al inicio de cada frame  
+        using_manual_control = 0;  
           
-        // NUEVA LÍNEA: Mostrar modo de renderizado  
-        if (use_gpu)  
-            write(0, 10, 50, 0, "Modo: GPU (Presiona G para cambiar)");  
-        else  
-            write(0, 10, 50, 0, "Modo: CPU (Presiona G para cambiar)");  
+        // Control de cámara con flechas  
+        if (key(_left))  
+            HEIGHTMAP_LOOK_HORIZONTAL(-5);  
+            using_manual_control = 1;  
         end  
           
+        if (key(_right))  
+            HEIGHTMAP_LOOK_HORIZONTAL(5);  
+            using_manual_control = 1;  
+        end  
+          
+        if (key(_up))  
+            HEIGHTMAP_LOOK_VERTICAL(5);  
+            using_manual_control = 1;  
+        end  
+          
+        if (key(_down))  
+            HEIGHTMAP_LOOK_VERTICAL(-5);  
+            using_manual_control = 1;  
+        end  
+          
+        // Solo actualizar seguimiento si NO hay control manual  
+        if (nave_id != 0 && using_manual_control == 0)    
+            HEIGHTMAP_UPDATE_CAMERA_FOLLOW(heightmap_id, nave_x, nave_y, nave_z);    
+            say("Pos nave: " + nave_x + "," + nave_y + "," + nave_z);    
+        end    
+          
+        if (key(_g))    
+            use_gpu = !use_gpu;    
+            say("Cambiado a modo: " + (use_gpu ? "GPU" : "CPU"));    
+            while(key(_g)) FRAME; end  
+        end    
+          
+        if(key(_esc)) exit(); end    
+        FRAME;    
+    END  
+END
+           
+        
+PROCESS display_info()    
+PRIVATE    
+    int cam_x, cam_y, cam_z, cam_angle, cam_pitch;    
+    int debug_counter = 0;    
+BEGIN    
+    LOOP    
+        HEIGHTMAP_GET_CAMERA_POSITION(&cam_x, &cam_y, &cam_z, &cam_angle, &cam_pitch);    
+            
+        write(0, 10, 10, 0, "FPS: " + frame_info.fps);    
+        write(0, 10, 30, 0, "WASD: Mover nave | QE: Subir/Bajar");    
+            
+        if (use_gpu)    
+            write(0, 10, 50, 0, "Modo: GPU (Presiona G para cambiar)");    
+        else    
+            write(0, 10, 50, 0, "Modo: CPU (Presiona G para cambiar)");    
+        end    
+            
         write(0, 10, 70, 0, "ESC: Salir");  
-        write(0, 10, 90, 0, "Pos nave: " + nave_x + "," + nave_y + "," + nave_z);  
           
-        write(0, 10, 110, 0, "Cam pos: " + cam_x + "," + cam_y + "," + cam_z);  
-        write(0, 10, 130, 0, "Cam angle: " + cam_angle + " pitch: " + cam_pitch);  
-        write(0, 10, 150, 0, "Distancia nave-cam: " + sqrt((nave_x-cam_x)*(nave_x-cam_x) + (nave_y-cam_y)*(nave_y-cam_y)));  
-          
-        debug_counter++;  
-        if (debug_counter >= 60)  
-            say("=== DEBUG CAMARA ===");  
-            say("Nave: " + nave_x + "," + nave_y + "," + nave_z);  
-            say("Cam: " + cam_x + "," + cam_y + "," + cam_z);  
-            say("Angle: " + cam_angle + " Pitch: " + cam_pitch);  
-            say("Distancia: " + sqrt((nave_x-cam_x)*(nave_x-cam_x) + (nave_y-cam_y)*(nave_y-cam_y)));  
-            say("Modo renderizado: " + (use_gpu ? "GPU" : "CPU"));  
-            say("==================");  
-            debug_counter = 0;  
-        end  
-          
-        FRAME;  
-        write_delete(all_text);  
-    END  
-END
-
- PROCESS terrain_display()  
-PRIVATE  
-    int static_billboards_created = 0;  
-    int i, j;  
-    float tree_x, tree_y;  
-    int trees_created = 0;  
-    int grid_size = 6;  
-    float spacing_x, spacing_y;  
-BEGIN  
-    LOOP  
-        // MODIFICADO: Usar GPU o CPU según la variable global  
-        if (use_gpu)  
-            graph = HEIGHTMAP_RENDER_3D_GPU(heightmap_id, 320, 240);  
+        // NUEVO: Mostrar control de rotación  
+        write(0, 10, 90, 0, "R: Toggle rotación automática");  
+        if (auto_rotate)  
+            write(0, 10, 110, 0, "Rotación: ACTIVA");  
         else  
-            graph = HEIGHTMAP_RENDER_3D(heightmap_id, 320, 240);  
+            write(0, 10, 110, 0, "Rotación: INACTIVA");  
         end  
           
-        x = 320;  
-        y = 240;  
-        size = 200;  
-          
-        if (!static_billboards_created)  
-            say("Creando árboles en grid " + grid_size + "x" + grid_size + "...");  
-              
-            spacing_x = 1900.0 / grid_size;  
-            spacing_y = 1900.0 / grid_size;  
-            for (i = 0; i < grid_size; i++)  
-                for (j = 0; j < grid_size; j++)  
-                    tree_x = 100 + (i * spacing_x) + rand(-30, 30);  
-                    tree_y = 100 + (j * spacing_y) + rand(-30, 30);  
-                      
-                    if (tree_x < 100) tree_x = 100; end  
-                    if (tree_x > 2000) tree_x = 2000; end  
-                    if (tree_y < 100) tree_y = 100; end  
-                    if (tree_y > 2000) tree_y = 2000; end  
-                      
-                    if (HEIGHTMAP_ADD_VOXEL_BILLBOARD(tree_x, tree_y, 10.0, tree_graph, 1-0) >= 0)  
-                        trees_created++;  
-                    end  
-                end  
-            end  
-              
-            say("Árboles creados: " + trees_created);  
-            static_billboards_created = 1;  
-        end  
-          
-        FRAME;  
-    END  
-END
+        write(0, 10, 130, 0, "Pos nave: " + nave_x + "," + nave_y + "," + nave_z);    
+            
+        write(0, 10, 150, 0, "Cam pos: " + cam_x + "," + cam_y + "," + cam_z);    
+        write(0, 10, 170, 0, "Cam angle: " + cam_angle + " pitch: " + cam_pitch);    
+        write(0, 10, 190, 0, "Distancia nave-cam: " + sqrt((nave_x-cam_x)*(nave_x-cam_x) + (nave_y-cam_y)*(nave_y-cam_y)));    
+            
+        debug_counter++;    
+        if (debug_counter >= 60)    
+            say("=== DEBUG CAMARA ===");    
+            say("Nave: " + nave_x + "," + nave_y + "," + nave_z);    
+            say("Cam: " + cam_x + "," + cam_y + "," + cam_z);    
+            say("Angle: " + cam_angle + " Pitch: " + cam_pitch);    
+            say("Distancia: " + sqrt((nave_x-cam_x)*(nave_x-cam_x) + (nave_y-cam_y)*(nave_y-cam_y)));    
+            say("Modo renderizado: " + (use_gpu ? "GPU" : "CPU"));  
+            say("Rotación auto: " + (auto_rotate ? "ON" : "OFF"));  
+            say("==================");    
+            debug_counter = 0;    
+        end    
+            
+        FRAME;    
+        write_delete(all_text);    
+    END    
+END  
   
-PROCESS nave()                  
-PRIVATE                  
-    int billboard_index;                
-    int speed = 4;                
-    int terrain_z;    
-    float new_x, new_y;  // CAMBIAR A FLOAT              
-BEGIN                  
-    // CORRECCIÓN: Usar float explícitamente  
-    x = 1010.0;    // Coordenada X como float  
-    y = 1858.0;    // Coordenada Y como float    
-    z = 300.0;     // Altura como float  
-    billboard_index = HEIGHTMAP_REGISTER_BILLBOARD(id, x, y, z, nave_graph,1);             
-                      
-    LOOP                  
-        new_x = x;    
-        new_y = y;    
+PROCESS terrain_display()    
+PRIVATE    
+    int static_billboards_created = 0;    
+    int i, j;    
+    float tree_x, tree_y;    
+    int trees_created = 0;    
+    int grid_size = 6;    
+    float spacing_x, spacing_y;    
+BEGIN    
+    LOOP    
+        if (use_gpu)    
+            graph = HEIGHTMAP_RENDER_3D_GPU(heightmap_id, 320, 240);    
+        else    
+            graph = HEIGHTMAP_RENDER_3D(heightmap_id, 320, 240);    
+        end    
             
-        if (key(_s)) new_y -= speed; end        
-        if (key(_w)) new_y += speed; end        
-        if (key(_d)) new_x -= speed; end        
-        if (key(_a)) new_x += speed; end        
+        x = 320;    
+        y = 240;    
+        size = 200;    
             
-        // Límites con float  
-        if (new_x < 100.0) new_x = 100.0; end             
-        if (new_x > 2000.0) new_x = 2000.0; end           
-        if (new_y < 60.0) new_y = 60.0; end             
-        if (new_y > 2000.0) new_y = 2000.0; end  
+        if (!static_billboards_created)    
+            say("Creando árboles en grid " + grid_size + "x" + grid_size + "...");    
+                
+            spacing_x = 1900.0 / grid_size;    
+            spacing_y = 1900.0 / grid_size;    
+            for (i = 0; i < grid_size; i++)    
+                for (j = 0; j < grid_size; j++)    
+                    tree_x = 100 + (i * spacing_x) + rand(-30, 30);    
+                    tree_y = 100 + (j * spacing_y) + rand(-30, 30);    
+                        
+                    if (tree_x < 100) tree_x = 100; end    
+                    if (tree_x > 2000) tree_x = 2000; end    
+                    if (tree_y < 100) tree_y = 100; end    
+                    if (tree_y > 2000) tree_y = 2000; end    
+                        
+                    if (HEIGHTMAP_ADD_VOXEL_BILLBOARD(tree_x, tree_y, 10.0, tree_graph, 1.0) >= 0)    
+                        trees_created++;    
+                    end    
+                end    
+            end    
+                
+            say("Árboles creados: " + trees_created);    
+            static_billboards_created = 1;    
+        end
+        FRAME;    
+    END    
+END  
+    
+PROCESS nave()                    
+PRIVATE                    
+    int billboard_index;                  
+    int speed = 4;                  
+    int terrain_z;      
+    float new_x, new_y;                
+BEGIN                    
+    x = 1010.0;  
+    y = 1858.0;  
+    z = 300.0;  
+    billboard_index = HEIGHTMAP_REGISTER_BILLBOARD(id, x, y, z, nave_graph, 1);               
+                        
+    LOOP                    
+        new_x = x;      
+        new_y = y;      
+              
+        if (key(_s)) new_y -= speed; end          
+        if (key(_w)) new_y += speed; end          
+        if (key(_d)) new_x -= speed; end          
+        if (key(_a)) new_x += speed; end          
+              
+        if (new_x < 100.0) new_x = 100.0; end               
+        if (new_x > 2000.0) new_x = 2000.0; end             
+        if (new_y < 60.0) new_y = 60.0; end               
+        if (new_y > 2000.0) new_y = 2000.0; end    
+              
+        x = new_x;      
+        y = new_y;      
+              
+        if (key(_q)) z += speed; end                
+        if (key(_e)) z -= speed; end                
+                        
+        nave_x = x; nave_y = y; nave_z = z;              
+        HEIGHTMAP_UPDATE_BILLBOARD(id, x, y, z);  
             
-        x = new_x;    
-        y = new_y;    
+        if (key(_space)) bullet_id = bullet(); end                  
+        FRAME;                  
+    END                  
+END  
+  
+PROCESS bullet()        
+PRIVATE        
+    int billboard_bullet;        
+    int speed = 5;        
+    int unique_bullet_id;        
+BEGIN        
+    x = father.x;         
+    y = father.y + 20;  
+    z = father.z;  
             
-        if (key(_q)) z += speed; end              
-        if (key(_e)) z -= speed; end              
-                      
-        nave_x = x; nave_y = y; nave_z = z;            
-        HEIGHTMAP_UPDATE_BILLBOARD(id, x, y, z);   // Ahora pasa float correctamente  
-          
-        if (key(_space)) bullet_id = bullet(); end                
-        FRAME;                
-    END                
-END
-
-process bullet();      
-private      
-    int billboard_bullet;      
-    int speed = 5;      
-    int unique_bullet_id;      
-begin      
-    // CORREGIDO: Aplicar offset para que salga desde la proa  
-    x = father.x;       
-    y = father.y + 20;  // Offset hacia adelante  
-    z = father.z;       // Misma altura  
-          
-    unique_bullet_id = -id;      
-          
-    // CORREGIDO: Escala más pequeña para mejor visibilidad  
-    billboard_bullet = HEIGHTMAP_REGISTER_BILLBOARD(unique_bullet_id, x, y, z, bullet_graph,3);      
-          
-    if (billboard_bullet < 0)      
-        return;      
-    end      
-          
-    loop      
-        y += speed;  // Mover hacia adelante  
-              
-        bullet_x = x;       
-        bullet_y = y;       
-        bullet_z = z;      
-              
-        HEIGHTMAP_UPDATE_BILLBOARD(unique_bullet_id, x, y, z);      
-              
-        if (y > 2000 || y < 0)    
-            break;      
-        end      
-              
-        FRAME;      
-    END      
-          
-    HEIGHTMAP_UNREGISTER_BILLBOARD(unique_bullet_id);      
-END
+    unique_bullet_id = -id;        
+            
+    billboard_bullet = HEIGHTMAP_REGISTER_BILLBOARD(unique_bullet_id, x, y, z, bullet_graph, 3);        
+            
+    if (billboard_bullet < 0)        
+        return;        
+    end        
+            
+    LOOP        
+        y += speed;  
+                
+        bullet_x = x;         
+        bullet_y = y;         
+        bullet_z = z;        
+                
+        HEIGHTMAP_UPDATE_BILLBOARD(unique_bullet_id, x, y, z);        
+                
+        if (y > 2000 || y < 0)      
+            break;        
+        end        
+                
+        FRAME;        
+    END        
+            
+    HEIGHTMAP_UNREGISTER_BILLBOARD(unique_bullet_id);        
+END  
 
 
 process enemy();            
