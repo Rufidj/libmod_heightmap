@@ -79,10 +79,10 @@ BEGIN
     HEIGHTMAP_LOAD_TEXTURE(heightmap_id, assets_path + "terrain_texture.png");        
     HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(heightmap_id);        
     HEIGHTMAP_SET_LIGHT(200);        
-    HEIGHTMAP_SET_RENDER_DISTANCE(1000);        
-    HEIGHTMAP_SET_CHUNK_CONFIG(128, 0);      
+    HEIGHTMAP_SET_RENDER_DISTANCE(12000);        
+    HEIGHTMAP_SET_CHUNK_CONFIG(256, 8);      
     HEIGHTMAP_SET_WATER_TEXTURE(assets_path + "water.png", 30);      
-    HEIGHTMAP_SET_WATER_LEVEL(20);      
+    HEIGHTMAP_SET_WATER_LEVEL(80);      
     HEIGHTMAP_SET_WAVE_AMPLITUDE(20.0);      
       
     HEIGHTMAP_SET_SKY_TEXTURE(assets_path + "skybox.png", 1000);        
@@ -227,7 +227,7 @@ BEGIN
             
         x = 320;    
         y = 240;    
-        size = 200;    
+        size = 300;    
             
         if (!static_billboards_created)    
             say("Creando árboles en grid " + grid_size + "x" + grid_size + "...");    
