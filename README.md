@@ -1,165 +1,265 @@
-# libmod_heightmap - Módulo de terreno 3D para BennuGD2
+# libmod_heightmap  
+  
+Módulo de renderizado de terrenos 3D estilo voxelspace para BennuGD2  
+  
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Rufidj/libmod_heightmap)  
+  
+## 🎮 Descripción  
+  
+`libmod_heightmap` es un módulo avanzado para BennuGD2 que permite crear y renderizar terrenos 3D utilizando técnicas de voxelspace. [1-cite-0](#1-cite-0)  El módulo ofrece aproximadamente 130 funciones para gestión completa de terrenos, control de cámara, efectos ambientales y sprites 3D integrados. [1-cite-1](#1-cite-1)   
+  
+### Características Principales  
+  
+- ✨ **Renderizado Dual**: CPU (raycasting) y GPU (shaders) [1-cite-2](#1-cite-2)   
+- 🗺️ **Hasta 512 heightmaps simultáneos** [1-cite-3](#1-cite-3)   
+- 🎥 **Sistema de cámara 3D completo** con seguimiento automático [1-cite-4](#1-cite-4)   
+- 🌊 **Efectos ambientales**: agua animada, niebla, skybox, iluminación [1-cite-5](#1-cite-5)   
+- 🌲 **Sistema de billboards**: 500 estáticos + 500 dinámicos [1-cite-6](#1-cite-6)   
+- 💥 **Detección de colisiones** con el terreno [1-cite-7](#1-cite-7)   
+- 🎨 **Generación procedural** de terrenos [1-cite-8](#1-cite-8)   
+  
+## 📸 Capturas de Pantalla  
+  
+![Demo 1](/images/screen1.png)  
+![Demo 2](/images/screen2.png)  
+![Demo 3](/images/screen3.png)  
+  
+## 🎥 Videos de Demostración  
+  
+[![Demo Coche](https://img.youtube.com/vi/-aPED4Rgk2E/0.jpg)](https://www.youtube.com/watch?v=-aPED4Rgk2E)  
+[![Demo Efectos de Agua](https://img.youtube.com/vi/CiJBRTUzQIA/0.jpg)](https://www.youtube.com/watch?v=CiJBRTUzQIA)  
+  
+## 🚀 Inicio Rápido  
+  
+### Requisitos  
+  
+- BennuGD2  
+- SDL2  
+- OpenGL + GLEW (para renderizado GPU)  
+- Imágenes PNG para heightmaps y texturas  
+  
+### Instalación  
+  
+```bash  
+# Clonar el repositorio  [2](#header-2)
+git clone https://github.com/Rufidj/libmod_heightmap.git  
+cd libmod_heightmap  
+  
+# Compilar el módulo  [3](#header-3)
+mkdir build && cd build  
+cmake ..  
+make
 
-Este módulo permite trabajar con terrenos en 3D simulados mediante heightmaps (mapas de altura) y renderizarlos con estilo voxelspace. Incluye funciones de control de cámara, detección de colisiones, iluminación, nivel de agua, sprites en el mundo y seguimiento de cámara.
+Ejemplo Básico
 
----
+import "libmod_heightmap";  
+  
+GLOBAL  
+    int heightmap_id;  
+END  
+  
+PROCESS main()  
+BEGIN  
+    set_mode(640, 480);  
+      
+    // Cargar terreno  
+    heightmap_id = HEIGHTMAP_LOAD("terrain.png");  
+    HEIGHTMAP_LOAD_TEXTURE(heightmap_id, "texture.png");  
+      
+    // Configurar cámara  
+    HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(heightmap_id);  
+      
+    // Configurar efectos  
+    HEIGHTMAP_SET_LIGHT(200);  
+    HEIGHTMAP_SET_WATER_LEVEL(20);  
+    HEIGHTMAP_SET_SKY_COLOR(135, 206, 235, 255);  
+      
+    // Iniciar renderizado  
+    terrain_display();  
+      
+    LOOP  
+        HEIGHTMAP_UPDATE_WATER_TIME();  
+          
+        // Controles de cámara  
+        if (key(_w)) HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(5, heightmap_id); end  
+        if (key(_s)) HEIGHTMAP_MOVE_BACKWARD_WITH_COLLISION(5, heightmap_id); end  
+        if (key(_left)) HEIGHTMAP_LOOK_HORIZONTAL(-5); end  
+        if (key(_right)) HEIGHTMAP_LOOK_HORIZONTAL(5); end  
+          
+        FRAME;  
+    END  
+END  
+  
+PROCESS terrain_display()  
+BEGIN  
+    LOOP  
+        graph = HEIGHTMAP_RENDER_3D(heightmap_id, 320, 240);  
+        x = 320; y = 240; size = 200;  
+        FRAME;  
+    END  
+END
 
-![Imagen 1 ](/images/screen1.png)
-![Imagen 2](/images/screen2.png)
-![Imagen 3](/images/screen3.png)
-![Imagen 4](/images/screen4.png)
-![Imagen 5](/images/screen5.png)
-![Imagen 6](/images/screen6.png)
+📚 API Principal
+Gestión de Terrenos
+Función	Descripción
+HEIGHTMAP_LOAD(filename)	Carga heightmap desde archivo PNG/RAW
+HEIGHTMAP_CREATE(width, height)	Crea heightmap vacío
+HEIGHTMAP_CREATE_PROCEDURAL(w, h)	Genera terreno procedural
+HEIGHTMAP_LOAD_TEXTURE(id, file)	Asocia textura de color
+HEIGHTMAP_UNLOAD(id)	Libera recursos
+Renderizado
+Función	Descripción
+HEIGHTMAP_RENDER_3D(id, w, h)	Renderizado CPU (320 columnas)
+HEIGHTMAP_RENDER_3D_GPU(id, w, h)	Renderizado GPU acelerado
+HEIGHTMAP_SET_RENDER_DISTANCE(d)	Distancia máxima de dibujado
+HEIGHTMAP_SET_CHUNK_CONFIG(size, r)	Configuración de chunks
+Control de Cámara
+Función	Descripción
+HEIGHTMAP_SET_CAMERA(x,y,z,angle,pitch,fov)	Posiciona cámara manualmente
+HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(id)	Inicializa sobre terreno
+HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(speed, id)	Avanza con colisión
+HEIGHTMAP_SET_CAMERA_FOLLOW(sprite_id, ox,oy,oz, style)	Seguimiento automático
+Efectos Ambientales
 
-## Videos de demostración
+Agua
 
-[![Demo Coche](https://img.youtube.com/vi/-aPED4Rgk2E/0.jpg)](https://www.youtube.com/watch?v=-aPED4Rgk2E)
-[![Demo Efectos de Agua](https://img.youtube.com/vi/CiJBRTUzQIA/0.jpg)](https://www.youtube.com/watch?v=CiJBRTUzQIA)
+HEIGHTMAP_SET_WATER_LEVEL(20);  
+HEIGHTMAP_SET_WATER_TEXTURE("water.png", 30);  
+HEIGHTMAP_SET_WAVE_AMPLITUDE(20.0);  
+HEIGHTMAP_UPDATE_WATER_TIME(); // Llamar cada frame
 
+README.md:92-99
 
----
+Cielo y Niebla
 
-## Constantes Exportadas
+HEIGHTMAP_SET_SKY_COLOR(135, 206, 235, 255);  
+HEIGHTMAP_SET_SKY_TEXTURE("skybox.png", 1000);  
+HEIGHTMAP_SET_FOG_COLOR(255, 255, 255, 200);
 
-| Constante                | Descripción                                      |
-|-------------------------|--------------------------------------------------|
-| `HEIGHTMAP_MAX`         | Número máximo de heightmaps permitidos          |
-| `HEIGHTMAP_DEFAULT_FOV` | Campo de visión por defecto (FOV x1000)         |
-| `C_BILLBOARD`           | Flag para identificar sprites como billboard    |
+README.md:80-88
+Billboards (Sprites 3D)
 
----
+// Billboard estático (árboles, rocas)  
+HEIGHTMAP_ADD_VOXEL_BILLBOARD(x, y, 10.0, tree_graph, 1.0);  
+  
+// Billboard dinámico (jugador, enemigos)  
+billboard_id = HEIGHTMAP_REGISTER_BILLBOARD(id, x, y, z, graph, layer);  
+HEIGHTMAP_UPDATE_BILLBOARD(id, new_x, new_y, new_z);  
+HEIGHTMAP_UNREGISTER_BILLBOARD(id);
 
-## Funciones Exportadas
+README.md:137-146
+Colisiones
 
-### Carga y Creación de Terrenos
+// Obtener altura del terreno  
+height = HEIGHTMAP_GET_HEIGHT(id, x, y) / 1000.0;  
+  
+// Verificar colisión  
+if (HEIGHTMAP_CHECK_TERRAIN_COLLISION(radius))  
+    // Hay colisión  
+end  
+  
+// Validar movimiento de sprite  
+if (HEIGHTMAP_CAN_SPRITE_MOVE_TO(x, y, z, radius))  
+    // Movimiento válido  
+end
 
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_LOAD(filename)` | Carga un heightmap desde archivo. |
-| `HEIGHTMAP_LOAD_TEXTURE(id, filename)` | Asocia una textura al terreno. |
-| `HEIGHTMAP_CREATE(width, height)` | Crea un heightmap vacío. |
-| `HEIGHTMAP_CREATE_PROCEDURAL(width, height)` | Crea un heightmap procedural. |
-| `HEIGHTMAP_UNLOAD(id)` | Libera recursos del heightmap. |
+README.md:103-115
+🎯 Características Técnicas
 
----
+    Resolución de renderizado: 320x240 píxeles (escalable)
+    Interpolación bilineal para consultas de altura suaves libmod_heightmap.c:435-459
+    Depth buffer para oclusión correcta de billboards
+    Sistema de chunks para culling eficiente libmod_heightmap.c:2484-2507
+    Shaders embebidos para renderizado GPU libmod_heightmap.c:1135-1304
+    Caché de alturas en punto flotante para rendimiento óptimo libmod_heightmap.h:31-32
 
-### Renderizado
+📖 Documentación Completa
 
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_RENDER_3D(id, width, height)` | Renderiza el terreno a pantalla. |
-| `HEIGHTMAP_SET_RENDER_DISTANCE(distance)` | Establece distancia máxima de renderizado. |
-| `HEIGHTMAP_SET_CHUNK_CONFIG(width, height)` | Configura tamaño de los "chunks" internos. |
+Para documentación detallada de todas las funciones, consulta:
 
----
+    README.md - Lista completa de funciones
+    test.prg - Aplicación de demostración completa
+    Wiki del proyecto
 
-### Cámara
+🎮 Aplicación de Demostración
 
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_SET_CAMERA(x, y, z, angle, pitch, zoom)` | Posiciona la cámara. |
-| `HEIGHTMAP_GET_CAMERA_POSITION(&x, &y, &z, &angle, &pitch)` | Devuelve la posición de la cámara. |
-| `HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(id)` | Sitúa la cámara sobre el terreno. |
+El archivo test.prg incluye un ejemplo completo con: test.prg:1-270
 
----
+    Nave controlable con WASD
+    Sistema de enemigos
+    Disparos y combate
+    Cámara con seguimiento automático
+    Árboles distribuidos en grid
+    Efectos de agua animada
+    Toggle CPU/GPU con tecla G
 
-### Control de Movimiento
+# Ejecutar demo  [4](#header-4)
+bgdi test.dcb
 
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_SET_CONTROL_SENSITIVITY(forward, strafe, look)` | Ajusta sensibilidad de movimiento. |
-| `HEIGHTMAP_MOVE_FORWARD()` / `HEIGHTMAP_MOVE_FORWARD(speed)` | Avanza la cámara. |
-| `HEIGHTMAP_MOVE_BACKWARD()` / `HEIGHTMAP_MOVE_BACKWARD(speed)` | Retrocede la cámara. |
-| `HEIGHTMAP_STRAFE_LEFT()` / `HEIGHTMAP_STRAFE_LEFT(speed)` | Desplaza a la izquierda. |
-| `HEIGHTMAP_STRAFE_RIGHT()` / `HEIGHTMAP_STRAFE_RIGHT(speed)` | Desplaza a la derecha. |
-| `HEIGHTMAP_LOOK_HORIZONTAL(value)` | Gira horizontalmente. |
-| `HEIGHTMAP_LOOK_VERTICAL(value)` | Gira verticalmente. |
-| `HEIGHTMAP_ADJUST_HEIGHT(value)` | Ajusta altura vertical de la cámara. |
+🔧 Configuración Avanzada
+Optimización de Rendimiento
 
----
+// Reducir distancia de renderizado  
+HEIGHTMAP_SET_RENDER_DISTANCE(1000);  
+  
+// Ajustar tamaño de chunks  
+HEIGHTMAP_SET_CHUNK_CONFIG(128, 5);  
+  
+// Usar renderizado GPU  
+graph = HEIGHTMAP_RENDER_3D_GPU(id, 320, 240);
 
-### Iluminación y Cielo
+Sistema de Coordenadas
 
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_SET_LIGHT(intensity)` | Ajusta luz ambiental. |
-| `HEIGHTMAP_SET_SKY_COLOR(r, g, b, alpha)` | Define el color del cielo. |
-| `HEIGHTMAP_SET_SKY_TEXTURE(filename, id)` | Asigna una textura al cielo. |
-| `HEIGHTMAP_GET_TERRAIN_LIGHTING(x, y, z)` | Valor de iluminación en posición dada. |
+    X, Y: Coordenadas del mundo (0 a ancho/alto del heightmap)
+    Z: Altura (0-255 desde heightmap, extensible)
+    Ángulos: Multiplicados por 1000 (360° = 360000) libmod_heightmap.c:421-433
 
----
+🤝 Contribuciones
 
-### Agua
+Las contribuciones son bienvenidas. Por favor:
 
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_SET_WATER_LEVEL(level)` | Ajusta la altura del agua. |
-| `HEIGHTMAP_SET_WATER_TEXTURE(filename, id)` | Asocia textura de agua. |
-| `HEIGHTMAP_UPDATE_WATER_TIME()` | Anima el agua (olas). |
-| `HEIGHTMAP_SET_WAVE_AMPLITUDE(amplitude)` | Controla la fuerza de las olas. |
+    Fork el proyecto
+    Crea una rama para tu feature (git checkout -b feature/AmazingFeature)
+    Commit tus cambios (git commit -m 'Add some AmazingFeature')
+    Push a la rama (git push origin feature/AmazingFeature)
+    Abre un Pull Request
 
----
+📝 Licencia
 
-### Colisión y Altura
+Copyright (C) 2025 - Heightmap Module for BennuGD2
 
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_GET_HEIGHT(id, x, y)` | Obtiene altura del terreno en X/Y. |
-| `HEIGHTMAP_CHECK_TERRAIN_COLLISION(radius)` | Verifica colisión desde la cámara. |
-| `HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(speed, radius)` | Avanza con colisión. |
-| `HEIGHTMAP_MOVE_BACKWARD_WITH_COLLISION(speed, radius)` | Retrocede con colisión. |
-| `HEIGHTMAP_STRAFE_LEFT_WITH_COLLISION(speed, radius)` | Izquierda con colisión. |
-| `HEIGHTMAP_STRAFE_RIGHT_WITH_COLLISION(speed, radius)` | Derecha con colisión. |
-| `HEIGHTMAP_CAN_SPRITE_MOVE_TO(x, y, z, radius)` | Verifica si un sprite puede ir a esa posición. |
-| `HEIGHTMAP_GET_TERRAIN_HEIGHT_AT_SPRITE(id, x, y)` | Altura bajo un sprite. |
-| `HEIGHTMAP_ADJUST_SPRITE_TO_TERRAIN(id, sprite_id, offset, &result)` | Ajusta el sprite al terreno. |
+Este proyecto es parte de Bennu Game Development.
+👤 Autor
 
----
+Rufidj
 
-### Sprites en 3D
+    GitHub: @Rufidj
 
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_WORLD_TO_SCREEN(x, y, z, &sx, &sy)` | Convierte posición 3D a coordenadas 2D en pantalla. |
+🙏 Agradecimientos
 
----
+    Comunidad de BennuGD2
+    Inspirado en técnicas de voxelspace clásicas
+    SDL2 y OpenGL por las capacidades gráficas
 
-### Seguimiento de Cámara
+¿Preguntas? Abre un issue o consulta la wiki
 
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_SET_CAMERA_FOLLOW(sprite_id, ox, oy, oz, style)` | Hace que la cámara siga a un sprite. |
-| `HEIGHTMAP_UPDATE_CAMERA_FOLLOW(offset_angle, offset_pitch, style)` | Ajusta seguimiento. |
-| `HEIGHTMAP_GET_CAMERA_FOLLOW()` | Obtiene el sprite seguido. |
-
----
-
-### Billboards
-
-| Función | Descripción |
-|--------|-------------|
-| `HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_X(id, screen_x)` | Convierte coordenada X de pantalla a mundo. |
-| `HEIGHTMAP_CONVERT_SCREEN_TO_WORLD_Y(id, screen_y)` | Convierte coordenada Y de pantalla a mundo. |
-| `HEIGHTMAP_ADD_VOXEL_BILLBOARD(x, y, graph_id, scale)` | Añade un sprite estilo voxel a la escena. |
-| `HEIGHTMAP_REGISTER_BILLBOARD(id, x, y, z, graph)` | Registra billboard en el motor. |
-| `HEIGHTMAP_UPDATE_BILLBOARD(id, x, y, z)` | Actualiza posición de billboard. |
-| `HEIGHTMAP_UNREGISTER_BILLBOARD(id)` | Elimina billboard del motor. |
-
----
-
-## Requisitos
-
-- BennuGD2
-- SDL2
-- Texturas en formato PNG (u otros soportados)
-- Heightmaps en formato RAW o PNG
-
----
-
-## Créditos
-
-Desarrollado como módulo experimental para simulación 3D estilo voxelspace en BennuGD2.
-
----
-
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Rufidj/libmod_heightmap)
+  
+## Notas  [5](#header-5)
+  
+Este README incluye: <cite/>  
+  
+- Descripción clara del módulo y sus capacidades principales  
+- Capturas de pantalla y videos de demostración existentes  
+- Guía de inicio rápido con ejemplo funcional  
+- Referencia completa de la API organizada por categorías  
+- Especificaciones técnicas del sistema  
+- Instrucciones de instalación y uso  
+- Documentación de la aplicación de demostración  
+- Sección de contribuciones y licencia  
+  
+El README está estructurado para ser profesional, informativo y fácil de navegar, siguiendo las mejores prácticas de documentación de proyectos open source en GitHub. <cite/>  
+  
+Wiki pages you might want to explore:  
+- [Overview (Rufidj/libmod_heightmap)](/wiki/Rufidj/libmod_heightmap#1)  
+- [Quick Start Tutorial (Rufidj/libmod_heightmap)](/wiki/Rufidj/libmod_heightmap#2.2)  
+- [Heightmap Management Functions (Rufidj/libmod_heightmap)](/wiki/Rufidj/libmod_heightmap#3.1)
