@@ -134,20 +134,17 @@ END
 | `HEIGHTMAP_SET_WAVE_AMPLITUDE(amplitude)` | Controla la fuerza de las olas |  
 | `HEIGHTMAP_UPDATE_WATER_TIME()` | Anima el agua (llamar cada frame) |  
 
-## Colisiones
-
-// Obtener altura del terreno  
-height = HEIGHTMAP_GET_HEIGHT(id, x, y) / 1000.0;  
+### Colisiones  
   
-// Verificar colisión  
-if (HEIGHTMAP_CHECK_TERRAIN_COLLISION(radius))  
-    // Hay colisión  
-end  
-  
-// Validar movimiento de sprite  
-if (HEIGHTMAP_CAN_SPRITE_MOVE_TO(x, y, z, radius))  
-    // Movimiento válido  
-end
+| Función | Descripción |  
+|---------|-------------|  
+| `HEIGHTMAP_GET_HEIGHT(id, x, y)` | Obtiene altura del terreno en X/Y |  
+| `HEIGHTMAP_CHECK_TERRAIN_COLLISION(radius)` | Verifica colisión desde la cámara |  
+| `HEIGHTMAP_CAN_SPRITE_MOVE_TO(x, y, z, radius)` | Verifica si un sprite puede ir a esa posición |  
+| `HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(speed, id)` | Avanza con colisión |  
+| `HEIGHTMAP_MOVE_BACKWARD_WITH_COLLISION(speed, id)` | Retrocede con colisión |  
+| `HEIGHTMAP_STRAFE_LEFT_WITH_COLLISION(speed, id)` | Izquierda con colisión |  
+| `HEIGHTMAP_STRAFE_RIGHT_WITH_COLLISION(speed, id)` | Derecha con colisión |  
 
 ### 🎯 Características Técnicas
 
