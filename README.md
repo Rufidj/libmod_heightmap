@@ -93,53 +93,46 @@ END
 
 ```
 
-### 📚 API Principal
-## Gestión de Terrenos
-## Función	Descripción
-HEIGHTMAP_LOAD(filename)	Carga heightmap desde archivo PNG/RAW
-HEIGHTMAP_CREATE(width, height)	Crea heightmap vacío
-HEIGHTMAP_CREATE_PROCEDURAL(w, h)	Genera terreno procedural
-HEIGHTMAP_LOAD_TEXTURE(id, file)	Asocia textura de color
-HEIGHTMAP_UNLOAD(id)	Libera recursos
-Renderizado
-Función	Descripción
-HEIGHTMAP_RENDER_3D(id, w, h)	Renderizado CPU (320 columnas)
-HEIGHTMAP_RENDER_3D_GPU(id, w, h)	Renderizado GPU acelerado
-HEIGHTMAP_SET_RENDER_DISTANCE(d)	Distancia máxima de dibujado
-HEIGHTMAP_SET_CHUNK_CONFIG(size, r)	Configuración de chunks
-Control de Cámara
-Función	Descripción
-HEIGHTMAP_SET_CAMERA(x,y,z,angle,pitch,fov)	Posiciona cámara manualmente
-HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(id)	Inicializa sobre terreno
-HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(speed, id)	Avanza con colisión
-HEIGHTMAP_SET_CAMERA_FOLLOW(sprite_id, ox,oy,oz, style)	Seguimiento automático
-## Efectos Ambientales
-
-## Agua
-
-HEIGHTMAP_SET_WATER_LEVEL(20);  
-HEIGHTMAP_SET_WATER_TEXTURE("water.png", 30);  
-HEIGHTMAP_SET_WAVE_AMPLITUDE(20.0);  
-HEIGHTMAP_UPDATE_WATER_TIME(); // Llamar cada frame
-
-
-## Cielo y Niebla
-
-HEIGHTMAP_SET_SKY_COLOR(135, 206, 235, 255);  
-HEIGHTMAP_SET_SKY_TEXTURE("skybox.png", 1000);  
-HEIGHTMAP_SET_FOG_COLOR(255, 255, 255, 200);
-
-
-## Billboards (Sprites 3D)
-
-// Billboard estático (árboles, rocas)  
-HEIGHTMAP_ADD_VOXEL_BILLBOARD(x, y, 10.0, tree_graph, 1.0);  
+## 📚 API Principal  
   
-// Billboard dinámico (jugador, enemigos)  
-billboard_id = HEIGHTMAP_REGISTER_BILLBOARD(id, x, y, z, graph, layer);  
-HEIGHTMAP_UPDATE_BILLBOARD(id, new_x, new_y, new_z);  
-HEIGHTMAP_UNREGISTER_BILLBOARD(id);
-
+### Gestión de Terrenos  
+  
+| Función | Descripción |  
+|---------|-------------|  
+| `HEIGHTMAP_LOAD(filename)` | Carga heightmap desde archivo PNG/RAW |  
+| `HEIGHTMAP_CREATE(width, height)` | Crea heightmap vacío |  
+| `HEIGHTMAP_CREATE_PROCEDURAL(w, h)` | Genera terreno procedural |  
+| `HEIGHTMAP_LOAD_TEXTURE(id, file)` | Asocia textura de color |  
+| `HEIGHTMAP_UNLOAD(id)` | Libera recursos |  
+  
+### Renderizado  
+  
+| Función | Descripción |  
+|---------|-------------|  
+| `HEIGHTMAP_RENDER_3D(id, w, h)` | Renderizado CPU (320 columnas) |  
+| `HEIGHTMAP_RENDER_3D_GPU(id, w, h)` | Renderizado GPU acelerado |  
+| `HEIGHTMAP_SET_RENDER_DISTANCE(d)` | Distancia máxima de dibujado |  
+| `HEIGHTMAP_SET_CHUNK_CONFIG(size, r)` | Configuración de chunks |  
+  
+### Control de Cámara  
+  
+| Función | Descripción |  
+|---------|-------------|  
+| `HEIGHTMAP_SET_CAMERA(x,y,z,angle,pitch,fov)` | Posiciona cámara manualmente |  
+| `HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(id)` | Inicializa sobre terreno |  
+| `HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(speed, id)` | Avanza con colisión |  
+| `HEIGHTMAP_SET_CAMERA_FOLLOW(sprite_id, ox,oy,oz, style)` | Seguimiento automático |  
+  
+### Efectos Ambientales  
+  
+#### Agua  
+  
+| Función | Descripción |  
+|---------|-------------|  
+| `HEIGHTMAP_SET_WATER_LEVEL(level)` | Ajusta la altura del agua |  
+| `HEIGHTMAP_SET_WATER_TEXTURE(filename, frames)` | Asocia textura de agua animada |  
+| `HEIGHTMAP_SET_WAVE_AMPLITUDE(amplitude)` | Controla la fuerza de las olas |  
+| `HEIGHTMAP_UPDATE_WATER_TIME()` | Anima el agua (llamar cada frame) |  
 
 ## Colisiones
 
