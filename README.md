@@ -38,12 +38,9 @@ Módulo de renderizado de terrenos 3D estilo voxelspace para BennuGD2
 - OpenGL + GLEW (para renderizado GPU)  
 - Imágenes PNG para heightmaps y texturas  
   
-### Instalación  
+### Ejemplo basico
   
-```bash  
-# Clonar el repositorio  [2](#header-2)
-git clone https://github.com/Rufidj/libmod_heightmap.git  
-cd libmod_heightmap  
+```
   
 # Compilar el módulo  [3](#header-3)
 mkdir build && cd build  
@@ -228,7 +225,6 @@ Las contribuciones son bienvenidas. Por favor:
 
 Copyright (C) 2025 - Heightmap Module for BennuGD2
 
-Este proyecto es parte de Bennu Game Development.
 👤 Autor
 
 Rufidj
@@ -241,12 +237,11 @@ Rufidj
     Inspirado en técnicas de voxelspace clásicas
     SDL2 y OpenGL por las capacidades gráficas
 
-¿Preguntas? Abre un issue o consulta la wiki
 
   
-## Notas  [5](#header-5)
+## Notas  
   
-Este README incluye: <cite/>  
+Este README incluye: 
   
 - Descripción clara del módulo y sus capacidades principales  
 - Capturas de pantalla y videos de demostración existentes  
@@ -257,9 +252,4 @@ Este README incluye: <cite/>
 - Documentación de la aplicación de demostración  
 - Sección de contribuciones y licencia  
   
-El README está estructurado para ser profesional, informativo y fácil de navegar, siguiendo las mejores prácticas de documentación de proyectos open source en GitHub. <cite/>  
-  
-Wiki pages you might want to explore:  
-- [Overview (Rufidj/libmod_heightmap)](/wiki/Rufidj/libmod_heightmap#1)  
-- [Quick Start Tutorial (Rufidj/libmod_heightmap)](/wiki/Rufidj/libmod_heightmap#2.2)  
-- [Heightmap Management Functions (Rufidj/libmod_heightmap)](/wiki/Rufidj/libmod_heightmap#3.1)
+
