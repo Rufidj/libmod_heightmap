@@ -10,13 +10,13 @@ Módulo de renderizado de terrenos 3D estilo voxelspace para BennuGD2
   
 ### Características Principales  
   
-- ✨ **Renderizado Dual**: CPU (raycasting) y GPU (shaders) [1-cite-2](#1-cite-2)   
-- 🗺️ **Hasta 512 heightmaps simultáneos** [1-cite-3](#1-cite-3)   
-- 🎥 **Sistema de cámara 3D completo** con seguimiento automático [1-cite-4](#1-cite-4)   
-- 🌊 **Efectos ambientales**: agua animada, niebla, skybox, iluminación [1-cite-5](#1-cite-5)   
-- 🌲 **Sistema de billboards**: 500 estáticos + 500 dinámicos [1-cite-6](#1-cite-6)   
-- 💥 **Detección de colisiones** con el terreno [1-cite-7](#1-cite-7)   
-- 🎨 **Generación procedural** de terrenos [1-cite-8](#1-cite-8)   
+- ✨ **Renderizado Dual**: CPU (raycasting) y GPU (shaders)   
+- 🗺️ **Hasta 512 heightmaps simultáneos** 
+- 🎥 **Sistema de cámara 3D completo** con seguimiento automático  
+- 🌊 **Efectos ambientales**: agua animada, niebla, skybox, iluminación  
+- 🌲 **Sistema de billboards**: 500 estáticos + 500 dinámicos [   
+- 💥 **Detección de colisiones** con el terreno 
+- 🎨 **Generación procedural** de terrenos  
   
 ## 📸 Capturas de Pantalla  
   
@@ -41,13 +41,7 @@ Módulo de renderizado de terrenos 3D estilo voxelspace para BennuGD2
 ### Ejemplo basico
   
 ```
-  
-# Compilar el módulo  [3](#header-3)
-mkdir build && cd build  
-cmake ..  
-make
 
-Ejemplo Básico
 
 import "libmod_heightmap";  
   
@@ -96,9 +90,11 @@ BEGIN
     END  
 END
 
-📚 API Principal
-Gestión de Terrenos
-Función	Descripción
+```
+
+### 📚 API Principal
+## Gestión de Terrenos
+## Función	Descripción
 HEIGHTMAP_LOAD(filename)	Carga heightmap desde archivo PNG/RAW
 HEIGHTMAP_CREATE(width, height)	Crea heightmap vacío
 HEIGHTMAP_CREATE_PROCEDURAL(w, h)	Genera terreno procedural
@@ -116,25 +112,24 @@ HEIGHTMAP_SET_CAMERA(x,y,z,angle,pitch,fov)	Posiciona cámara manualmente
 HEIGHTMAP_INIT_CAMERA_ON_TERRAIN(id)	Inicializa sobre terreno
 HEIGHTMAP_MOVE_FORWARD_WITH_COLLISION(speed, id)	Avanza con colisión
 HEIGHTMAP_SET_CAMERA_FOLLOW(sprite_id, ox,oy,oz, style)	Seguimiento automático
-Efectos Ambientales
+## Efectos Ambientales
 
-Agua
+## Agua
 
 HEIGHTMAP_SET_WATER_LEVEL(20);  
 HEIGHTMAP_SET_WATER_TEXTURE("water.png", 30);  
 HEIGHTMAP_SET_WAVE_AMPLITUDE(20.0);  
 HEIGHTMAP_UPDATE_WATER_TIME(); // Llamar cada frame
 
-README.md:92-99
 
-Cielo y Niebla
+## Cielo y Niebla
 
 HEIGHTMAP_SET_SKY_COLOR(135, 206, 235, 255);  
 HEIGHTMAP_SET_SKY_TEXTURE("skybox.png", 1000);  
 HEIGHTMAP_SET_FOG_COLOR(255, 255, 255, 200);
 
-README.md:80-88
-Billboards (Sprites 3D)
+
+## Billboards (Sprites 3D)
 
 // Billboard estático (árboles, rocas)  
 HEIGHTMAP_ADD_VOXEL_BILLBOARD(x, y, 10.0, tree_graph, 1.0);  
@@ -144,8 +139,8 @@ billboard_id = HEIGHTMAP_REGISTER_BILLBOARD(id, x, y, z, graph, layer);
 HEIGHTMAP_UPDATE_BILLBOARD(id, new_x, new_y, new_z);  
 HEIGHTMAP_UNREGISTER_BILLBOARD(id);
 
-README.md:137-146
-Colisiones
+
+## Colisiones
 
 // Obtener altura del terreno  
 height = HEIGHTMAP_GET_HEIGHT(id, x, y) / 1000.0;  
@@ -160,17 +155,16 @@ if (HEIGHTMAP_CAN_SPRITE_MOVE_TO(x, y, z, radius))
     // Movimiento válido  
 end
 
-README.md:103-115
-🎯 Características Técnicas
+### 🎯 Características Técnicas
 
     Resolución de renderizado: 320x240 píxeles (escalable)
-    Interpolación bilineal para consultas de altura suaves libmod_heightmap.c:435-459
+    Interpolación bilineal para consultas de altura suaves 
     Depth buffer para oclusión correcta de billboards
-    Sistema de chunks para culling eficiente libmod_heightmap.c:2484-2507
-    Shaders embebidos para renderizado GPU libmod_heightmap.c:1135-1304
-    Caché de alturas en punto flotante para rendimiento óptimo libmod_heightmap.h:31-32
+    Sistema de chunks para culling eficiente 
+    Shaders embebidos para renderizado GPU 
+    Caché de alturas en punto flotante para rendimiento óptimo l
 
-📖 Documentación Completa
+### 📖 Documentación Completa
 
 Para documentación detallada de todas las funciones, consulta:
 
@@ -178,9 +172,9 @@ Para documentación detallada de todas las funciones, consulta:
     test.prg - Aplicación de demostración completa
     Wiki del proyecto
 
-🎮 Aplicación de Demostración
+### 🎮 Aplicación de Demostración
 
-El archivo test.prg incluye un ejemplo completo con: test.prg:1-270
+El archivo test.prg incluye un ejemplo completo con :
 
     Nave controlable con WASD
     Sistema de enemigos
@@ -190,10 +184,10 @@ El archivo test.prg incluye un ejemplo completo con: test.prg:1-270
     Efectos de agua animada
     Toggle CPU/GPU con tecla G
 
-# Ejecutar demo  [4](#header-4)
+# Ejecutar demo  
 bgdi test.dcb
 
-🔧 Configuración Avanzada
+### 🔧 Configuración Avanzada
 Optimización de Rendimiento
 
 // Reducir distancia de renderizado  
@@ -205,13 +199,13 @@ HEIGHTMAP_SET_CHUNK_CONFIG(128, 5);
 // Usar renderizado GPU  
 graph = HEIGHTMAP_RENDER_3D_GPU(id, 320, 240);
 
-Sistema de Coordenadas
+## Sistema de Coordenadas
 
     X, Y: Coordenadas del mundo (0 a ancho/alto del heightmap)
     Z: Altura (0-255 desde heightmap, extensible)
-    Ángulos: Multiplicados por 1000 (360° = 360000) libmod_heightmap.c:421-433
+    Ángulos: Multiplicados por 1000 (360° = 360000) 
 
-🤝 Contribuciones
+### 🤝 Contribuciones
 
 Las contribuciones son bienvenidas. Por favor:
 
@@ -225,13 +219,13 @@ Las contribuciones son bienvenidas. Por favor:
 
 Copyright (C) 2025 - Heightmap Module for BennuGD2
 
-👤 Autor
+### 👤 Autor
 
 Rufidj
 
     GitHub: @Rufidj
 
-🙏 Agradecimientos
+### 🙏 Agradecimientos
 
     Comunidad de BennuGD2
     Inspirado en técnicas de voxelspace clásicas
