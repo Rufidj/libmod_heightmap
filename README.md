@@ -28,8 +28,8 @@ Módulo de renderizado de terrenos 3D estilo voxelspace para BennuGD2
   
 [![Demo Coche](https://img.youtube.com/vi/-aPED4Rgk2E/0.jpg)](https://www.youtube.com/watch?v=-aPED4Rgk2E)  
 [![Demo Efectos de Agua](https://img.youtube.com/vi/CiJBRTUzQIA/0.jpg)](https://www.youtube.com/watch?v=CiJBRTUzQIA)  
-[![Demo modo CPU VS GPU](https://youtu.be/UkpF9E0wFJ4)    
-[![Demo modo GPU Efecto transparencia de Agua](https://youtu.be/pfPku6mO9xM)    
+[![Demo modo CPU VS GPU](https://img.youtube.com/vi/UkpF9E0wFJ4/0.jpg)](https://youtu.be/UkpF9E0wFJ4)  
+[![Demo modo GPU Efecto transparencia de Agua](https://img.youtube.com/vi/pfPku6mO9xM/0.jpg)](https://youtu.be/pfPku6mO9xM)     
 ## 🚀 Inicio Rápido  
   
 ### Requisitos  
