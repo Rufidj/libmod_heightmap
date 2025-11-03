@@ -178,17 +178,15 @@ El archivo test.prg incluye un ejemplo completo con :
 # Ejecutar demo  
 bgdi test.dcb
 
-### 🔧 Configuración Avanzada
-Optimización de Rendimiento
-
-// Reducir distancia de renderizado  
-HEIGHTMAP_SET_RENDER_DISTANCE(1000);  
+## 🔧 Configuración Avanzada  
   
-// Ajustar tamaño de chunks  
-HEIGHTMAP_SET_CHUNK_CONFIG(128, 5);  
+### Optimización de Rendimiento  
   
-// Usar renderizado GPU  
-graph = HEIGHTMAP_RENDER_3D_GPU(id, 320, 240);
+| Función | Descripción | Valor Recomendado |  
+|---------|-------------|-------------------|  
+| `HEIGHTMAP_SET_RENDER_DISTANCE(distance)` | Controla la distancia máxima de renderizado | 1000-12000 según hardware |  
+| `HEIGHTMAP_SET_CHUNK_CONFIG(size, unused)` | Configura el tamaño de chunks para culling | 128 o 256 píxeles |  
+| `HEIGHTMAP_RENDER_3D_GPU(id, w, h)` | Usa renderizado acelerado por GPU | Preferir en hardware moderno | 
 
 ## Sistema de Coordenadas
 
