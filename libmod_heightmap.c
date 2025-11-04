@@ -600,146 +600,152 @@ static void render_skybox(float camera_angle, float camera_pitch, float time, in
     }    
 }
 
-static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *billboard_graph, float terrain_fov) {      
-    BILLBOARD_PROJECTION result = {0};      
+static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *billboard_graph, float terrain_fov) {        
+    BILLBOARD_PROJECTION result = {0};        
+            
+    float dx = bb->world_x - camera.x;        
+    float dy = bb->world_y - camera.y;        
+    float dz = bb->world_z - camera.z;        
+    float distance = sqrtf(dx * dx + dy * dy + dz * dz);        
+            
+    if (distance > max_render_distance * 1.1f || distance < 0.5f) {        
+        result.valid = 0;        
+        return result;        
+    }        
+            
+    result.distance = distance;      
           
-    float dx = bb->world_x - camera.x;      
-    float dy = bb->world_y - camera.y;      
-    float dz = bb->world_z - camera.z;      
-    float distance = sqrtf(dx * dx + dy * dy + dz * dz);      
+    float effective_fov = terrain_fov;      
+    float billboard_angle = atan2f(dy, dx);      
+    float angle_diff = billboard_angle - camera.angle;      
           
-    if (distance > max_render_distance * 1.1f || distance < 0.5f) {      
+    while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;      
+    while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;      
+          
+    float terrain_fov_half = effective_fov * 0.5f;      
+          
+    if (fabs(angle_diff) > terrain_fov_half * 1.2f) {      
+        result.valid = 0;      
+        return result;      
+    }      
+        
+    float half_width = current_render_width / 2.0f;    
+    float screen_x_float = half_width + (angle_diff / effective_fov) * (float)current_render_width;      
+        
+    float extended_width = current_render_width * 1.25f;    
+    if (screen_x_float < -extended_width || screen_x_float >= current_render_width + extended_width) {      
         result.valid = 0;      
         return result;      
     }      
           
-    result.distance = distance;    
+    result.screen_x = (int)screen_x_float;      
+          
+    float cos_angle = cosf(camera.angle);        
+    float sin_angle = sinf(camera.angle);        
+    float cam_forward = dx * cos_angle + dy * sin_angle;      
+          
+    if (cam_forward <= 0.1f) {        
+        result.valid = 0;        
+        return result;        
+    }      
         
-    float effective_fov = terrain_fov;    
-    float billboard_angle = atan2f(dy, dx);    
-    float angle_diff = billboard_angle - camera.angle;    
+    float half_height = current_render_height / 2.0f;    
+    float height_on_screen = half_height + (camera.z - bb->world_z) / cam_forward * 300.0f;      
+    height_on_screen += camera.pitch * 40.0f;      
         
-    while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;    
-    while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;    
-        
-    float terrain_fov_half = effective_fov * 0.5f;    
-        
-    if (fabs(angle_diff) > terrain_fov_half * 1.2f) {    
-        result.valid = 0;    
-        return result;    
-    }    
-      
-    // CORREGIDO: Usar dimensiones dinámicas  
-    float half_width = current_render_width / 2.0f;  
-    float screen_x_float = half_width + (angle_diff / effective_fov) * (float)current_render_width;    
-      
-    // CORREGIDO: Límites dinámicos (extendidos 1.25x para fade-out)  
-    float extended_width = current_render_width * 1.25f;  
-    if (screen_x_float < -extended_width || screen_x_float >= current_render_width + extended_width) {    
-        result.valid = 0;    
-        return result;    
-    }    
-        
-    result.screen_x = (int)screen_x_float;    
-        
-    float cos_angle = cosf(camera.angle);      
-    float sin_angle = sinf(camera.angle);      
-    float cam_forward = dx * cos_angle + dy * sin_angle;    
-        
-    if (cam_forward <= 0.1f) {      
+    float extended_height = current_render_height * 1.67f;    
+    if (height_on_screen < -extended_height || height_on_screen >= current_render_height + extended_height) {      
         result.valid = 0;      
         return result;      
-    }    
+    }      
+          
+    result.screen_y = (int)height_on_screen;      
+          
+    // Escalado según tipo de billboard    
+    float base_scale_factor;      
+    float max_scale, min_scale;      
+          
+    switch(bb->billboard_type) {      
+        case BILLBOARD_TYPE_PLAYER:      
+            base_scale_factor = 30.0f;      
+            max_scale = 1.2f;      
+            min_scale = 0.3f;      
+            break;      
+        case BILLBOARD_TYPE_ENEMY:      
+            base_scale_factor = 120.0f;      
+            max_scale = 6.0f;      
+            min_scale = 0.1f;      
+            break;      
+        case BILLBOARD_TYPE_PROJECTILE:      
+            base_scale_factor = 80.0f;      
+            max_scale = 4.0f;      
+            min_scale = 0.05f;      
+            break;      
+        default:      
+            base_scale_factor = 150.0f;      
+            max_scale = 8.0f;      
+            min_scale = 0.05f;      
+    }      
+          
+    result.distance_scale = base_scale_factor / cam_forward;      
+    if (result.distance_scale > max_scale) result.distance_scale = max_scale;      
+    if (result.distance_scale < min_scale) result.distance_scale = min_scale;      
+          
+    result.scaled_width = (int)(result.distance_scale * billboard_graph->width);      
+    result.scaled_height = (int)(result.distance_scale * billboard_graph->height);      
+          
+    if (result.scaled_width < 1) result.scaled_width = 1;      
+    if (result.scaled_height < 1) result.scaled_height = 1;      
+          
+    // ============================================================  
+    // CORRECCIÓN: Cálculo de alpha mejorado  
+    // ============================================================  
+    float fog = 1.0f;  // Empezar con opacidad completa  
       
-    // CORREGIDO: Usar dimensiones dinámicas  
-    float half_height = current_render_height / 2.0f;  
-    float height_on_screen = half_height + (camera.z - bb->world_z) / cam_forward * 300.0f;    
-    height_on_screen += camera.pitch * 40.0f;    
-      
-    // CORREGIDO: Límites dinámicos (extendidos 1.67x para fade-out)  
-    float extended_height = current_render_height * 1.67f;  
-    if (height_on_screen < -extended_height || height_on_screen >= current_render_height + extended_height) {    
-        result.valid = 0;    
-        return result;    
-    }    
-        
-    result.screen_y = (int)height_on_screen;    
-        
-    // Escalado según tipo de billboard  
-    float base_scale_factor;    
-    float max_scale, min_scale;    
-        
-    switch(bb->billboard_type) {    
-        case BILLBOARD_TYPE_PLAYER:    
-            base_scale_factor = 30.0f;    
-            max_scale = 1.2f;    
-            min_scale = 0.3f;    
-            break;    
-        case BILLBOARD_TYPE_ENEMY:    
-            base_scale_factor = 120.0f;    
-            max_scale = 6.0f;    
-            min_scale = 0.1f;    
-            break;    
-        case BILLBOARD_TYPE_PROJECTILE:    
-            base_scale_factor = 80.0f;    
-            max_scale = 4.0f;    
-            min_scale = 0.05f;    
-            break;    
-        default:    
-            base_scale_factor = 150.0f;    
-            max_scale = 8.0f;    
-            min_scale = 0.05f;    
-    }    
-        
-    result.distance_scale = base_scale_factor / cam_forward;    
-    if (result.distance_scale > max_scale) result.distance_scale = max_scale;    
-    if (result.distance_scale < min_scale) result.distance_scale = min_scale;    
-        
-    result.scaled_width = (int)(result.distance_scale * billboard_graph->width);    
-    result.scaled_height = (int)(result.distance_scale * billboard_graph->height);    
-        
-    if (result.scaled_width < 1) result.scaled_width = 1;    
-    if (result.scaled_height < 1) result.scaled_height = 1;    
-        
-    // Cálculo de alpha con fade-out  
-    int fog_index = (int)distance;    
-    if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;    
-    float fog = fog_table[fog_index];    
-        
-    if (distance > max_render_distance * 0.7f) {    
-        float fade_range = max_render_distance * 0.3f;  
-        float fade_progress = (distance - max_render_distance * 0.7f) / fade_range;    
-        float distance_fade = 1.0f - fade_progress;    
-        distance_fade = fmaxf(0.0f, fminf(1.0f, distance_fade));    
-        fog *= distance_fade;    
-    }    
-        
-    if (fabs(angle_diff) > terrain_fov_half * 0.7f) {    
-        float fov_fade_range = terrain_fov_half * 0.3f;    
-        float fov_fade_progress = (fabs(angle_diff) - terrain_fov_half * 0.7f) / fov_fade_range;    
-        float fov_fade = 1.0f - fov_fade_progress;    
-        fov_fade = fmaxf(0.0f, fminf(1.0f, fov_fade));    
-        fog *= fov_fade;    
-    }    
-        
-    result.alpha = (Uint8)(255 * fog);    
-      
-    if (fog_intensity > 0.0f && distance > max_render_distance * 0.3f) {    
-        float fog_start = max_render_distance * 0.3f;    
-        float fog_range = max_render_distance - fog_start;    
-        float fog_progress = (distance - fog_start) / fog_range;    
-        fog_progress = fog_progress * fog_progress;    
-            
-        float fog_tint_factor = fog_progress * fog_intensity * 0.3f;    
-        if (fog_tint_factor > 0.5f) fog_tint_factor = 0.5f;    
-            
-        result.fog_tint_factor = fog_tint_factor;    
-    } else {    
-        result.fog_tint_factor = 0.0f;    
+    // Solo aplicar fog_table si la distancia es significativa  
+    if (distance > max_render_distance * 0.3f) {  
+        int fog_index = (int)distance;      
+        if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;      
+        fog = fog_table[fog_index];      
     }  
+          
+    // Fade-out por distancia (solo para objetos lejanos)  
+    if (distance > max_render_distance * 0.7f) {      
+        float fade_range = max_render_distance * 0.3f;    
+        float fade_progress = (distance - max_render_distance * 0.7f) / fade_range;      
+        float distance_fade = 1.0f - fade_progress;      
+        distance_fade = fmaxf(0.0f, fminf(1.0f, distance_fade));      
+        fog *= distance_fade;      
+    }      
+          
+    // Fade-out por FOV (bordes del campo de visión)  
+    if (fabs(angle_diff) > terrain_fov_half * 0.7f) {      
+        float fov_fade_range = terrain_fov_half * 0.3f;      
+        float fov_fade_progress = (fabs(angle_diff) - terrain_fov_half * 0.7f) / fov_fade_range;      
+        float fov_fade = 1.0f - fov_fade_progress;      
+        fov_fade = fmaxf(0.0f, fminf(1.0f, fov_fade));      
+        fog *= fov_fade;      
+    }      
+          
+    result.alpha = (Uint8)(255 * fog);      
         
-    result.valid = 1;    
-    return result;    
+    // Tintado de niebla (solo para objetos lejanos con niebla activa)  
+    if (fog_intensity > 0.0f && distance > max_render_distance * 0.3f) {      
+        float fog_start = max_render_distance * 0.3f;      
+        float fog_range = max_render_distance - fog_start;      
+        float fog_progress = (distance - fog_start) / fog_range;      
+        fog_progress = fog_progress * fog_progress;      
+              
+        float fog_tint_factor = fog_progress * fog_intensity * 0.3f;      
+        if (fog_tint_factor > 0.5f) fog_tint_factor = 0.5f;      
+              
+        result.fog_tint_factor = fog_tint_factor;      
+    } else {      
+        result.fog_tint_factor = 0.0f;      
+    }    
+          
+    result.valid = 1;      
+    return result;      
 }
 
 // Función de comparación para qsort (más lejanos primero)  
@@ -885,10 +891,15 @@ int64_t libmod_heightmap_render_voxelspace(INSTANCE *my, int64_t *params) {
             float render_height;    
             int render_water = 0;    
                 
-            if (water_level > 0 && terrain_height < water_level) {    
-                float simple_wave = sin(cached_water_time + world_x * 0.05f) * wave_amplitude;  
-                render_height = water_level + simple_wave;    
-                render_water = 1;    
+            if (water_level > 0 && terrain_height < water_level) {  
+            // Aproximación simple del ruido para CPU (usando múltiples ondas)  
+            float wave1 = sin(cached_water_time * 0.5f + world_x * 0.05f) * wave_amplitude * 0.5f;  
+            float wave2 = sin(cached_water_time * 0.8f + world_y * 0.03f) * wave_amplitude * 0.3f;  
+            float wave3 = sin(cached_water_time * 1.2f + (world_x + world_y) * 0.02f) * wave_amplitude * 0.2f;  
+            float simple_wave = wave1 + wave2 + wave3;  
+      
+    render_height = water_level + simple_wave;  
+    render_water = 1; 
             } else {    
                 
                 render_height = terrain_height;    
@@ -1131,178 +1142,244 @@ static const char* voxel_vertex_shader_source =
 "    gl_Position = vec4(bgd_Vertex, 0.0, 1.0);\n"        
 "}\n";  
  
-// Fragment shader
-static const char* voxel_fragment_shader_source =            
-"#version 330 core\n"        
-"\n"            
-"in vec2 v_uv;\n"            
-"\n"            
-"uniform sampler2D u_heightmap;\n"            
-"uniform sampler2D u_texturemap;\n"            
-"uniform sampler2D u_water_texture;\n"            
-"uniform vec3 u_camera_pos;\n"            
-"uniform float u_camera_angle;\n"            
-"uniform float u_camera_pitch;\n"            
-"uniform float u_fov;\n"            
-"uniform float u_max_distance;\n"            
-"uniform float u_water_level;\n"            
-"uniform float u_water_time;\n"            
-"uniform float u_wave_amplitude;\n"            
-"uniform float u_light_intensity;\n"            
-"uniform vec2 u_heightmap_size;\n"            
-"uniform vec3 u_sky_color;\n"            
-"uniform float u_current_distance;\n"      
-"uniform vec3 u_fog_color;\n"      
-"uniform float u_fog_intensity;\n"      
-"uniform vec2 u_chunk_min;\n"      
-"uniform vec2 u_chunk_max;\n"      
-"\n"        
-"out vec4 FragColor;\n"        
-"\n"    
-"// Función de filtrado bilinear manual\n"    
-"vec4 texture_bilinear(sampler2D tex, vec2 uv, vec2 tex_size) {\n"    
-"    vec2 pixel_pos = uv * tex_size;\n"    
-"    vec2 pixel_floor = floor(pixel_pos - 0.5) + 0.5;\n"    
-"    vec2 frac = pixel_pos - pixel_floor;\n"    
-"    \n"    
-"    vec2 uv00 = pixel_floor / tex_size;\n"    
-"    vec2 uv10 = (pixel_floor + vec2(1.0, 0.0)) / tex_size;\n"    
-"    vec2 uv01 = (pixel_floor + vec2(0.0, 1.0)) / tex_size;\n"    
-"    vec2 uv11 = (pixel_floor + vec2(1.0, 1.0)) / tex_size;\n"    
-"    \n"    
-"    vec4 c00 = texture(tex, uv00);\n"    
-"    vec4 c10 = texture(tex, uv10);\n"    
-"    vec4 c01 = texture(tex, uv01);\n"    
-"    vec4 c11 = texture(tex, uv11);\n"    
-"    \n"    
-"    vec4 c0 = mix(c00, c10, frac.x);\n"    
-"    vec4 c1 = mix(c01, c11, frac.x);\n"    
-"    \n"    
-"    return mix(c0, c1, frac.y);\n"    
-"}\n"    
-"\n"            
-"void main() {\n"            
-"    float column_angle = u_camera_angle - u_fov * 0.5 + v_uv.x * u_fov;\n"            
-"    \n"            
-"    float cos_angle = cos(column_angle);\n"            
-"    float sin_angle = sin(column_angle);\n"            
-"    \n"            
-"    vec2 world_pos = u_camera_pos.xy + vec2(cos_angle, sin_angle) * u_current_distance;\n"            
-"    \n"    
-"    // Verificar límites de chunks\n"    
-"    if (world_pos.x < u_chunk_min.x || world_pos.x > u_chunk_max.x ||\n"    
-"        world_pos.y < u_chunk_min.y || world_pos.y > u_chunk_max.y) {\n"    
-"        discard;\n"    
-"    }\n"    
-"    \n"    
-"    // Verificar límites del heightmap\n"    
-"    if (world_pos.x < 0.0 || world_pos.x >= u_heightmap_size.x ||\n"    
-"        world_pos.y < 0.0 || world_pos.y >= u_heightmap_size.y) {\n"    
-"        discard;\n"    
-"    }\n"    
-"    \n"    
-"    vec2 uv = world_pos / u_heightmap_size;\n"            
-"    \n"            
-"    float terrain_height = texture(u_heightmap, uv).r * 255.0;\n"            
-"    \n"            
-"    bool is_water = terrain_height < u_water_level;\n"            
-"    \n"    
-"    // Calcular altura de renderizado\n"    
-"    float render_height;\n"    
-"    if (is_water) {\n"    
-"        float wave = sin(u_water_time + world_pos.x * 0.05) * u_wave_amplitude;\n"    
-"        float water_surface = u_water_level + wave;\n"  
+static const char* voxel_fragment_shader_source =              
+"#version 330 core\n"          
+"\n"              
+"in vec2 v_uv;\n"              
+"\n"              
+"uniform sampler2D u_heightmap;\n"              
+"uniform sampler2D u_texturemap;\n"              
+"uniform sampler2D u_water_texture;\n"              
+"uniform vec3 u_camera_pos;\n"              
+"uniform float u_camera_angle;\n"              
+"uniform float u_camera_pitch;\n"              
+"uniform float u_fov;\n"              
+"uniform float u_max_distance;\n"              
+"uniform float u_water_level;\n"              
+"uniform float u_water_time;\n"              
+"uniform float u_wave_amplitude;\n"              
+"uniform float u_light_intensity;\n"              
+"uniform vec2 u_heightmap_size;\n"              
+"uniform vec3 u_sky_color;\n"              
+"uniform float u_current_distance;\n"        
+"uniform vec3 u_fog_color;\n"        
+"uniform float u_fog_intensity;\n"        
+"uniform vec2 u_chunk_min;\n"        
+"uniform vec2 u_chunk_max;\n"        
+"\n"          
+"out vec4 FragColor;\n"          
+"\n"      
+"// ============================================================================\n"  
+"// FUNCIONES DE RUIDO SIMPLEX 2D\n"  
+"// ============================================================================\n"  
+"\n"  
+"vec3 mod289(vec3 x) {\n"  
+"    return x - floor(x * (1.0 / 289.0)) * 289.0;\n"  
+"}\n"  
+"\n"  
+"vec2 mod289(vec2 x) {\n"  
+"    return x - floor(x * (1.0 / 289.0)) * 289.0;\n"  
+"}\n"  
+"\n"  
+"vec3 permute(vec3 x) {\n"  
+"    return mod289(((x*34.0)+1.0)*x);\n"  
+"}\n"  
+"\n"  
+"float snoise(vec2 v) {\n"  
+"    const vec4 C = vec4(0.211324865405187,\n"  
+"                        0.366025403784439,\n"  
+"                       -0.577350269189626,\n"  
+"                        0.024390243902439);\n"  
+"    \n"  
+"    vec2 i  = floor(v + dot(v, C.yy));\n"  
+"    vec2 x0 = v - i + dot(i, C.xx);\n"  
+"    \n"  
+"    vec2 i1;\n"  
+"    i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);\n"  
+"    \n"  
+"    vec4 x12 = x0.xyxy + C.xxzz;\n"  
+"    x12.xy -= i1;\n"  
+"    \n"  
+"    i = mod289(i);\n"  
+"    vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));\n"  
+"    \n"  
+"    vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);\n"  
+"    m = m*m;\n"  
+"    m = m*m;\n"  
+"    \n"  
+"    vec3 x = 2.0 * fract(p * C.www) - 1.0;\n"  
+"    vec3 h = abs(x) - 0.5;\n"  
+"    vec3 ox = floor(x + 0.5);\n"  
+"    vec3 a0 = x - ox;\n"  
+"    \n"  
+"    m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);\n"  
+"    \n"  
+"    vec3 g;\n"  
+"    g.x  = a0.x  * x0.x  + h.x  * x0.y;\n"  
+"    g.yz = a0.yz * x12.xz + h.yz * x12.yw;\n"  
+"    \n"  
+"    return 130.0 * dot(m, g);\n"  
+"}\n"  
+"\n"  
+"// ============================================================================\n"  
+"// FUNCIÓN DE FILTRADO BILINEAR\n"  
+"// ============================================================================\n"  
+"\n"  
+"vec4 texture_bilinear(sampler2D tex, vec2 uv, vec2 tex_size) {\n"      
+"    vec2 pixel_pos = uv * tex_size;\n"      
+"    vec2 pixel_floor = floor(pixel_pos - 0.5) + 0.5;\n"      
+"    vec2 frac = pixel_pos - pixel_floor;\n"      
+"    \n"      
+"    vec2 uv00 = pixel_floor / tex_size;\n"      
+"    vec2 uv10 = (pixel_floor + vec2(1.0, 0.0)) / tex_size;\n"      
+"    vec2 uv01 = (pixel_floor + vec2(0.0, 1.0)) / tex_size;\n"      
+"    vec2 uv11 = (pixel_floor + vec2(1.0, 1.0)) / tex_size;\n"      
+"    \n"      
+"    vec4 c00 = texture(tex, uv00);\n"      
+"    vec4 c10 = texture(tex, uv10);\n"      
+"    vec4 c01 = texture(tex, uv01);\n"      
+"    vec4 c11 = texture(tex, uv11);\n"      
+"    \n"      
+"    vec4 c0 = mix(c00, c10, frac.x);\n"      
+"    vec4 c1 = mix(c01, c11, frac.x);\n"      
+"    \n"      
+"    return mix(c0, c1, frac.y);\n"      
+"}\n"      
+"\n"
+// Continúa desde la Parte 1 (NO agregues punto y coma)  
+"void main() {\n"              
+"    float column_angle = u_camera_angle - u_fov * 0.5 + v_uv.x * u_fov;\n"              
+"    \n"              
+"    float cos_angle = cos(column_angle);\n"              
+"    float sin_angle = sin(column_angle);\n"              
+"    \n"              
+"    vec2 world_pos = u_camera_pos.xy + vec2(cos_angle, sin_angle) * u_current_distance;\n"              
+"    \n"      
+"    if (world_pos.x < u_chunk_min.x || world_pos.x > u_chunk_max.x ||\n"      
+"        world_pos.y < u_chunk_min.y || world_pos.y > u_chunk_max.y) {\n"      
+"        discard;\n"      
+"    }\n"      
+"    \n"      
+"    if (world_pos.x < 0.0 || world_pos.x >= u_heightmap_size.x ||\n"      
+"        world_pos.y < 0.0 || world_pos.y >= u_heightmap_size.y) {\n"      
+"        discard;\n"      
+"    }\n"      
+"    \n"      
+"    vec2 uv = world_pos / u_heightmap_size;\n"              
+"    \n"              
+"    float terrain_height = texture(u_heightmap, uv).r * 255.0;\n"              
+"    \n"              
+"    bool is_water = terrain_height < u_water_level;\n"              
+"    \n"      
+"    float render_height;\n"      
+"    if (is_water) {\n"      
+"        vec2 wave_coord = world_pos * 0.01 + vec2(u_water_time * 0.1, u_water_time * 0.05);\n"  
 "        \n"  
-"        // CAMBIO CLAVE: Detectar si cámara está sumergida\n"  
-"        bool camera_underwater = u_camera_pos.z < u_water_level;\n"  
+"        float noise1 = snoise(wave_coord) * 0.5;\n"  
+"        float noise2 = snoise(wave_coord * 2.0) * 0.25;\n"  
+"        float noise3 = snoise(wave_coord * 4.0) * 0.125;\n"  
 "        \n"  
-"        if (camera_underwater) {\n"  
-"            // Cuando estás bajo el agua, usar altura real del terreno\n"  
-"            render_height = terrain_height;\n"  
-"        } else {\n"  
-"            // Cuando estás sobre el agua, usar superficie del agua\n"  
-"            render_height = water_surface;\n"  
-"        }\n"  
-"    } else {\n"    
-"        render_height = terrain_height;\n"    
-"    }\n"    
-"    \n"            
-"    float height_diff = u_camera_pos.z - render_height;\n"            
-"    float projected_y = height_diff / u_current_distance * 300.0;\n"            
-"    projected_y += u_camera_pitch * 40.0;\n"            
-"    \n"            
-"    float screen_y = 0.5 + (projected_y / 240.0);\n"            
-"    \n"            
-"    if (v_uv.y >= screen_y) {\n"            
-"        float fog = 1.0 - (u_current_distance / u_max_distance);\n"            
-"        fog = clamp(fog, 0.3, 1.0);\n"            
-"        \n"      
-"        float fog_factor = 0.0;\n"      
-"        if (u_fog_intensity > 0.0 && u_current_distance > u_max_distance * 0.5) {\n"      
-"            float fog_start = u_max_distance * 0.5;\n"      
-"            float fog_range = u_max_distance - fog_start;\n"      
-"            float fog_progress = (u_current_distance - fog_start) / fog_range;\n"      
-"            fog_progress = fog_progress * fog_progress;\n"      
-"            fog_factor = fog_progress * u_fog_intensity * 1.0;\n"      
-"            fog_factor = clamp(fog_factor, 0.0, 0.5);\n"      
-"        }\n"      
-"        \n"            
-"        if (is_water) {\n"    
-"            bool camera_underwater = u_camera_pos.z < u_water_level;\n"  
-"            \n"  
-"            if (camera_underwater) {\n"  
-"                // Renderizar terreno del fondo con tinte azulado\n"  
-"                vec2 terrain_tex_size = vec2(textureSize(u_texturemap, 0));\n"    
-"                vec3 terrain_color = texture_bilinear(u_texturemap, uv, terrain_tex_size).rgb;\n"    
-"                terrain_color *= u_light_intensity * 0.7;\n"  
-"                \n"  
-"                // Tinte azulado para simular estar bajo el agua\n"  
-"                terrain_color.b *= 1.3;\n"  
-"                \n"  
-"                vec3 base_color = mix(u_sky_color, terrain_color, fog);\n"    
-"                if (fog_factor > 0.1) {\n"    
-"                    base_color = mix(base_color, u_fog_color, fog_factor);\n"    
-"                }\n"    
-"                FragColor = vec4(base_color, 1.0);\n"  
-"            } else {\n"  
-"                // Renderizar superficie del agua (cuando estás sobre ella)\n"  
-"                float water_depth = u_water_level - terrain_height;\n"    
-"                float water_surface_alpha = clamp(water_depth / 30.0, 0.4, 0.85);\n"    
-"                \n"    
-"                // Samplear textura de agua\n"    
-"                vec2 water_uv = mod(world_pos * 0.01 + vec2(u_water_time * 0.1, u_water_time * 0.05), 1.0);\n"    
-"                vec2 water_tex_size = vec2(textureSize(u_water_texture, 0));\n"    
-"                vec4 water_sample = texture_bilinear(u_water_texture, water_uv, water_tex_size);\n"    
-"                \n"    
-"                // Samplear terreno debajo\n"    
-"                vec2 terrain_tex_size = vec2(textureSize(u_texturemap, 0));\n"    
-"                vec3 terrain_color = texture_bilinear(u_texturemap, uv, terrain_tex_size).rgb;\n"    
-"                terrain_color *= u_light_intensity;\n"  
-"                \n"    
-"                // Mezclar agua y terreno\n"    
-"                vec3 water_color = mix(terrain_color, water_sample.rgb, water_surface_alpha);\n"    
-"                vec3 base_color = mix(u_sky_color, water_color, fog);\n"    
-"                if (fog_factor > 0.1) {\n"    
-"                    base_color = mix(base_color, u_fog_color, fog_factor);\n"    
-"                }\n"    
-"                FragColor = vec4(base_color, 1.0);\n"  
+"        float wave = (noise1 + noise2 + noise3) * u_wave_amplitude;\n"  
+"        float water_surface = u_water_level + wave;\n"    
+"        \n"    
+"        bool camera_underwater = u_camera_pos.z < u_water_level;\n"    
+"        \n"    
+"        if (camera_underwater) {\n"    
+"            render_height = terrain_height;\n"    
+"        } else {\n"    
+"            render_height = water_surface;\n"    
+"        }\n"    
+"    } else {\n"      
+"        render_height = terrain_height;\n"      
+"    }\n"      
+"    \n"              
+"    float height_diff = u_camera_pos.z - render_height;\n"              
+"    float projected_y = height_diff / u_current_distance * 300.0;\n"              
+"    projected_y += u_camera_pitch * 40.0;\n"              
+"    \n"              
+"    float screen_y = 0.5 + (projected_y / 240.0);\n"              
+"    \n"              
+"    if (v_uv.y >= screen_y) {\n"              
+"        float fog = 1.0 - (u_current_distance / u_max_distance);\n"              
+"        fog = clamp(fog, 0.3, 1.0);\n"              
+"        \n"        
+"        float fog_factor = 0.0;\n"        
+"        if (u_fog_intensity > 0.0) {\n"  
+"            float distance_fog = 0.0;\n"  
+"            if (u_current_distance > u_max_distance * 0.3) {\n"  
+"                float fog_start = u_max_distance * 0.3;\n"  
+"                float fog_range = u_max_distance - fog_start;\n"  
+"                float fog_progress = (u_current_distance - fog_start) / fog_range;\n"  
+"                fog_progress = fog_progress * fog_progress;\n"  
+"                distance_fog = fog_progress * u_fog_intensity;\n"  
 "            }\n"  
-"        } else {\n"            
-"            // Samplear terreno normal\n"    
-"            vec2 terrain_tex_size = vec2(textureSize(u_texturemap, 0));\n"    
-"            vec3 terrain_color = texture_bilinear(u_texturemap, uv, terrain_tex_size).rgb;\n"    
-"            terrain_color *= u_light_intensity;\n"      
-"            vec3 base_color = mix(u_sky_color, terrain_color, fog);\n"      
-"            if (fog_factor > 0.1) {\n"      
-"                base_color = mix(base_color, u_fog_color, fog_factor);\n"      
-"            }\n"      
-"            FragColor = vec4(base_color, 1.0);\n"            
-"        }\n"            
-"    } else {\n"            
-"        discard;\n"            
-"    }\n"            
+"            \n"  
+"            float height_fog = 0.0;\n"  
+"            if (render_height < 100.0) {\n"  
+"                height_fog = (1.0 - render_height / 100.0) * u_fog_intensity * 0.3;\n"  
+"            }\n"  
+"            \n"  
+"            fog_factor = max(distance_fog, height_fog);\n"  
+"            fog_factor = clamp(fog_factor, 0.0, 0.7);\n"  
+"        }\n"  
+"        \n"
+// Continúa desde la Parte 2 (NO agregues punto y coma)  
+"        if (is_water) {\n"      
+"            bool camera_underwater = u_camera_pos.z < u_water_level;\n"    
+"            \n"    
+"            if (camera_underwater) {\n"    
+"                vec2 terrain_tex_size = vec2(textureSize(u_texturemap, 0));\n"      
+"                vec3 terrain_color = texture_bilinear(u_texturemap, uv, terrain_tex_size).rgb;\n"      
+"                terrain_color *= u_light_intensity * 0.7;\n"  
+"                terrain_color.b *= 1.3;\n"    
+"                \n"    
+"                vec3 base_color = mix(u_sky_color, terrain_color, fog);\n"      
+"                if (fog_factor > 0.1) {\n"      
+"                    base_color = mix(base_color, u_fog_color, fog_factor);\n"      
+"                }\n"      
+"                FragColor = vec4(base_color, 1.0);\n"    
+"            } else {\n"    
+"                float water_depth = u_water_level - terrain_height;\n"      
+"                float water_surface_alpha = clamp(water_depth / 30.0, 0.4, 0.85);\n"      
+"                \n"      
+"                vec2 water_uv = mod(world_pos * 0.01 + vec2(u_water_time * 0.1, u_water_time * 0.05), 1.0);\n"      
+"                vec2 water_tex_size = vec2(textureSize(u_water_texture, 0));\n"      
+"                vec4 water_sample = texture_bilinear(u_water_texture, water_uv, water_tex_size);\n"      
+"                \n"      
+"                vec2 terrain_tex_size = vec2(textureSize(u_texturemap, 0));\n"      
+"                vec3 terrain_color = texture_bilinear(u_texturemap, uv, terrain_tex_size).rgb;\n"      
+"                terrain_color *= u_light_intensity;\n"  
+"                \n"      
+"                vec3 view_dir = normalize(vec3(world_pos.x - u_camera_pos.x, world_pos.y - u_camera_pos.y, -1.0));\n"  
+"                vec3 water_normal = vec3(0.0, 0.0, 1.0);\n"  
+"                vec3 reflect_dir = reflect(view_dir, water_normal);\n"  
+"                \n"  
+"                float fresnel = pow(1.0 - max(dot(-view_dir, water_normal), 0.0), 3.0);\n"  
+"                vec3 reflection_color = u_sky_color;\n"  
+"                \n"      
+"                vec3 water_color = mix(terrain_color, water_sample.rgb, water_surface_alpha);\n"      
+"                water_color = mix(water_color, reflection_color, fresnel * 0.3);\n"  
+"                \n"  
+"                vec3 base_color = mix(u_sky_color, water_color, fog);\n"      
+"                if (fog_factor > 0.1) {\n"      
+"                    base_color = mix(base_color, u_fog_color, fog_factor);\n"      
+"                }\n"      
+"                FragColor = vec4(base_color, 1.0);\n"    
+"            }\n"    
+"        } else {\n"              
+"            vec2 terrain_tex_size = vec2(textureSize(u_texturemap, 0));\n"      
+"            vec3 terrain_color = texture_bilinear(u_texturemap, uv, terrain_tex_size).rgb;\n"      
+"            terrain_color *= u_light_intensity;\n"        
+"            vec3 base_color = mix(u_sky_color, terrain_color, fog);\n"        
+"            if (fog_factor > 0.1) {\n"        
+"                base_color = mix(base_color, u_fog_color, fog_factor);\n"        
+"            }\n"        
+"            FragColor = vec4(base_color, 1.0);\n"              
+"        }\n"              
+"    } else {\n"              
+"        discard;\n"              
+"    }\n"              
 "}\n";
-
 static int create_voxelspace_shader() {  
     if (voxel_shader) return 1;  
       
@@ -2788,38 +2865,51 @@ int64_t libmod_heightmap_register_billboard(INSTANCE *my, int64_t *params) {
     return -1;  
 }
 
-int64_t libmod_heightmap_update_billboard(INSTANCE *my, int64_t *params) {    
-
-    int64_t process_id = params[0];    
-
-    float world_x = *(float*)&params[1];    
-
-    float world_y = *(float*)&params[2];    
-
-    float world_z = *(float*)&params[3];    
-
-        
-
-    // Buscar en billboards dinámicos  
-
-    for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {    
-
-        if (dynamic_billboards[i].active && dynamic_billboards[i].process_id == process_id) {    
-
-            dynamic_billboards[i].world_x = world_x;    
-
-            dynamic_billboards[i].world_y = world_y;    
-
-            dynamic_billboards[i].world_z = world_z;    
-
-            return 1;  
-
-        }    
-
-    }    
-
-    return 0;  
-
+int64_t libmod_heightmap_update_billboard(INSTANCE *my, int64_t *params) {      
+    int64_t process_id = params[0];      
+    float world_x = *(float*)&params[1];      
+    float world_y = *(float*)&params[2];      
+    float world_z = *(float*)&params[3];      
+      
+    for (int i = 0; i < MAX_DYNAMIC_BILLBOARDS; i++) {      
+        if (dynamic_billboards[i].active && dynamic_billboards[i].process_id == process_id) {      
+            dynamic_billboards[i].world_x = world_x;      
+            dynamic_billboards[i].world_y = world_y;      
+              
+            if (dynamic_billboards[i].billboard_type > 0) {  
+                HEIGHTMAP *hm = NULL;  
+                for (int j = 0; j < MAX_HEIGHTMAPS; j++) {  
+                    if (heightmaps[j].cache_valid && heightmaps[j].width > 0) {  
+                        hm = &heightmaps[j];  
+                        break;  
+                    }  
+                }  
+                  
+                if (hm) {  
+                    float terrain_height = get_height_at(hm, world_x, world_y);  
+                      
+                    float height_offset;  
+                    switch(dynamic_billboards[i].billboard_type) {  
+                        case 1: height_offset = 10.0f; break;  
+                        case 2: height_offset = 10.0f; break;  
+                        case 3: height_offset = 5.0f; break;  
+                        default: height_offset = 10.0f;  
+                    }  
+                      
+                    float min_z = terrain_height + height_offset;  
+                    if (world_z < min_z) {  
+                        world_z = min_z;  
+                    }  
+                }  
+            }  
+              
+            dynamic_billboards[i].world_z = world_z;  
+              
+            // NUEVO: Retornar el Z ajustado como entero (multiplicado por 1000 para precisión)  
+            return (int64_t)(world_z * 1000.0f);  
+        }      
+    }      
+    return 0;    
 }
 
 int64_t libmod_heightmap_update_billboard_graph(INSTANCE *my, int64_t *params) {  
@@ -2848,15 +2938,14 @@ int64_t libmod_heightmap_unregister_billboard(INSTANCE *my, int64_t *params) {
     return 0; // No encontrado      
 }
 
-int64_t libmod_heightmap_set_wave_amplitude(INSTANCE *my, int64_t *params)  
-{  
-    float amplitude = *(float*)&params[0];  
-    if (amplitude < 0.0f) amplitude = 0.0f;  
-    if (amplitude > 5.0f) amplitude = 5.0f; // Límite razonable  
-    wave_amplitude = amplitude;  
-    return 1;  
+int64_t libmod_heightmap_set_wave_amplitude(INSTANCE *my, int64_t *params)    
+{    
+    float amplitude = *(float*)&params[0];    
+    if (amplitude < 0.0f) amplitude = 0.0f;    
+    if (amplitude > 50.0f) amplitude = 150.0f; // CAMBIO: Límite ampliado para tsunamis  
+    wave_amplitude = amplitude;    
+    return 1;    
 }
-
 
 int64_t libmod_heightmap_set_camera_follow(INSTANCE *my, int64_t *params)  
 
