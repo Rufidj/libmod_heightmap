@@ -175,6 +175,11 @@ int64_t next_heightmap_id = 1;
 float water_level = -1.0f;
 int light_intensity = 255;
 
+// Dimensiones configurables del render buffer  
+static int current_render_width = 320;  
+static int current_render_height = 240;
+
+//-------------------------------------
 static float mouse_sensitivity = 50.0f;
 static float move_speed = 3.0f;
 static float height_speed = 3.0f;
@@ -536,210 +541,205 @@ int64_t libmod_heightmap_set_sky_texture(INSTANCE *my, int64_t *params)
 }
  
 // Función auxiliar para samplear la textura del cielo con proyección esférica corregida  
-static uint32_t sample_sky_texture(float screen_x, float screen_y, float camera_angle, float camera_pitch, float time) {    
-    if (!sky_texture) {    
-        return SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);    
-    }    
-        
-    float terrain_fov = 0.1f;  
-    float fov_horizontal = terrain_fov;    
-    float fov_vertical = terrain_fov * 0.75f;  
-        
-    // CORREGIDO: Invertir el cálculo de ray_angle_v  
-    float ray_angle_h = ((screen_x - 160.0f) / 320.0f) * fov_horizontal;    
-    float ray_angle_v = ((screen_y - 120.0f) / 240.0f) * fov_vertical;  // CAMBIO: screen_y - 120.0f  
-        
-    float world_angle_h = camera_angle + ray_angle_h;    
-    float world_angle_v = camera_pitch + ray_angle_v;    
-        
-    float u = (world_angle_h + M_PI) / (2.0f * M_PI);    
-    float v = (world_angle_v + M_PI_2) / M_PI;    
-        
-    if (u < 0.0f) u = 0.0f;    
-    if (u > 1.0f) u = 1.0f;    
-    if (v < 0.0f) v = 0.0f;    
-    if (v > 1.0f) v = 1.0f;    
-        
-    int tex_x = (int)(u * sky_texture->width) % sky_texture->width;    
-    int tex_y = (int)(v * sky_texture->height) % sky_texture->height;    
-        
-    return gr_get_pixel(sky_texture, tex_x, tex_y);    
+static uint32_t sample_sky_texture(float screen_x, float screen_y, float camera_angle, float camera_pitch, float time) {      
+    if (!sky_texture) {      
+        return SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);      
+    }      
+          
+    float terrain_fov = 0.1f;    
+    float fov_horizontal = terrain_fov;      
+    float fov_vertical = terrain_fov * 0.75f;    
+      
+    // CORREGIDO: Usar dimensiones dinámicas  
+    float half_width = current_render_width / 2.0f;  
+    float half_height = current_render_height / 2.0f;  
+      
+    float ray_angle_h = ((screen_x - half_width) / (float)current_render_width) * fov_horizontal;      
+    float ray_angle_v = ((screen_y - half_height) / (float)current_render_height) * fov_vertical;  
+          
+    float world_angle_h = camera_angle + ray_angle_h;      
+    float world_angle_v = camera_pitch + ray_angle_v;      
+          
+    float u = (world_angle_h + M_PI) / (2.0f * M_PI);      
+    float v = (world_angle_v + M_PI_2) / M_PI;      
+          
+    if (u < 0.0f) u = 0.0f;      
+    if (u > 1.0f) u = 1.0f;      
+    if (v < 0.0f) v = 0.0f;      
+    if (v > 1.0f) v = 1.0f;      
+          
+    int tex_x = (int)(u * sky_texture->width) % sky_texture->width;      
+    int tex_y = (int)(v * sky_texture->height) % sky_texture->height;      
+          
+    return gr_get_pixel(sky_texture, tex_x, tex_y);      
 }
+
 
 // Función de renderizado del skybox corregida  
-static void render_skybox(float camera_angle, float camera_pitch, float time, int quality_step) {  
-    if (!sky_texture) {  
-        // Fallback al sistema actual  
-        uint32_t background_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);  
-        gr_clear_as(render_buffer, background_color);  
-        return;  
-    }  
+static void render_skybox(float camera_angle, float camera_pitch, float time, int quality_step) {    
+    if (!sky_texture) {    
+        uint32_t background_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);    
+        gr_clear_as(render_buffer, background_color);    
+        return;    
+    }    
+        
+    uint32_t background_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);    
+    gr_clear_as(render_buffer, background_color);    
       
-    // Primero limpiar solo con el color de fondo, sin sobrescribir  
-    uint32_t background_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);  
-    gr_clear_as(render_buffer, background_color);  
-      
-    // Renderizar skybox por sectores para optimización  
-    // IMPORTANTE: Solo renderizar en áreas que realmente son cielo  
-    for (int y = 0; y < 240; y += quality_step) {  
-        for (int x = 0; x < 320; x += quality_step) {  
-            // Verificar si este píxel debería mostrar cielo  
-            // (esto se determinará después en el pipeline de renderizado principal)  
-            uint32_t sky_color = sample_sky_texture((float)x, (float)y, camera_angle, camera_pitch, time);  
-              
-            // Rellenar el área del quality_step SOLO como fondo inicial  
-            // El renderizado del terreno y agua sobrescribirá estos píxeles según corresponda  
-            for (int dy = 0; dy < quality_step && (y + dy) < 240; dy++) {  
-                for (int dx = 0; dx < quality_step && (x + dx) < 320; dx++) {  
-                    gr_put_pixel(render_buffer, x + dx, y + dy, sky_color);  
-                }  
-            }  
-        }  
-    }  
+    // CORREGIDO: Usar dimensiones dinámicas  
+    for (int y = 0; y < current_render_height; y += quality_step) {    
+        for (int x = 0; x < current_render_width; x += quality_step) {    
+            uint32_t sky_color = sample_sky_texture((float)x, (float)y, camera_angle, camera_pitch, time);    
+                
+            for (int dy = 0; dy < quality_step && (y + dy) < current_render_height; dy++) {    
+                for (int dx = 0; dx < quality_step && (x + dx) < current_render_width; dx++) {    
+                    gr_put_pixel(render_buffer, x + dx, y + dy, sky_color);    
+                }    
+            }    
+        }    
+    }    
 }
 
-static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *billboard_graph, float terrain_fov) {    
-    BILLBOARD_PROJECTION result = {0};    
+static BILLBOARD_PROJECTION calculate_proyection(VOXEL_BILLBOARD *bb, GRAPH *billboard_graph, float terrain_fov) {      
+    BILLBOARD_PROJECTION result = {0};      
+          
+    float dx = bb->world_x - camera.x;      
+    float dy = bb->world_y - camera.y;      
+    float dz = bb->world_z - camera.z;      
+    float distance = sqrtf(dx * dx + dy * dy + dz * dz);      
+          
+    if (distance > max_render_distance * 1.1f || distance < 0.5f) {      
+        result.valid = 0;      
+        return result;      
+    }      
+          
+    result.distance = distance;    
         
-    // Cálculo de distancia 3D real    
-    float dx = bb->world_x - camera.x;    
-    float dy = bb->world_y - camera.y;    
-    float dz = bb->world_z - camera.z;    
-    float distance = sqrtf(dx * dx + dy * dy + dz * dz);    
+    float effective_fov = terrain_fov;    
+    float billboard_angle = atan2f(dy, dx);    
+    float angle_diff = billboard_angle - camera.angle;    
         
-    // MODIFICADO: Extender el rango para permitir fade-out  
-    if (distance > max_render_distance * 1.1f || distance < 0.5f) {    
+    while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;    
+    while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;    
+        
+    float terrain_fov_half = effective_fov * 0.5f;    
+        
+    if (fabs(angle_diff) > terrain_fov_half * 1.2f) {    
+        result.valid = 0;    
+        return result;    
+    }    
+      
+    // CORREGIDO: Usar dimensiones dinámicas  
+    float half_width = current_render_width / 2.0f;  
+    float screen_x_float = half_width + (angle_diff / effective_fov) * (float)current_render_width;    
+      
+    // CORREGIDO: Límites dinámicos (extendidos 1.25x para fade-out)  
+    float extended_width = current_render_width * 1.25f;  
+    if (screen_x_float < -extended_width || screen_x_float >= current_render_width + extended_width) {    
         result.valid = 0;    
         return result;    
     }    
         
-    result.distance = distance;  
+    result.screen_x = (int)screen_x_float;    
+        
+    float cos_angle = cosf(camera.angle);      
+    float sin_angle = sinf(camera.angle);      
+    float cam_forward = dx * cos_angle + dy * sin_angle;    
+        
+    if (cam_forward <= 0.1f) {      
+        result.valid = 0;      
+        return result;      
+    }    
       
-    // Usar el mismo FOV que el terreno  
-    float effective_fov = terrain_fov;  
-    float billboard_angle = atan2f(dy, dx);  
-    float angle_diff = billboard_angle - camera.angle;  
+    // CORREGIDO: Usar dimensiones dinámicas  
+    float half_height = current_render_height / 2.0f;  
+    float height_on_screen = half_height + (camera.z - bb->world_z) / cam_forward * 300.0f;    
+    height_on_screen += camera.pitch * 40.0f;    
       
-    while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;  
-    while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;  
-      
-    float terrain_fov_half = effective_fov * 0.5f;  
-      
-    // MODIFICADO: Extender FOV para permitir fade-out en bordes  
-    if (fabs(angle_diff) > terrain_fov_half * 1.2f) {  
-        result.valid = 0;  
-        return result;  
-    }  
-      
-    // Proyección de pantalla  
-    float screen_x_float = 160.0f + (angle_diff / effective_fov) * 320.0f;  
-      
-    // MODIFICADO: Extender límites de pantalla para fade-out  
-    if (screen_x_float < -400.0f || screen_x_float >= 720.0f) {  
-        result.valid = 0;  
-        return result;  
-    }  
-      
-    result.screen_x = (int)screen_x_float;  
-      
-    // Resto de la proyección vertical y escalado...  
-    float cos_angle = cosf(camera.angle);    
-    float sin_angle = sinf(camera.angle);    
-    float cam_forward = dx * cos_angle + dy * sin_angle;  
-      
-    if (cam_forward <= 0.1f) {    
+    // CORREGIDO: Límites dinámicos (extendidos 1.67x para fade-out)  
+    float extended_height = current_render_height * 1.67f;  
+    if (height_on_screen < -extended_height || height_on_screen >= current_render_height + extended_height) {    
         result.valid = 0;    
         return result;    
+    }    
+        
+    result.screen_y = (int)height_on_screen;    
+        
+    // Escalado según tipo de billboard  
+    float base_scale_factor;    
+    float max_scale, min_scale;    
+        
+    switch(bb->billboard_type) {    
+        case BILLBOARD_TYPE_PLAYER:    
+            base_scale_factor = 30.0f;    
+            max_scale = 1.2f;    
+            min_scale = 0.3f;    
+            break;    
+        case BILLBOARD_TYPE_ENEMY:    
+            base_scale_factor = 120.0f;    
+            max_scale = 6.0f;    
+            min_scale = 0.1f;    
+            break;    
+        case BILLBOARD_TYPE_PROJECTILE:    
+            base_scale_factor = 80.0f;    
+            max_scale = 4.0f;    
+            min_scale = 0.05f;    
+            break;    
+        default:    
+            base_scale_factor = 150.0f;    
+            max_scale = 8.0f;    
+            min_scale = 0.05f;    
+    }    
+        
+    result.distance_scale = base_scale_factor / cam_forward;    
+    if (result.distance_scale > max_scale) result.distance_scale = max_scale;    
+    if (result.distance_scale < min_scale) result.distance_scale = min_scale;    
+        
+    result.scaled_width = (int)(result.distance_scale * billboard_graph->width);    
+    result.scaled_height = (int)(result.distance_scale * billboard_graph->height);    
+        
+    if (result.scaled_width < 1) result.scaled_width = 1;    
+    if (result.scaled_height < 1) result.scaled_height = 1;    
+        
+    // Cálculo de alpha con fade-out  
+    int fog_index = (int)distance;    
+    if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;    
+    float fog = fog_table[fog_index];    
+        
+    if (distance > max_render_distance * 0.7f) {    
+        float fade_range = max_render_distance * 0.3f;  
+        float fade_progress = (distance - max_render_distance * 0.7f) / fade_range;    
+        float distance_fade = 1.0f - fade_progress;    
+        distance_fade = fmaxf(0.0f, fminf(1.0f, distance_fade));    
+        fog *= distance_fade;    
+    }    
+        
+    if (fabs(angle_diff) > terrain_fov_half * 0.7f) {    
+        float fov_fade_range = terrain_fov_half * 0.3f;    
+        float fov_fade_progress = (fabs(angle_diff) - terrain_fov_half * 0.7f) / fov_fade_range;    
+        float fov_fade = 1.0f - fov_fade_progress;    
+        fov_fade = fmaxf(0.0f, fminf(1.0f, fov_fade));    
+        fog *= fov_fade;    
+    }    
+        
+    result.alpha = (Uint8)(255 * fog);    
+      
+    if (fog_intensity > 0.0f && distance > max_render_distance * 0.3f) {    
+        float fog_start = max_render_distance * 0.3f;    
+        float fog_range = max_render_distance - fog_start;    
+        float fog_progress = (distance - fog_start) / fog_range;    
+        fog_progress = fog_progress * fog_progress;    
+            
+        float fog_tint_factor = fog_progress * fog_intensity * 0.3f;    
+        if (fog_tint_factor > 0.5f) fog_tint_factor = 0.5f;    
+            
+        result.fog_tint_factor = fog_tint_factor;    
+    } else {    
+        result.fog_tint_factor = 0.0f;    
     }  
-      
-    float height_on_screen = 120.0f + (camera.z - bb->world_z) / cam_forward * 300.0f;  
-    height_on_screen += camera.pitch * 40.0f;  
-      
-    if (height_on_screen < -400.0f || height_on_screen >= 640.0f) {  
-        result.valid = 0;  
-        return result;  
-    }  
-      
-    result.screen_y = (int)height_on_screen;  
-      
-    // Escalado (sin cambios)  
-    float base_scale_factor;  
-    float max_scale, min_scale;  
-      
-    switch(bb->billboard_type) {  
-        case BILLBOARD_TYPE_PLAYER:  
-            base_scale_factor = 30.0f;  
-            max_scale = 1.2f;  
-            min_scale = 0.3f;  
-            break;  
-        case BILLBOARD_TYPE_ENEMY:  
-            base_scale_factor = 120.0f;  
-            max_scale = 6.0f;  
-            min_scale = 0.1f;  
-            break;  
-        case BILLBOARD_TYPE_PROJECTILE:  
-            base_scale_factor = 80.0f;  
-            max_scale = 4.0f;  
-            min_scale = 0.05f;  
-            break;  
-        default:  
-            base_scale_factor = 150.0f;  
-            max_scale = 8.0f;  
-            min_scale = 0.05f;  
-    }  
-      
-    result.distance_scale = base_scale_factor / cam_forward;  
-    if (result.distance_scale > max_scale) result.distance_scale = max_scale;  
-    if (result.distance_scale < min_scale) result.distance_scale = min_scale;  
-      
-    result.scaled_width = (int)(result.distance_scale * billboard_graph->width);  
-    result.scaled_height = (int)(result.distance_scale * billboard_graph->height);  
-      
-    if (result.scaled_width < 1) result.scaled_width = 1;  
-    if (result.scaled_height < 1) result.scaled_height = 1;  
-      
-    // CLAVE: Cálculo de alpha con fade-out REAL  
-    int fog_index = (int)distance;  
-    if (fog_index >= fog_table_size) fog_index = fog_table_size - 1;  
-    float fog = fog_table[fog_index];  
-      
-    // Fade-out por distancia  
-    if (distance > max_render_distance * 0.7f) {  
-        float fade_range = max_render_distance * 0.3f; // 30% del rango para fade  
-        float fade_progress = (distance - max_render_distance * 0.7f) / fade_range;  
-        float distance_fade = 1.0f - fade_progress;  
-        distance_fade = fmaxf(0.0f, fminf(1.0f, distance_fade));  
-        fog *= distance_fade;  
-    }  
-      
-    // Fade-out por FOV  
-    if (fabs(angle_diff) > terrain_fov_half * 0.7f) {  
-        float fov_fade_range = terrain_fov_half * 0.3f;  
-        float fov_fade_progress = (fabs(angle_diff) - terrain_fov_half * 0.7f) / fov_fade_range;  
-        float fov_fade = 1.0f - fov_fade_progress;  
-        fov_fade = fmaxf(0.0f, fminf(1.0f, fov_fade));  
-        fog *= fov_fade;  
-    }  
-      
-    result.alpha = (Uint8)(255 * fog);  
-    // NUEVO: Aplicar tintado de niebla a billboards  
-if (fog_intensity > 0.0f && distance > max_render_distance * 0.3f) {  
-    float fog_start = max_render_distance * 0.3f;  
-    float fog_range = max_render_distance - fog_start;  
-    float fog_progress = (distance - fog_start) / fog_range;  
-    fog_progress = fog_progress * fog_progress;  
-      
-    float fog_tint_factor = fog_progress * fog_intensity * 0.3f;  
-    if (fog_tint_factor > 0.5f) fog_tint_factor = 0.5f;  
-      
-    // Almacenar el factor de tintado para usar en el renderizado  
-    result.fog_tint_factor = fog_tint_factor;  
-} else {  
-    result.fog_tint_factor = 0.0f;  
-}
-      
-    result.valid = 1;  
-    return result;  
+        
+    result.valid = 1;    
+    return result;    
 }
 
 // Función de comparación para qsort (más lejanos primero)  
@@ -1480,7 +1480,10 @@ int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {
         if (!render_buffer) {              
             fprintf(stderr, "ERROR: No se pudo crear render_buffer\n");              
             return 0;              
-        }              
+        }     
+           // PASO 9: Actualizar variables globales con las nuevas dimensiones  
+    current_render_width = render_width;  
+    current_render_height = render_height;           
     }              
                   
     uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, 255);              
@@ -2342,47 +2345,48 @@ int64_t libmod_heightmap_adjust_sprite_to_terrain(INSTANCE *my, int64_t *params)
 }
 
 /* Convertir coordenadas del mundo a coordenadas de pantalla */
-int64_t libmod_heightmap_world_to_screen(INSTANCE *my, int64_t *params)    
-{    
-    float world_x = (float)params[0] / 10.0f;    
-    float world_y = (float)params[1] / 10.0f;    
-    float world_z = (float)params[2] / 10.0f;    
-    int64_t *screen_x = (int64_t *)params[3];    
-    int64_t *screen_y = (int64_t *)params[4];    
-        
-    // Vector desde cámara al objeto  
-    float dx = world_x - camera.x;    
-    float dy = world_y - camera.y;    
-    float dz = world_z - camera.z;    
-        
-    // Calcular distancia 3D real  
-    float distance_3d = sqrtf(dx * dx + dy * dy + dz * dz);  
-      
-    // Transformación de vista  
-    float cos_a = cosf(camera.angle);    
-    float sin_a = sinf(camera.angle);    
-        
-    float forward = dx * cos_a + dy * sin_a;    
-    float right = -dx * sin_a + dy * cos_a;    
-        
-    // Verificar que está delante de la cámara  
-    if (forward > 1.0f && forward < max_render_distance) {    
-        // Proyección perspectiva CORREGIDA con escalado real  
-        float perspective_factor = 100.0f / distance_3d; // Usar distancia 3D real  
+int64_t libmod_heightmap_world_to_screen(INSTANCE *my, int64_t *params)      
+{      
+    float world_x = (float)params[0] / 10.0f;      
+    float world_y = (float)params[1] / 10.0f;      
+    float world_z = (float)params[2] / 10.0f;      
+    int64_t *screen_x = (int64_t *)params[3];      
+    int64_t *screen_y = (int64_t *)params[4];      
           
-        float projected_x = 160.0f + (right * perspective_factor);    
-        float projected_y = 120.0f - (dz * perspective_factor) + (camera.pitch * 30.0f);    
-            
-        if (projected_x >= -100.0f && projected_x <= 420.0f &&    
-            projected_y >= -100.0f && projected_y <= 340.0f) {    
-                
-            *screen_x = (int64_t)projected_x;    
-            *screen_y = (int64_t)projected_y;    
-            return 1;    
-        }    
-    }    
+    float dx = world_x - camera.x;      
+    float dy = world_y - camera.y;      
+    float dz = world_z - camera.z;      
+          
+    float distance_3d = sqrtf(dx * dx + dy * dy + dz * dz);    
         
-    return 0;    
+    float cos_a = cosf(camera.angle);      
+    float sin_a = sinf(camera.angle);      
+          
+    float forward = dx * cos_a + dy * sin_a;      
+    float right = -dx * sin_a + dy * cos_a;      
+          
+    if (forward > 1.0f && forward < max_render_distance) {      
+        float perspective_factor = 100.0f / distance_3d;  
+          
+        // CORREGIDO: Usar dimensiones dinámicas  
+        float half_width = current_render_width / 2.0f;  
+        float half_height = current_render_height / 2.0f;  
+          
+        float projected_x = half_width + (right * perspective_factor);      
+        float projected_y = half_height - (dz * perspective_factor) + (camera.pitch * 30.0f);      
+          
+        // CORREGIDO: Límites dinámicos extendidos  
+        float margin = 100.0f;  
+        if (projected_x >= -margin && projected_x <= current_render_width + margin &&      
+            projected_y >= -margin && projected_y <= current_render_height + margin) {      
+                  
+            *screen_x = (int64_t)projected_x;      
+            *screen_y = (int64_t)projected_y;      
+            return 1;      
+        }      
+    }      
+          
+    return 0;      
 }
 
 /* Obtener iluminación del terreno para aplicar al sprite */
@@ -2660,43 +2664,44 @@ int64_t libmod_heightmap_auto_adjust_billboard_to_terrain(INSTANCE *my, int64_t 
 }
 
 // Devuelve screen_x, screen_y y z_cam para una posición 3D
-int64_t libmod_heightmap_project_billboard(INSTANCE *my, int64_t *params)  
-{  
-    int heightmap_id = params[0];  
-    float wx = *(float*)&params[1]; // Convertir correctamente desde int64_t  
-    float wy = *(float*)&params[2];  
-    float wz = *(float*)&params[3];  
-  
-    if (heightmap_id < 0 || heightmap_id >= MAX_HEIGHTMAPS)  
-        return 0;  
-  
-    // Diferencia respecto a la cámara  
-    float dx = wx - camera.x;  
-    float dy = wy - camera.y;  
-  
-    // Convertir ángulo a radianes y aplicar rotación inversa  
-    float angle_rad = -camera.angle * M_PI / 180.0f;  
-    float x_cam = dx * cosf(angle_rad) - dy * sinf(angle_rad);  
-    float z_cam = dx * sinf(angle_rad) + dy * cosf(angle_rad);  
-  
-    // Rechazar objetos detrás de la cámara  
-    if (z_cam < 1.0f)  
-        return 0;  
-  
-    // Proyección en perspectiva  
-    float fov_scale = 240.0f / tanf(camera.fov * 0.5f * M_PI / 180.0f);  
-    int screen_x = (int)(160 + x_cam * fov_scale / z_cam);  // Centrado en 160 para 320px  
-    int screen_y = (int)(120 - (wz - camera.z) * fov_scale / z_cam); // Centrado en 120 para 240px  
-  
-    // Verificar límites de pantalla  
-    if (screen_x < -50 || screen_x > 370 || screen_y < -50 || screen_y > 290)  
-        return 0;  
-  
-    // Empaquetar: screen_x (16 bits) | screen_y (16 bits) | z_cam como float (32 bits)  
-    uint32_t z_as_uint = *(uint32_t*)&z_cam;  
-    return (int64_t)(((uint64_t)(uint16_t)screen_x << 48) |  
-                     ((uint64_t)(uint16_t)screen_y << 32) |  
-                     ((uint64_t)z_as_uint));  
+int64_t libmod_heightmap_project_billboard(INSTANCE *my, int64_t *params)    
+{    
+    int heightmap_id = params[0];    
+    float wx = *(float*)&params[1];  
+    float wy = *(float*)&params[2];    
+    float wz = *(float*)&params[3];    
+    
+    if (heightmap_id < 0 || heightmap_id >= MAX_HEIGHTMAPS)    
+        return 0;    
+    
+    float dx = wx - camera.x;    
+    float dy = wy - camera.y;    
+    
+    float angle_rad = -camera.angle * M_PI / 180.0f;    
+    float x_cam = dx * cosf(angle_rad) - dy * sinf(angle_rad);    
+    float z_cam = dx * sinf(angle_rad) + dy * cosf(angle_rad);    
+    
+    if (z_cam < 1.0f)    
+        return 0;    
+    
+    // CORREGIDO: Usar dimensiones dinámicas  
+    float half_width = current_render_width / 2.0f;  
+    float half_height = current_render_height / 2.0f;  
+      
+    float fov_scale = (current_render_height * 0.5f) / tanf(camera.fov * 0.5f * M_PI / 180.0f);    
+    int screen_x = (int)(half_width + x_cam * fov_scale / z_cam);  
+    int screen_y = (int)(half_height - (wz - camera.z) * fov_scale / z_cam);  
+    
+    // CORREGIDO: Límites dinámicos  
+    float margin = 50.0f;  
+    if (screen_x < -margin || screen_x > current_render_width + margin ||   
+        screen_y < -margin || screen_y > current_render_height + margin)    
+        return 0;    
+    
+    uint32_t z_as_uint = *(uint32_t*)&z_cam;    
+    return (int64_t)(((uint64_t)(uint16_t)screen_x << 48) |    
+                     ((uint64_t)(uint16_t)screen_y << 32) |    
+                     ((uint64_t)z_as_uint));    
 }
 
 
@@ -3057,5 +3062,32 @@ static void collect_visible_billboards_from_array(VOXEL_BILLBOARD *billboard_arr
         (*visible_count)++;  
     }  
 }
+
+int64_t libmod_heightmap_set_render_resolution(INSTANCE *my, int64_t *params) {  
+    int64_t width = params[0];  
+    int64_t height = params[1];  
+      
+    if (width < 160 || width > 1920) {  
+        fprintf(stderr, "Error: render_width debe estar entre 160 y 1920\n");  
+        return 0;  
+    }  
+      
+    if (height < 120 || height > 1080) {  
+        fprintf(stderr, "Error: render_height debe estar entre 120 y 1080\n");  
+        return 0;  
+    }  
+      
+    current_render_width = width;  
+    current_render_height = height;  
+      
+    // Forzar recreación del render_buffer en el próximo frame  
+    if (render_buffer) {  
+        bitmap_destroy(render_buffer);  
+        render_buffer = NULL;  
+    }  
+      
+    return 1;  
+}
+
 
 #include "libmod_heightmap_exports.h"
