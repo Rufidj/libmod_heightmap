@@ -24,6 +24,7 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC("HEIGHTMAP_LOAD", "S", TYPE_INT, libmod_heightmap_load),  
     FUNC("HEIGHTMAP_RENDER_3D", "III", TYPE_INT, libmod_heightmap_render_voxelspace),  
     FUNC("HEIGHTMAP_RENDER_3D_GPU", "III", TYPE_INT, libmod_heightmap_render_voxelspace_gpu),
+    FUNC("HEIGHTMAP_SET_RENDER_RESOLUTION", "II", TYPE_INT, libmod_heightmap_set_render_resolution), 
     FUNC("HEIGHTMAP_SET_CAMERA", "IIIIII", TYPE_INT, libmod_heightmap_set_camera),  
     FUNC("HEIGHTMAP_SET_LIGHT", "I", TYPE_INT, libmod_heightmap_set_light),  
     FUNC("HEIGHTMAP_SET_WATER_LEVEL", "I", TYPE_INT, libmod_heightmap_set_water_level),  
@@ -85,6 +86,10 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC("HEIGHTMAP_UPDATE_BILLBOARD_GRAPH", "II", TYPE_INT, libmod_heightmap_update_billboard_graph),
     FUNC( "HEIGHTMAP_UNREGISTER_BILLBOARD", "I", TYPE_INT, libmod_heightmap_unregister_billboard),    
     FUNC("HEIGHTMAP_SET_BILLBOARD_FOV", "I", TYPE_INT, libmod_heightmap_set_billboard_fov),  
+    
+    // Mapas por sectores
+    FUNC("HEIGHTMAP_LOAD_DMAP", "S", TYPE_INT, libmod_heightmap_load_dmap),  
+    FUNC("HEIGHTMAP_GET_MAP_TYPE", "I", TYPE_INT, libmod_heightmap_get_map_type),  
     FUNC(0, 0, 0, 0)};  
   
 #endif  
