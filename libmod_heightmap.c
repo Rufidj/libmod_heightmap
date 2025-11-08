@@ -1175,395 +1175,109 @@ for (int i = 0; i < visible_count; i++) {
 // ============================================================================  
   
 
-
-// Vertex shader    
-static const char* voxel_vertex_shader_source =        
-"#version 330 core\n"    
-"\n"    
-"in vec2 bgd_Vertex;\n"        
-"in vec2 bgd_TexCoord;\n"        
-"out vec2 v_uv;\n"        
-"\n"        
-"void main() {\n"        
-"    v_uv = bgd_Vertex * 0.5 + 0.5;\n"  // CAMBIO: Convertir de [-1,1] a [0,1]  
-"    gl_Position = vec4(bgd_Vertex, 0.0, 1.0);\n"        
-"}\n";  
- 
-static const char* voxel_fragment_shader_source =                  
-"#version 330 core\n"              
-"\n"                  
-"in vec2 v_uv;\n"                  
-"\n"                  
-"uniform sampler2D u_heightmap;\n"                  
-"uniform sampler2D u_texturemap;\n"                  
-"uniform sampler2D u_water_texture;\n"                  
-"uniform sampler2D u_wall_texture;\n"  // NUEVO  
-"uniform vec3 u_camera_pos;\n"                  
-"uniform float u_camera_angle;\n"                  
-"uniform float u_camera_pitch;\n"                  
-"uniform float u_fov;\n"                  
-"uniform float u_max_distance;\n"                  
-"uniform float u_water_level;\n"                  
-"uniform float u_water_time;\n"                  
-"uniform float u_wave_amplitude;\n"                  
-"uniform float u_light_intensity;\n"                  
-"uniform vec2 u_heightmap_size;\n"                  
-"uniform vec3 u_sky_color;\n"                  
-"uniform float u_current_distance;\n"            
-"uniform vec3 u_fog_color;\n"            
-"uniform float u_fog_intensity;\n"            
-"uniform vec2 u_chunk_min;\n"            
-"uniform vec2 u_chunk_max;\n"    
-"\n"    
-"uniform int u_map_type;\n"    
-"uniform int u_num_sectors;\n"    
-"uniform int u_num_walls;\n"    
-"\n"              
-"out vec4 FragColor;\n"              
-"\n"
-"// Funciones de ruido Simplex 2D\n"      
-"vec3 mod289(vec3 x) {\n"      
-"    return x - floor(x * (1.0 / 289.0)) * 289.0;\n"      
-"}\n"      
-"\n"      
-"vec2 mod289(vec2 x) {\n"      
-"    return x - floor(x * (1.0 / 289.0)) * 289.0;\n"      
-"}\n"      
-"\n"      
-"vec3 permute(vec3 x) {\n"      
-"    return mod289(((x*34.0)+1.0)*x);\n"      
-"}\n"      
-"\n"      
-"float snoise(vec2 v) {\n"      
-"    const vec4 C = vec4(0.211324865405187, 0.366025403784439,\n"      
-"                       -0.577350269189626, 0.024390243902439);\n"      
-"    vec2 i  = floor(v + dot(v, C.yy));\n"      
-"    vec2 x0 = v - i + dot(i, C.xx);\n"      
-"    vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);\n"      
-"    vec4 x12 = x0.xyxy + C.xxzz;\n"      
-"    x12.xy -= i1;\n"      
-"    i = mod289(i);\n"      
-"    vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));\n"      
-"    vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);\n"      
-"    m = m*m; m = m*m;\n"      
-"    vec3 x = 2.0 * fract(p * C.www) - 1.0;\n"      
-"    vec3 h = abs(x) - 0.5;\n"      
-"    vec3 ox = floor(x + 0.5);\n"      
-"    vec3 a0 = x - ox;\n"      
-"    m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);\n"      
-"    vec3 g;\n"      
-"    g.x  = a0.x  * x0.x  + h.x  * x0.y;\n"      
-"    g.yz = a0.yz * x12.xz + h.yz * x12.yw;\n"      
-"    return 130.0 * dot(m, g);\n"      
-"}\n"      
-"\n"
-"// Filtrado bilinear\n"      
-"vec4 texture_bilinear(sampler2D tex, vec2 uv, vec2 tex_size) {\n"          
-"    vec2 pixel_pos = uv * tex_size;\n"          
-"    vec2 pixel_floor = floor(pixel_pos - 0.5) + 0.5;\n"          
-"    vec2 frac = pixel_pos - pixel_floor;\n"          
-"    vec2 uv00 = pixel_floor / tex_size;\n"          
-"    vec2 uv10 = (pixel_floor + vec2(1.0, 0.0)) / tex_size;\n"          
-"    vec2 uv01 = (pixel_floor + vec2(0.0, 1.0)) / tex_size;\n"          
-"    vec2 uv11 = (pixel_floor + vec2(1.0, 1.0)) / tex_size;\n"          
-"    vec4 c00 = texture(tex, uv00);\n"          
-"    vec4 c10 = texture(tex, uv10);\n"          
-"    vec4 c01 = texture(tex, uv01);\n"          
-"    vec4 c11 = texture(tex, uv11);\n"          
-"    vec4 c0 = mix(c00, c10, frac.x);\n"          
-"    vec4 c1 = mix(c01, c11, frac.x);\n"          
-"    return mix(c0, c1, frac.y);\n"          
-"}\n"          
-"\n"
-"// Función principal del shader\n"    
-"void main() {\n"    
-"    // Detectar tipo de mapa y renderizar según corresponda\n"    
-"    if (u_map_type == 1) {\n"    
-"        // Renderizado estilo Doom para sectores\n"    
-"        float column_angle = u_camera_angle - u_fov * 0.5 + v_uv.x * u_fov;\n"    
-"        float cos_angle = cos(column_angle);\n"    
-"        float sin_angle = sin(column_angle);\n"    
-"        \n"    
-"        vec2 ray_dir = vec2(cos_angle, sin_angle);\n"    
-"        vec2 ray_pos = u_camera_pos.xy;\n"    
-"        \n"    
-"        float t_min = 999999.0;\n"    
-"        bool hit = false;\n"    
-"        \n"    
-"        // Pared norte (y = 200)\n"    
-"        if (ray_dir.y > 0.001) {\n"    
-"            float t = (200.0 - ray_pos.y) / ray_dir.y;\n"    
-"            if (t > 0.0 && t < t_min) {\n"    
-"                float hit_x = ray_pos.x + ray_dir.x * t;\n"    
-"                if (hit_x >= 0.0 && hit_x <= 200.0) {\n"    
-"                    t_min = t;\n"    
-"                    hit = true;\n"    
-"                }\n"    
-"            }\n"    
-"        }\n"    
-"        \n"    
-"        // Pared sur (y = 0)\n"    
-"        if (ray_dir.y < -0.001) {\n"    
-"            float t = -ray_pos.y / ray_dir.y;\n"    
-"            if (t > 0.0 && t < t_min) {\n"    
-"                float hit_x = ray_pos.x + ray_dir.x * t;\n"    
-"                if (hit_x >= 0.0 && hit_x <= 200.0) {\n"    
-"                    t_min = t;\n"    
-"                    hit = true;\n"    
-"                }\n"    
-"            }\n"    
-"        }\n"    
-"        \n"    
-"        // Pared este (x = 200)\n"    
-"        if (ray_dir.x > 0.001) {\n"    
-"            float t = (200.0 - ray_pos.x) / ray_dir.x;\n"    
-"            if (t > 0.0 && t < t_min) {\n"    
-"                float hit_y = ray_pos.y + ray_dir.y * t;\n"    
-"                if (hit_y >= 0.0 && hit_y <= 200.0) {\n"    
-"                    t_min = t;\n"    
-"                    hit = true;\n"    
-"                }\n"    
-"            }\n"    
-"        }\n"    
-"        \n"    
-"        // Pared oeste (x = 0)\n"    
-"        if (ray_dir.x < -0.001) {\n"    
-"            float t = -ray_pos.x / ray_dir.x;\n"    
-"            if (t > 0.0 && t < t_min) {\n"    
-"                float hit_y = ray_pos.y + ray_dir.y * t;\n"    
-"                if (hit_y >= 0.0 && hit_y <= 200.0) {\n"    
-"                    t_min = t;\n"    
-"                    hit = true;\n"    
-"                }\n"    
-"            }\n"    
-"        }\n"    
-"        \n"    
-"        if (hit) {\n"    
-"            float wall_height = 150.0;\n"    
-"            float floor_height = 0.0;\n"    
-"            \n"    
-"            float wall_top = 0.5 + ((u_camera_pos.z - wall_height) / t_min * 300.0 + u_camera_pitch * 40.0) / 240.0;\n"    
-"            float wall_bottom = 0.5 + ((u_camera_pos.z - floor_height) / t_min * 300.0 + u_camera_pitch * 40.0) / 240.0;\n"    
-"            \n"    
-"            if (v_uv.y >= wall_top && v_uv.y <= wall_bottom) {\n"  
-"                float hit_x = ray_pos.x + ray_dir.x * t_min;\n"  
-"                float hit_y = ray_pos.y + ray_dir.y * t_min;\n"  
-"                \n"  
-"                // Coordenada U: posición a lo largo de la pared\n"  
-"                float u_coord;\n"  
-"                if (abs(ray_dir.y) > abs(ray_dir.x)) {\n"  
-"                    u_coord = fract(hit_x / 200.0);\n"  
-"                } else {\n"  
-"                    u_coord = fract(hit_y / 200.0);\n"  
-"                }\n"  
-"                \n"  
-"                // Coordenada V: altura en la pared (CORREGIDO)\n"  
-"                float wall_height_range = wall_bottom - wall_top;\n"  
-"                float v_coord = clamp((v_uv.y - wall_top) / wall_height_range, 0.0, 1.0);\n"  
-"                \n"  
-"                // Samplear textura\n"  
-"                vec2 wall_tex_size = vec2(textureSize(u_wall_texture, 0));\n"  
-"                vec3 wall_color = texture_bilinear(u_wall_texture, vec2(u_coord, v_coord), wall_tex_size).rgb;\n"  
-"                \n"  
-"                // DEBUGGING: Si la textura es blanca, usar color de error\n"  
-"                if (length(wall_color - vec3(1.0)) < 0.01) {\n"  
-"                    wall_color = vec3(1.0, 0.0, 1.0);  // Magenta = error de textura\n"  
-"                }\n"  
-"                \n"  
-"                wall_color *= u_light_intensity;\n"  
-"                float fog = 1.0 - (t_min / u_max_distance);\n"  
-"                fog = clamp(fog, 0.3, 1.0);\n"  
-"                vec3 final_color = mix(u_sky_color, wall_color, fog);\n"  
-"                FragColor = vec4(final_color, 1.0);\n"
-"            } else if (v_uv.y > wall_bottom) {\n"    
-"                FragColor = vec4(0.3, 0.3, 0.3, 1.0);\n"    
-"            } else {\n"    
-"                FragColor = vec4(0.2, 0.2, 0.2, 1.0);\n"    
-"            }\n"    
-"        } else {\n"    
-"            FragColor = vec4(u_sky_color, 1.0);\n"    
-"        }\n"    
-"        \n"    
-"        return;\n"    
-"    }\n"  
-"\n"
-"    // Código existente para heightmaps (modo voxelspace)\n"    
-"    float column_angle = u_camera_angle - u_fov * 0.5 + v_uv.x * u_fov;\n"                  
-"    \n"                  
-"    float cos_angle = cos(column_angle);\n"                  
-"    float sin_angle = sin(column_angle);\n"                  
-"    \n"                  
-"    vec2 world_pos = u_camera_pos.xy + vec2(cos_angle, sin_angle) * u_current_distance;\n"                  
-"    \n"          
-"    // Verificar límites de chunks\n"    
-"    if (world_pos.x < u_chunk_min.x || world_pos.x > u_chunk_max.x ||\n"          
-"        world_pos.y < u_chunk_min.y || world_pos.y > u_chunk_max.y) {\n"          
-"        discard;\n"          
-"    }\n"          
-"    \n"          
-"    // Verificar límites del heightmap\n"    
-"    if (world_pos.x < 0.0 || world_pos.x >= u_heightmap_size.x ||\n"          
-"        world_pos.y < 0.0 || world_pos.y >= u_heightmap_size.y) {\n"          
-"        discard;\n"          
-"    }\n"          
-"    \n"          
-"    vec2 uv = world_pos / u_heightmap_size;\n"                  
-"    \n"                  
-"    float terrain_height = texture(u_heightmap, uv).r * 255.0;\n"                  
-"    \n"                  
-"    bool is_water = terrain_height < u_water_level;\n"                  
-"    \n"          
-"    float render_height;\n"          
-"    if (is_water) {\n"          
-"        // Calcular olas de agua usando simplex noise\n"    
-"        vec2 wave_coord = world_pos * 0.01 + vec2(u_water_time * 0.1, u_water_time * 0.05);\n"      
-"        \n"      
-"        float noise1 = snoise(wave_coord) * 0.5;\n"      
-"        float noise2 = snoise(wave_coord * 2.0) * 0.25;\n"      
-"        float noise3 = snoise(wave_coord * 4.0) * 0.125;\n"      
-"        \n"      
-"        float wave = (noise1 + noise2 + noise3) * u_wave_amplitude;\n"      
-"        float water_surface = u_water_level + wave;\n"        
-"        \n"        
-"        bool camera_underwater = u_camera_pos.z < u_water_level;\n"        
-"        \n"        
-"        if (camera_underwater) {\n"        
-"            render_height = terrain_height;\n"        
-"        } else {\n"        
-"            render_height = water_surface;\n"        
-"        }\n"        
-"    } else {\n"          
-"        render_height = terrain_height;\n"          
-"    }\n"          
-"    \n"  
-"    float height_diff = u_camera_pos.z - render_height;\n"                  
-"    float projected_y = height_diff / u_current_distance * 300.0;\n"                  
-"    projected_y += u_camera_pitch * 40.0;\n"                  
-"    \n"                  
-"    float screen_y = 0.5 + (projected_y / 240.0);\n"                  
-"    \n"                  
-"    if (v_uv.y >= screen_y) {\n"                  
-"        float fog = 1.0 - (u_current_distance / u_max_distance);\n"                  
-"        fog = clamp(fog, 0.3, 1.0);\n"                  
-"        \n"            
-"        float fog_factor = 0.0;\n"            
-"        if (u_fog_intensity > 0.0) {\n"      
-"            float distance_fog = 0.0;\n"      
-"            if (u_current_distance > u_max_distance * 0.3) {\n"      
-"                float fog_start = u_max_distance * 0.3;\n"      
-"                float fog_range = u_max_distance - fog_start;\n"      
-"                float fog_progress = (u_current_distance - fog_start) / fog_range;\n"      
-"                fog_progress = fog_progress * fog_progress;\n"      
-"                distance_fog = fog_progress * u_fog_intensity;\n"      
-"            }\n"      
-"            \n"      
-"            float height_fog = 0.0;\n"      
-"            if (render_height < 100.0) {\n"      
-"                height_fog = (1.0 - render_height / 100.0) * u_fog_intensity * 0.3;\n"      
-"            }\n"      
-"            \n"      
-"            fog_factor = max(distance_fog, height_fog);\n"      
-"            fog_factor = clamp(fog_factor, 0.0, 0.7);\n"      
-"        }\n"      
-"        \n"  
-"        if (is_water) {\n"          
-"            bool camera_underwater = u_camera_pos.z < u_water_level;\n"        
-"            \n"        
-"            if (camera_underwater) {\n"        
-"                vec2 terrain_tex_size = vec2(textureSize(u_texturemap, 0));\n"          
-"                vec3 terrain_color = texture_bilinear(u_texturemap, uv, terrain_tex_size).rgb;\n"          
-"                terrain_color *= u_light_intensity * 0.7;\n"      
-"                terrain_color.b *= 1.3;\n"        
-"                \n"        
-"                vec3 base_color = mix(u_sky_color, terrain_color, fog);\n"          
-"                if (fog_factor > 0.1) {\n"          
-"                    base_color = mix(base_color, u_fog_color, fog_factor);\n"          
-"                }\n"          
-"                FragColor = vec4(base_color, 1.0);\n"        
-"            } else {\n"        
-"                float water_depth = u_water_level - terrain_height;\n"          
-"                float water_surface_alpha = clamp(water_depth / 30.0, 0.4, 0.85);\n"          
-"                \n"          
-"                vec2 water_uv = mod(world_pos * 0.01 + vec2(u_water_time * 0.1, u_water_time * 0.05), 1.0);\n"          
-"                vec2 water_tex_size = vec2(textureSize(u_water_texture, 0));\n"          
-"                vec4 water_sample = texture_bilinear(u_water_texture, water_uv, water_tex_size);\n"          
-"                \n"          
-"                vec2 terrain_tex_size = vec2(textureSize(u_texturemap, 0));\n"          
-"                vec3 terrain_color = texture_bilinear(u_texturemap, uv, terrain_tex_size).rgb;\n"          
-"                terrain_color *= u_light_intensity;\n"      
-"                \n"          
-"                vec3 view_dir = normalize(vec3(world_pos.x - u_camera_pos.x, world_pos.y - u_camera_pos.y, -1.0));\n"      
-"                vec3 water_normal = vec3(0.0, 0.0, 1.0);\n"      
-"                vec3 reflect_dir = reflect(view_dir, water_normal);\n"      
-"                \n"      
-"                float fresnel = pow(1.0 - max(dot(-view_dir, water_normal), 0.0), 3.0);\n"      
-"                vec3 reflection_color = u_sky_color;\n"      
-"                \n"          
-"                vec3 water_color = mix(terrain_color, water_sample.rgb, water_surface_alpha);\n"          
-"                water_color = mix(water_color, reflection_color, fresnel * 0.3);\n"      
-"                \n"      
-"                vec3 base_color = mix(u_sky_color, water_color, fog);\n"          
-"                if (fog_factor > 0.1) {\n"          
-"                    base_color = mix(base_color, u_fog_color, fog_factor);\n"          
-"                }\n"          
-"                FragColor = vec4(base_color, 1.0);\n"        
-"            }\n"        
-"        } else {\n"                  
-"            vec2 terrain_tex_size = vec2(textureSize(u_texturemap, 0));\n"          
-"            vec3 terrain_color = texture_bilinear(u_texturemap, uv, terrain_tex_size).rgb;\n"          
-"            terrain_color *= u_light_intensity;\n"            
-"            vec3 base_color = mix(u_sky_color, terrain_color, fog);\n"            
-"            if (fog_factor > 0.1) {\n"            
-"                base_color = mix(base_color, u_fog_color, fog_factor);\n"            
-"            }\n"            
-"            FragColor = vec4(base_color, 1.0);\n"                  
-"        }\n"                  
-"    } else {\n"                  
-"        discard;\n"                  
-"    }\n"                  
-"}\n";
-
+// Función auxiliar para cargar shader desde archivo  
+static char* load_shader_from_file(const char* filename) {  
+      // Agregar debug para ver la ruta completa  
+    char cwd[1024];  
+    getcwd(cwd, sizeof(cwd));  
+    fprintf(stderr, "DEBUG: Directorio actual: %s\n", cwd);  
+    fprintf(stderr, "DEBUG: Intentando abrir: %s\n", filename); 
+    FILE* file = fopen(filename, "rb");  
+    if (!file) {  
+        fprintf(stderr, "ERROR: No se pudo abrir archivo de shader: %s\n", filename);  
+        return NULL;  
+    }  
+      
+    // Obtener tamaño del archivo  
+    fseek(file, 0, SEEK_END);  
+    long size = ftell(file);  
+    fseek(file, 0, SEEK_SET);  
+      
+    // Asignar memoria para el contenido  
+    char* content = (char*)malloc(size + 1);  
+    if (!content) {  
+        fprintf(stderr, "ERROR: No se pudo asignar memoria para shader\n");  
+        fclose(file);  
+        return NULL;  
+    }  
+      
+    // Leer contenido  
+    size_t read_size = fread(content, 1, size, file);  
+    content[read_size] = '\0';  
+      
+    fclose(file);  
+    return content;  
+}  
+  
 static int create_voxelspace_shader() {  
     if (voxel_shader) return 1;  
       
-    voxel_shader = shader_create(  
-        (char*)voxel_vertex_shader_source,  
-        (char*)voxel_fragment_shader_source  
-    );  
+    // Cargar shaders desde archivos  
+    char* vertex_source = load_shader_from_file("vsms.vert");  
+    char* fragment_source = load_shader_from_file("vsms.frag");  
+      
+    if (!vertex_source || !fragment_source) {  
+        fprintf(stderr, "ERROR: No se pudieron cargar archivos de shader\n");  
+        if (vertex_source) free(vertex_source);  
+        if (fragment_source) free(fragment_source);  
+        return 0;  
+    }  
+      
+    // Crear shader con el código cargado  
+    voxel_shader = shader_create(vertex_source, fragment_source);  
+      
+    // Liberar memoria de las cadenas cargadas  
+    free(vertex_source);  
+    free(fragment_source);  
       
     if (!voxel_shader) {  
         fprintf(stderr, "ERROR: No se pudo crear shader de voxelspace\n");  
         return 0;  
     }  
       
-    fprintf(stderr, "Shader de voxelspace creado exitosamente\n");  
-     // AÑADIR AQUÍ - Crear parámetros del shader  
+    fprintf(stderr, "Shader de voxelspace creado exitosamente desde archivos\n");  
+      
+    // Crear parámetros del shader  
     if (!voxel_params) {  
-        voxel_params = shader_create_parameters(25); // 14 uniforms  
+        voxel_params = shader_create_parameters(25); // 25 uniforms para todos los parámetros  
         if (!voxel_params) {  
             fprintf(stderr, "ERROR: No se pudo crear parámetros del shader\n");  
             return 0;  
         }  
         fprintf(stderr, "Parámetros del shader creados exitosamente\n");  
     }  
-
-     // AÑADIR AQUÍ - Verificar ubicaciones de uniforms  
+      
+    // Verificar ubicaciones de uniforms críticos  
     int loc_heightmap = shader_getuniformlocation(voxel_shader, "u_heightmap");  
     int loc_texturemap = shader_getuniformlocation(voxel_shader, "u_texturemap");  
     int loc_camera_pos = shader_getuniformlocation(voxel_shader, "u_camera_pos");  
     int loc_current_distance = shader_getuniformlocation(voxel_shader, "u_current_distance");  
+      
+    // Verificar uniforms para mapas de sectores  
+    int loc_wall_texture = shader_getuniformlocation(voxel_shader, "u_wall_texture");  
+    int loc_floor_texture = shader_getuniformlocation(voxel_shader, "u_floor_texture");  
+    int loc_ceiling_texture = shader_getuniformlocation(voxel_shader, "u_ceiling_texture");  
+    int loc_has_ceiling = shader_getuniformlocation(voxel_shader, "u_has_ceiling");  
+    int loc_map_bounds_min = shader_getuniformlocation(voxel_shader, "u_map_bounds_min");  
+    int loc_map_bounds_max = shader_getuniformlocation(voxel_shader, "u_map_bounds_max");  
       
     fprintf(stderr, "Uniform locations:\n");  
     fprintf(stderr, "  u_heightmap: %d\n", loc_heightmap);  
     fprintf(stderr, "  u_texturemap: %d\n", loc_texturemap);  
     fprintf(stderr, "  u_camera_pos: %d\n", loc_camera_pos);  
     fprintf(stderr, "  u_current_distance: %d\n", loc_current_distance);  
+    fprintf(stderr, "  u_wall_texture: %d\n", loc_wall_texture);  
+    fprintf(stderr, "  u_floor_texture: %d\n", loc_floor_texture);  
+    fprintf(stderr, "  u_ceiling_texture: %d\n", loc_ceiling_texture);  
+    fprintf(stderr, "  u_has_ceiling: %d\n", loc_has_ceiling);  
+    fprintf(stderr, "  u_map_bounds_min: %d\n", loc_map_bounds_min);  
+    fprintf(stderr, "  u_map_bounds_max: %d\n", loc_map_bounds_max);  
       
     if (loc_heightmap < 0 || loc_texturemap < 0) {  
         fprintf(stderr, "WARNING: Algunos uniforms críticos no se encontraron\n");  
     }  
+      
     return 1;  
-
 }
 
 static int setup_shader_parameters(HEIGHTMAP *hm) {  
@@ -1773,7 +1487,13 @@ int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {
     static int loc_sector_textures = -1;  
     // Añadir después de la línea 1758 (declaración de uniforms)  
     static int loc_wall_texture = -1;               
-    static int locations_initialized = 0;              
+    static int locations_initialized = 0;    
+    static int loc_map_bounds_min = -1;  
+    static int loc_map_bounds_max = -1;   
+    static int loc_floor_texture = -1;  
+    static int loc_ceiling_texture = -1;  
+    static int loc_has_ceiling = -1; 
+
     if (!locations_initialized) {              
         loc_heightmap = shader_getuniformlocation(voxel_shader, "u_heightmap");                
         loc_texturemap = shader_getuniformlocation(voxel_shader, "u_texturemap");                
@@ -1803,6 +1523,11 @@ int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {
         loc_num_sectors = shader_getuniformlocation(voxel_shader, "u_num_sectors");  
         loc_num_walls = shader_getuniformlocation(voxel_shader, "u_num_walls");  
         loc_sector_textures = shader_getuniformlocation(voxel_shader, "u_sector_textures");  
+        loc_map_bounds_min = shader_getuniformlocation(voxel_shader, "u_map_bounds_min");  
+        loc_map_bounds_max = shader_getuniformlocation(voxel_shader, "u_map_bounds_max");
+        loc_floor_texture = shader_getuniformlocation(voxel_shader, "u_floor_texture");  
+        loc_ceiling_texture = shader_getuniformlocation(voxel_shader, "u_ceiling_texture");  
+        loc_has_ceiling = shader_getuniformlocation(voxel_shader, "u_has_ceiling");
           
         locations_initialized = 1;              
     }              
@@ -1834,17 +1559,42 @@ if (hm->type == MAP_TYPE_HEIGHTMAP) {
     }        
 
     // Configurar textura de pared para mapas de sectores  
-if (hm->type == MAP_TYPE_SECTOR && loc_wall_texture >= 0) {  
-    if (hm->num_textures > 0 && hm->textures[0].graph_id > 0) {  
-        GRAPH *wall_tex = bitmap_get(0, hm->textures[0].graph_id);  
-        if (wall_tex) {  
-            shader_set_param(voxel_params, SHADER_IMAGE, loc_wall_texture, 3,  
-                            (void*)wall_tex, 0, 0, 0, 0, 0);  
-        } else {  
-            fprintf(stderr, "ERROR: No se pudo obtener GRAPH de textura de pared\n");  
+// Configurar texturas para mapas de sectores  
+if (hm->type == MAP_TYPE_SECTOR && hm->num_sectors > 0) {  
+    // Textura de pared (slot 3)  
+    if (loc_wall_texture >= 0 && hm->num_textures > 0) {  
+        uint32_t wall_tex_id = hm->sectors[0].wall_texture_id;  
+        if (wall_tex_id < hm->num_textures && hm->textures[wall_tex_id].graph_id > 0) {  
+            GRAPH *wall_tex = bitmap_get(0, hm->textures[wall_tex_id].graph_id);  
+            if (wall_tex) {  
+              shader_set_param(voxel_params, SHADER_IMAGE, loc_wall_texture, 3,  
+                (void*)wall_tex, 4, 0, 0, 0, 0);  
+            }  
         }  
-    } else {  
-        fprintf(stderr, "ERROR: No hay texturas cargadas en el mapa de sectores\n");  
+    }  
+      
+    // Textura de suelo (slot 4)  
+    if (loc_floor_texture >= 0 && hm->num_textures > 0) {  
+        uint32_t floor_tex_id = hm->sectors[0].floor_texture_id;  
+        if (floor_tex_id < hm->num_textures && hm->textures[floor_tex_id].graph_id > 0) {  
+            GRAPH *floor_tex = bitmap_get(0, hm->textures[floor_tex_id].graph_id);  
+            if (floor_tex) {  
+               shader_set_param(voxel_params, SHADER_IMAGE, loc_floor_texture, 4,  
+                (void*)floor_tex, 3, 0, 0, 0, 0);  
+            }  
+        }  
+    }  
+      
+    // Textura de techo (slot 5)  
+    if (loc_ceiling_texture >= 0 && hm->num_textures > 0) {  
+        uint32_t ceiling_tex_id = hm->sectors[0].ceiling_texture_id;  
+        if (ceiling_tex_id < hm->num_textures && hm->textures[ceiling_tex_id].graph_id > 0) {  
+            GRAPH *ceiling_tex = bitmap_get(0, hm->textures[ceiling_tex_id].graph_id);  
+            if (ceiling_tex) {  
+               shader_set_param(voxel_params, SHADER_IMAGE, loc_ceiling_texture, 5,  
+                (void*)ceiling_tex, 5, 0, 0, 0, 0);
+            }  
+        }  
     }  
 }
                     
@@ -1919,7 +1669,13 @@ if (hm->type == MAP_TYPE_SECTOR && loc_wall_texture >= 0) {
     if (loc_fog_intensity >= 0) {        
         shader_set_param(voxel_params, UNIFORM_FLOAT, loc_fog_intensity, 0,        
                         *(int32_t*)&fog_intensity, 0, 0, 0, 0, 0);        
-    }      
+    }    
+    
+    if (loc_has_ceiling >= 0 && hm->num_sectors > 0) {  
+        float has_ceiling = 1.0f;  // 1.0 = con techo, 0.0 = sin techo (cielo)  
+        shader_set_param(voxel_params, UNIFORM_FLOAT, loc_has_ceiling, 0,  
+                        *(int32_t*)&has_ceiling, 0, 0, 0, 0, 0);  
+}
           
     if (loc_water_time >= 0) {      
         shader_set_param(voxel_params, UNIFORM_FLOAT, loc_water_time, 0,      
@@ -1951,6 +1707,26 @@ if (hm->type == MAP_TYPE_SECTOR && loc_wall_texture >= 0) {
         shader_set_param(voxel_params, UNIFORM_FLOAT2_ARRAY, loc_chunk_max, 1,      
                         (void*)chunk_max, 0, 0, 0, 0, 0);      
     }  
+
+    // Configurar límites del mapa para sectores  
+    if (hm->type == MAP_TYPE_SECTOR) {  
+        static float map_bounds_min[2];  
+        static float map_bounds_max[2];  
+        
+        if (loc_map_bounds_min >= 0) {  
+            map_bounds_min[0] = hm->map_min_x;  
+            map_bounds_min[1] = hm->map_min_y;  
+            shader_set_param(voxel_params, UNIFORM_FLOAT2_ARRAY, loc_map_bounds_min, 1,  
+                            (void*)map_bounds_min, 0, 0, 0, 0, 0);  
+        }  
+        
+        if (loc_map_bounds_max >= 0) {  
+            map_bounds_max[0] = hm->map_max_x;  
+            map_bounds_max[1] = hm->map_max_y;  
+            shader_set_param(voxel_params, UNIFORM_FLOAT2_ARRAY, loc_map_bounds_max, 1,  
+                            (void*)map_bounds_max, 0, 0, 0, 0, 0);  
+        }  
+    }
       
     // NUEVO: Configurar uniforms específicos para mapas de sectores  
     if (loc_map_type >= 0) {  
@@ -3666,7 +3442,27 @@ fprintf(stderr, "================================\n");
         map->walls[i].x2 = dmap_wall.x2;  
         map->walls[i].y2 = dmap_wall.y2;  
     }  
-      
+        // Calcular límites del mapa basándose en los vértices de todos los sectores  
+        map->map_min_x = INFINITY;  
+        map->map_min_y = INFINITY;  
+        map->map_max_x = -INFINITY;  
+        map->map_max_y = -INFINITY;  
+  
+    for (uint32_t i = 0; i < map->num_sectors; i++) {  
+        SECTOR *sector = &map->sectors[i];  
+        for (uint32_t v = 0; v < sector->num_vertices; v++) {  
+            float x = sector->vertices[v * 2];  
+            float y = sector->vertices[v * 2 + 1];  
+            
+            if (x < map->map_min_x) map->map_min_x = x;  
+            if (y < map->map_min_y) map->map_min_y = y;  
+            if (x > map->map_max_x) map->map_max_x = x;  
+            if (y > map->map_max_y) map->map_max_y = y;  
+        }  
+    }  
+  
+printf("Límites del mapa calculados: (%.2f, %.2f) a (%.2f, %.2f)\n",  
+       map->map_min_x, map->map_min_y, map->map_max_x, map->map_max_y);  
     fclose(file);  
     string_discard(params[0]);  
       
