@@ -90,6 +90,7 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     // Mapas por sectores
     FUNC("HEIGHTMAP_LOAD_DMAP", "S", TYPE_INT, libmod_heightmap_load_dmap),  
     FUNC("HEIGHTMAP_GET_MAP_TYPE", "I", TYPE_INT, libmod_heightmap_get_map_type),  
+    FUNC("HEIGHTMAP_RENDER_SECTOR_GPU", "III", TYPE_INT, libmod_heightmap_render_sector_gpu),
     FUNC(0, 0, 0, 0)};  
   
 #endif  

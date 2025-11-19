@@ -105,6 +105,8 @@ static Uint8 cached_fog_r = 0, cached_fog_g = 0, cached_fog_b = 0;
 // Variables para el sistema de shaders de BennuGD2  
 static BGD_SHADER *voxel_shader = NULL;  
 static BGD_SHADER_PARAMETERS *voxel_params = NULL;  
+static BGD_SHADER *sector_shader = NULL;  
+static BGD_SHADER_PARAMETERS *sector_params = NULL;
 static GRAPH *render_buffer = NULL;
 
 #define BILLBOARD_TYPE_STATIC     0  
@@ -210,6 +212,16 @@ static void cleanup_gpu_resources(void) {
         shader_free_parameters(voxel_params);  
         voxel_params = NULL;  
     }  
+
+    if (sector_shader) {  
+    shader_free(sector_shader);  
+    sector_shader = NULL;  
+    }  
+  
+    if (sector_params) {  
+    shader_free_parameters(sector_params);  
+    sector_params = NULL;  
+    }   
       
 }
 void libmod_heightmap_destroy_render_buffer() {  
@@ -1508,6 +1520,244 @@ static const char* voxel_fragment_shader_source =
 "    }\n"                
 "}\n";
 
+// ------------------------------------------------------------------- //
+//                    VERTEX Y SHADERS  MAP SECTORS                    //
+// ------------------------------------------------------------------- //
+
+
+static const char* sector_vertex_shader_source =  
+"#version 330 core\n"  
+"\n"  
+"in vec2 bgd_Vertex;\n"  
+"out vec2 v_uv;\n"  
+"\n"  
+"void main() {\n"  
+"    v_uv = bgd_Vertex * 0.5 + 0.5;\n"  
+"    gl_Position = vec4(bgd_Vertex, 0.0, 1.0);\n"  
+"}\n";
+
+static const char* sector_fragment_shader_source =  
+"#version 330 core\n"  
+"\n"  
+"in vec2 v_uv;\n"  
+"\n"  
+"uniform sampler2D u_wall_texture;\n"  
+"uniform sampler2D u_floor_texture;\n"  
+"uniform sampler2D u_ceiling_texture;\n"  
+"uniform float u_has_ceiling;\n"  
+"uniform vec3 u_camera_pos;\n"  
+"uniform float u_camera_angle;\n"  
+"uniform float u_camera_pitch;\n"  
+"uniform float u_fov;\n"  
+"uniform float u_max_distance;\n"  
+"uniform float u_light_intensity;\n"  
+"uniform vec3 u_sky_color;\n"  
+"uniform vec2 u_map_bounds_min;\n"  
+"uniform vec2 u_map_bounds_max;\n"  
+"\n"  
+"out vec4 FragColor;\n"  
+"\n"  
+"vec4 texture_bilinear(sampler2D tex, vec2 uv, vec2 ts) {\n"  
+"    vec2 p = uv * ts;\n"  
+"    vec2 pf = floor(p - 0.5) + 0.5;\n"  
+"    vec2 f = p - pf;\n"  
+"    vec2 uv00 = pf / ts;\n"  
+"    vec2 uv10 = (pf + vec2(1,0)) / ts;\n"  
+"    vec2 uv01 = (pf + vec2(0,1)) / ts;\n"  
+"    vec2 uv11 = (pf + vec2(1,1)) / ts;\n"  
+"    vec4 c00 = texture(tex, uv00);\n"  
+"    vec4 c10 = texture(tex, uv10);\n"  
+"    vec4 c01 = texture(tex, uv01);\n"  
+"    vec4 c11 = texture(tex, uv11);\n"  
+"    return mix(mix(c00,c10,f.x), mix(c01,c11,f.x), f.y);\n"  
+"}\n"  
+"\n"  
+"void main() {\n"  
+"    float ang = u_camera_angle - u_fov*0.5 + v_uv.x*u_fov;\n"  
+"    float cx = cos(ang);\n"  
+"    float sy = sin(ang);\n"  
+"    vec2 rd = vec2(cx, sy);\n"  
+"    vec2 rp = u_camera_pos.xy;\n"  
+"\n"  
+"    float tmin = 999999.0;\n"  
+"    bool hit = false;\n"  
+"\n"  
+"    if(rd.y > 0.001) {\n"  
+"        float t = (u_map_bounds_max.y - rp.y) / rd.y;\n"  
+"        if(t > 0.0 && t < tmin) {\n"  
+"            float hx = rp.x + rd.x * t;\n"  
+"            if(hx >= u_map_bounds_min.x && hx <= u_map_bounds_max.x) {\n"  
+"                tmin = t;\n"  
+"                hit = true;\n"  
+"            }\n"  
+"        }\n"  
+"    }\n"  
+"\n"  
+"    if(rd.y < -0.001) {\n"  
+"        float t = (u_map_bounds_min.y - rp.y) / rd.y;\n"  
+"        if(t > 0.0 && t < tmin) {\n"  
+"            float hx = rp.x + rd.x * t;\n"  
+"            if(hx >= u_map_bounds_min.x && hx <= u_map_bounds_max.x) {\n"  
+"                tmin = t;\n"  
+"                hit = true;\n"  
+"            }\n"  
+"        }\n"  
+"    }\n"  
+"\n"  
+"    if(rd.x > 0.001) {\n"  
+"        float t = (u_map_bounds_max.x - rp.x) / rd.x;\n"  
+"        if(t > 0.0 && t < tmin) {\n"  
+"            float hy = rp.y + rd.y * t;\n"  
+"            if(hy >= u_map_bounds_min.y && hy <= u_map_bounds_max.y) {\n"  
+"                tmin = t;\n"  
+"                hit = true;\n"  
+"            }\n"  
+"        }\n"  
+"    }\n"  
+"\n"  
+"    if(rd.x < -0.001) {\n"  
+"        float t = (u_map_bounds_min.x - rp.x) / rd.x;\n"  
+"        if(t > 0.0 && t < tmin) {\n"  
+"            float hy = rp.y + rd.y * t;\n"  
+"            if(hy >= u_map_bounds_min.y && hy <= u_map_bounds_max.y) {\n"  
+"                tmin = t;\n"  
+"                hit = true;\n"  
+"            }\n"  
+"        }\n"  
+"    }\n"  
+"\n"  
+"    if(hit) {\n"  
+"        float wh = 150.0;\n"  
+"        float fh = 0.0;\n"  
+"\n"  
+"        float wt = 0.5 + ((u_camera_pos.z - wh) / tmin * 300.0 + u_camera_pitch * 40.0) / 240.0;\n"  
+"        float wb = 0.5 + ((u_camera_pos.z - fh) / tmin * 300.0 + u_camera_pitch * 40.0) / 240.0;\n"  
+"\n"  
+"        float eps = 0.002;\n"  
+"\n"  
+"        if(v_uv.y >= wt - eps && v_uv.y <= wb + eps) {\n"  
+"            float hx = rp.x + rd.x * tmin;\n"  
+"            float hy = rp.y + rd.y * tmin;\n"  
+"\n"  
+"            float ucoord;\n"  
+"            if(abs(rd.y) > abs(rd.x))\n"  
+"                ucoord = fract((hx - u_map_bounds_min.x) / (u_map_bounds_max.x - u_map_bounds_min.x));\n"  
+"            else\n"  
+"                ucoord = fract((hy - u_map_bounds_min.y) / (u_map_bounds_max.y - u_map_bounds_min.y));\n"  
+"\n"  
+"            float r = wb - wt;\n"  
+"            float vcoord = clamp((v_uv.y - wt) / r, 0.0, 1.0);\n"  
+"\n"  
+"            vec2 ts = vec2(textureSize(u_wall_texture, 0));\n"  
+"            vec3 col = texture_bilinear(u_wall_texture, vec2(ucoord, vcoord), ts).rgb;\n"  
+"            col *= u_light_intensity;\n"  
+"\n"  
+"            float fog = clamp(1.0 - tmin / u_max_distance, 0.3, 1.0);\n"  
+"            vec3 fc = mix(u_sky_color, col, fog);\n"  
+"\n"  
+"            FragColor = vec4(fc, 1.0);\n"  
+"            return;\n"  
+"        }\n"  
+"\n"  
+"        else if(v_uv.y > wb - eps) {\n"  
+"            float sh = 0.0;\n"  
+"            float sy_coord = (v_uv.y - 0.5) * 2.0;\n"  
+"            float vf = u_fov * 0.75;\n"  
+"            float th = tan(vf * 0.5);\n"  
+"            float rpo = atan(sy_coord * th);\n"  
+"            float rpz = u_camera_pitch + rpo;\n"  
+"            float sp = sin(rpz);\n"  
+"\n"  
+"            if(abs(sp) > 0.001) {\n"  
+"                float hd = u_camera_pos.z - sh;\n"  
+"                float tf = hd / sp;\n"  
+"                if(tf > 0.0) {\n"  
+"                    vec2 hit_pos = u_camera_pos.xy + rd * tf;\n"  
+"                    vec2 uv = fract(hit_pos / 100.0);\n"  
+"                    vec2 ts = vec2(textureSize(u_floor_texture, 0));\n"  
+"                    vec3 col = texture_bilinear(u_floor_texture, uv, ts).rgb * u_light_intensity;\n"  
+"\n"  
+"                    float fog = clamp(1.0 - tf / u_max_distance, 0.3, 1.0);\n"  
+"\n"  
+"                    FragColor = vec4(mix(u_sky_color, col, fog), 1.0);\n"  
+"                    return;\n"  
+"                }\n"  
+"            }\n"  
+"\n"  
+"            FragColor = vec4(u_sky_color, 1.0);\n"  
+"            return;\n"  
+"        }\n"  
+"\n"  
+"        else if(v_uv.y < wt + eps) {\n"  
+"            if(u_has_ceiling > 0.5) {\n"  
+"                float ch = 150.0;\n"  
+"                float sy_coord = (v_uv.y - 0.5) * 2.0;\n"  
+"                float vf = u_fov * 0.75;\n"  
+"                float th = tan(vf * 0.5);\n"  
+"                float rpo = atan(sy_coord * th);\n"  
+"                float rpz = u_camera_pitch + rpo;\n"  
+"                float sp = sin(rpz);\n"  
+"\n"  
+"                if(abs(sp) > 0.001) {\n"  
+"                    float hd = u_camera_pos.z - ch;\n"  
+"                    float tc = hd / sp;\n"  
+"                    if(tc > 0.0) {\n"  
+"                        vec2 hit_pos = u_camera_pos.xy + rd * tc;\n"  
+"                        vec2 uv = fract(hit_pos / 100.0);\n"  
+"                        vec2 ts = vec2(textureSize(u_ceiling_texture, 0));\n"  
+"                        vec3 col = texture_bilinear(u_ceiling_texture, uv, ts).rgb * u_light_intensity;\n"  
+"\n"  
+"                        float fog = clamp(1.0 - tc / u_max_distance, 0.3, 1.0);\n"  
+"\n"  
+"                        FragColor = vec4(mix(u_sky_color, col, fog), 1.0);\n"  
+"                        return;\n"  
+"                    }\n"  
+"                }\n"  
+"\n"  
+"                FragColor = vec4(u_sky_color, 1.0);\n"  
+"                return;\n"  
+"            }\n"  
+"\n"  
+"            FragColor = vec4(u_sky_color, 1.0);\n"  
+"            return;\n"  
+"        }\n"  
+"\n"  
+"        FragColor = vec4(0.5, 0.5, 0.5, 1.0);\n"  
+"        return;\n"  
+"    }\n"  
+"\n"  
+"    FragColor = vec4(u_sky_color, 1.0);\n"  
+"}\n";
+
+//-------------------------------------------------------------------------------------------------//
+
+static int create_sector_shader() {  
+    if (sector_shader) return 1;  
+      
+    sector_shader = shader_create(  
+        (char*)sector_vertex_shader_source,  
+        (char*)sector_fragment_shader_source  
+    );  
+      
+    if (!sector_shader) {  
+        fprintf(stderr, "ERROR: No se pudo crear shader de sectores\n");  
+        return 0;  
+    }  
+      
+    fprintf(stderr, "Shader de sectores creado exitosamente\n");  
+      
+    if (!sector_params) {  
+        sector_params = shader_create_parameters(15);  
+        if (!sector_params) {  
+            fprintf(stderr, "ERROR: No se pudo crear parámetros del shader de sectores\n");  
+            return 0;  
+        }  
+        fprintf(stderr, "Parámetros del shader de sectores creados exitosamente\n");  
+    }  
+      
+    return 1;  
+}
+
 static int create_voxelspace_shader() {  
     if (voxel_shader) return 1;  
       
@@ -1672,17 +1922,6 @@ int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {
         return 0;                
     }  
       
-    // NUEVO: Detectar tipo de mapa y manejar sectores  
-    if (hm->type == MAP_TYPE_SECTOR) {  
-        // Renderizar sectores usando el mismo shader con adaptaciones  
-        fprintf(stderr, "INFO: Renderizando mapa de sectores (modo Doom)\n");  
-    } else {  
-        // Modo heightmap tradicional - validar cache  
-        if (!hm->cache_valid) {                
-            fprintf(stderr, "ERROR: Cache inválido\n");                
-            return 0;                
-        }  
-    }  
                     
     if (!create_voxelspace_shader()) {                
         return 0;                
@@ -1749,13 +1988,6 @@ int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {
     static int loc_chunk_min = -1;      
     static int loc_chunk_max = -1;  
       
-    // NUEVO: Uniforms para mapas de sectores  
-    static int loc_map_type = -1;  
-    static int loc_sector_map = -1;  
-    static int loc_wall_map = -1;  
-    static int loc_num_sectors = -1;  
-    static int loc_num_walls = -1;  
-    static int loc_sector_textures = -1;  
                   
     static int locations_initialized = 0;              
     if (!locations_initialized) {              
@@ -1778,15 +2010,7 @@ int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {
         loc_wave_amplitude = shader_getuniformlocation(voxel_shader, "u_wave_amplitude");        
         loc_chunk_min = shader_getuniformlocation(voxel_shader, "u_chunk_min");      
         loc_chunk_max = shader_getuniformlocation(voxel_shader, "u_chunk_max");  
-          
-        // NUEVO: Obtener ubicaciones de uniforms para sectores  
-        loc_map_type = shader_getuniformlocation(voxel_shader, "u_map_type");  
-        loc_sector_map = shader_getuniformlocation(voxel_shader, "u_sector_map");  
-        loc_wall_map = shader_getuniformlocation(voxel_shader, "u_wall_map");  
-        loc_num_sectors = shader_getuniformlocation(voxel_shader, "u_num_sectors");  
-        loc_num_walls = shader_getuniformlocation(voxel_shader, "u_num_walls");  
-        loc_sector_textures = shader_getuniformlocation(voxel_shader, "u_sector_textures");  
-          
+                 
         locations_initialized = 1;              
     }              
                   
@@ -1797,19 +2021,16 @@ int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params) {
     static float chunk_min[2];      
     static float chunk_max[2];
 
-   // Por:  
-if (hm->type == MAP_TYPE_HEIGHTMAP) {  
-    // Solo configurar heightmap/texturemap para mapas de terreno  
-    if (loc_heightmap >= 0 && hm->heightmap) {                
-        shader_set_param(voxel_params, SHADER_IMAGE, loc_heightmap, 0,                
-                        (void*)hm->heightmap, 0, 0, 0, 0, 0);                
-    }                
-                    
-    if (loc_texturemap >= 0 && hm->texturemap) {                
-        shader_set_param(voxel_params, SHADER_IMAGE, loc_texturemap, 0,                
-                        (void*)hm->texturemap, 1, 0, 0, 0, 0);              
+    // Configurar texturas del heightmap (sin condicionales)  
+    if (loc_heightmap >= 0 && hm->heightmap) {  
+        shader_set_param(voxel_params, SHADER_IMAGE, loc_heightmap, 0,  
+                        (void*)hm->heightmap, 0, 0, 0, 0, 0);  
     }  
-}
+    
+    if (loc_texturemap >= 0 && hm->texturemap) {  
+        shader_set_param(voxel_params, SHADER_IMAGE, loc_texturemap, 0,  
+                        (void*)hm->texturemap, 1, 0, 0, 0, 0);  
+    }
             
     if (loc_water_texture >= 0 && water_texture) {        
         shader_set_param(voxel_params, SHADER_IMAGE, loc_water_texture, 0,        
@@ -1918,30 +2139,7 @@ if (hm->type == MAP_TYPE_HEIGHTMAP) {
         chunk_max[1] = (float)(max_chunk_y * chunk_size);      
         shader_set_param(voxel_params, UNIFORM_FLOAT2_ARRAY, loc_chunk_max, 1,      
                         (void*)chunk_max, 0, 0, 0, 0, 0);      
-    }  
-      
-    // NUEVO: Configurar uniforms específicos para mapas de sectores  
-    if (loc_map_type >= 0) {  
-        int map_type_val = (int)hm->type;  
-        shader_set_param(voxel_params, UNIFORM_INT, loc_map_type, 0,  
-                        map_type_val, 0, 0, 0, 0, 0);  
-    }  
-      
-    if (hm->type == MAP_TYPE_SECTOR) {  
-        // Configurar número de sectores y paredes  
-        if (loc_num_sectors >= 0) {  
-            shader_set_param(voxel_params, UNIFORM_INT, loc_num_sectors, 0,  
-                            hm->num_sectors, 0, 0, 0, 0, 0);  
-        }  
-          
-        if (loc_num_walls >= 0) {  
-            shader_set_param(voxel_params, UNIFORM_INT, loc_num_walls, 0,  
-                            hm->num_walls, 0, 0, 0, 0, 0);  
-        }  
-          
-        // TODO: Aquí se configurarían texturas de sectores cuando se implemente  
-        // el sistema completo de renderizado de sectores en el shader  
-    }
+    }    
 
        // BUCLE DE RENDERIZADO DEL SHADER  
     for (float distance = max_render_distance; distance >= 1.0; ) {        
@@ -3606,5 +3804,265 @@ int64_t libmod_heightmap_load_dmap(INSTANCE *my, int64_t *params) {
 //---------------------------------------------------------------------------------------//
 //                          FIN MAPAS POR SECTORES                                       //
 //---------------------------------------------------------------------------------------//
+
+int64_t libmod_heightmap_render_sector_gpu(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    int64_t render_width = params[1];  
+    int64_t render_height = params[2];  
+      
+    // Buscar heightmap  
+    HEIGHTMAP *hm = NULL;  
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
+        if (heightmaps[i].id == hm_id) {  
+            hm = &heightmaps[i];  
+            break;  
+        }  
+    }  
+      
+    if (!hm || hm->type != MAP_TYPE_SECTOR) {  
+        fprintf(stderr, "ERROR: Mapa de sectores no encontrado o tipo incorrecto\n");  
+        return 0;  
+    }  
+      
+  // Por esto:  
+    if (!create_sector_shader()) {  
+    return 0;  
+    }
+      
+    // Crear/actualizar render buffer  
+    if (!render_buffer || render_buffer->width != render_width ||   
+        render_buffer->height != render_height) {  
+        if (render_buffer) {  
+            bitmap_destroy(render_buffer);  
+        }  
+        render_buffer = bitmap_new_syslib(render_width, render_height);  
+        if (!render_buffer) {  
+            fprintf(stderr, "ERROR: No se pudo crear render_buffer\n");  
+            return 0;  
+        }  
+        current_render_width = render_width;  
+        current_render_height = render_height;  
+    }  
+      
+    // Limpiar con color de cielo  
+    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, 255);  
+    gr_clear_as(render_buffer, sky_color);  
+      
+    // Renderizar skybox si existe  
+    if (sky_texture) {  
+        render_skybox(camera.angle, camera.pitch, water_time, 1);  
+    }  
+      
+    // Crear quad source si no existe  
+    static GRAPH *quad_source = NULL;  
+    if (!quad_source) {  
+        quad_source = bitmap_new_syslib(2, 2);  
+        if (!quad_source) {  
+            fprintf(stderr, "ERROR: No se pudo crear quad_source\n");  
+            return 0;  
+        }  
+        gr_clear_as(quad_source, SDL_MapRGBA(gPixelFormat, 255, 255, 255, 255));  
+    }  
+      
+    // Crear parámetros del shader si no existen  
+    if (!sector_params) {  
+        sector_params = shader_create_parameters(15);  
+        if (!sector_params) {  
+            fprintf(stderr, "ERROR: No se pudo crear parámetros del shader\n");  
+            return 0;  
+        }  
+    }  
+      
+    // Obtener ubicaciones de uniforms (solo primera vez)  
+    static int loc_camera_pos = -1;  
+    static int loc_camera_angle = -1;  
+    static int loc_camera_pitch = -1;  
+    static int loc_fov = -1;  
+    static int loc_max_distance = -1;  
+    static int loc_light_intensity = -1;  
+    static int loc_sky_color = -1;  
+    static int loc_wall_texture = -1;  
+    static int loc_floor_texture = -1;  
+    static int loc_ceiling_texture = -1;  
+    static int loc_has_ceiling = -1;  
+    static int loc_map_bounds_min = -1;  
+    static int loc_map_bounds_max = -1;  
+      
+    static int locations_initialized = 0;  
+    if (!locations_initialized) {  
+        loc_camera_pos = shader_getuniformlocation(sector_shader, "u_camera_pos");  
+        loc_camera_angle = shader_getuniformlocation(sector_shader, "u_camera_angle");  
+        loc_camera_pitch = shader_getuniformlocation(sector_shader, "u_camera_pitch");  
+        loc_fov = shader_getuniformlocation(sector_shader, "u_fov");  
+        loc_max_distance = shader_getuniformlocation(sector_shader, "u_max_distance");  
+        loc_light_intensity = shader_getuniformlocation(sector_shader, "u_light_intensity");  
+        loc_sky_color = shader_getuniformlocation(sector_shader, "u_sky_color");  
+        loc_wall_texture = shader_getuniformlocation(sector_shader, "u_wall_texture");  
+        loc_floor_texture = shader_getuniformlocation(sector_shader, "u_floor_texture");  
+        loc_ceiling_texture = shader_getuniformlocation(sector_shader, "u_ceiling_texture");  
+        loc_has_ceiling = shader_getuniformlocation(sector_shader, "u_has_ceiling");  
+        loc_map_bounds_min = shader_getuniformlocation(sector_shader, "u_map_bounds_min");  
+        loc_map_bounds_max = shader_getuniformlocation(sector_shader, "u_map_bounds_max");  
+        locations_initialized = 1;  
+    }  
+      
+    shader_activate(sector_shader);  
+      
+    // Configurar uniforms de cámara  
+    static float camera_pos[3];  
+    if (loc_camera_pos >= 0) {  
+        camera_pos[0] = camera.x;  
+        camera_pos[1] = camera.y;  
+        camera_pos[2] = camera.z;  
+        shader_set_param(sector_params, UNIFORM_FLOAT3_ARRAY, loc_camera_pos, 1,  
+                        (void*)camera_pos, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_camera_angle >= 0) {  
+        float angle_val = camera.angle / 1000.0f;  
+        shader_set_param(sector_params, UNIFORM_FLOAT, loc_camera_angle, 0,  
+                        *(int32_t*)&angle_val, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_camera_pitch >= 0) {  
+        float pitch_val = camera.pitch / 1000.0f;  
+        shader_set_param(sector_params, UNIFORM_FLOAT, loc_camera_pitch, 0,  
+                        *(int32_t*)&pitch_val, 0, 0, 0, 0, 0);  
+    }  
+      
+    // Configurar otros uniforms  
+    if (loc_fov >= 0) {  
+        float fov_val = 0.7f;  
+        shader_set_param(sector_params, UNIFORM_FLOAT, loc_fov, 0,  
+                        *(int32_t*)&fov_val, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_max_distance >= 0) {  
+        shader_set_param(sector_params, UNIFORM_FLOAT, loc_max_distance, 0,  
+                        *(int32_t*)&max_render_distance, 0, 0, 0, 0, 0);  
+    }  
+      
+    if (loc_light_intensity >= 0) {  
+        float light_val = light_intensity / 255.0f;  
+        shader_set_param(sector_params, UNIFORM_FLOAT, loc_light_intensity, 0,  
+                        *(int32_t*)&light_val, 0, 0, 0, 0, 0);  
+    }  
+      
+    static float sky_color_arr[3];  
+    if (loc_sky_color >= 0) {  
+        sky_color_arr[0] = sky_color_r / 255.0f;  
+        sky_color_arr[1] = sky_color_g / 255.0f;  
+        sky_color_arr[2] = sky_color_b / 255.0f;  
+        shader_set_param(sector_params, UNIFORM_FLOAT3_ARRAY, loc_sky_color, 1,  
+                        (void*)sky_color_arr, 0, 0, 0, 0, 0);  
+    }  
+      
+    // Configurar texturas (asumiendo que el primer sector tiene las texturas)  
+    if (hm->num_sectors > 0 && hm->textures) {  
+        if (loc_wall_texture >= 0 && hm->textures[0].graph_id > 0) {  
+            GRAPH *wall_graph = bitmap_get(0, hm->textures[0].graph_id);  
+            if (wall_graph) {  
+                shader_set_param(sector_params, SHADER_IMAGE, loc_wall_texture, 0,  
+                                (void*)wall_graph, 0, 0, 0, 0, 0);  
+            }  
+        }  
+          
+        if (loc_floor_texture >= 0 && hm->num_textures > 1 && hm->textures[1].graph_id > 0) {  
+            GRAPH *floor_graph = bitmap_get(0, hm->textures[1].graph_id);  
+            if (floor_graph) {  
+                shader_set_param(sector_params, SHADER_IMAGE, loc_floor_texture, 0,  
+                                (void*)floor_graph, 1, 0, 0, 0, 0);  
+            }  
+        }  
+          
+        if (loc_ceiling_texture >= 0 && hm->num_textures > 2 && hm->textures[2].graph_id > 0) {  
+            GRAPH *ceiling_graph = bitmap_get(0, hm->textures[2].graph_id);  
+            if (ceiling_graph) {  
+                shader_set_param(sector_params, SHADER_IMAGE, loc_ceiling_texture, 0,  
+                                (void*)ceiling_graph, 2, 0, 0, 0, 0);  
+            }  
+        }  
+    }  
+      
+    // Configurar límites del mapa (basado en el primer sector)  
+    static float map_bounds_min[2];  
+    static float map_bounds_max[2];  
+    if (hm->num_sectors > 0) {  
+        // Por simplicidad, usar límites fijos o calcularlos de los sectores  
+        map_bounds_min[0] = 0.0f;  
+        map_bounds_min[1] = 0.0f;  
+        map_bounds_max[0] = 200.0f;  
+        map_bounds_max[1] = 200.0f;  
+          
+        if (loc_map_bounds_min >= 0) {  
+            shader_set_param(sector_params, UNIFORM_FLOAT2_ARRAY, loc_map_bounds_min, 1,  
+                            (void*)map_bounds_min, 0, 0, 0, 0, 0);  
+        }  
+          
+        if (loc_map_bounds_max >= 0) {  
+            shader_set_param(sector_params, UNIFORM_FLOAT2_ARRAY, loc_map_bounds_max, 1,  
+                            (void*)map_bounds_max, 0, 0, 0, 0, 0);  
+        }  
+    }  
+      
+    // Has ceiling (1.0 = sí, 0.0 = no)  
+    if (loc_has_ceiling >= 0) {  
+        float has_ceiling_val = 1.0f;  
+        shader_set_param(sector_params, UNIFORM_FLOAT, loc_has_ceiling, 0,  
+                        *(int32_t*)&has_ceiling_val, 0, 0, 0, 0, 0);  
+    }  
+      
+    // Aplicar parámetros y renderizar  
+    shader_apply_parameters(sector_params);  
+      
+    gr_blit(  
+        render_buffer,  
+        NULL,  
+        0, 0,  
+        0, 0,  
+        (render_width / 2.0) * 100.0,  
+        (render_height / 2.0) * 100.0,  
+        POINT_UNDEFINED,  
+        POINT_UNDEFINED,  
+        quad_source,  
+        NULL,  
+        255, 255, 255, 255,  
+        BLEND_NORMAL,  
+        NULL  
+    );  
+      
+    // Renderizar billboards (igual que en voxelspace)  
+    render_billboards_to_buffer(render_buffer);  
+      
+    return render_buffer->code;  
+}
+
+    void render_billboards_to_buffer(GRAPH *target_buffer) {  
+    // Reutilizar la lógica de billboards del renderizado CPU  
+    BILLBOARD_RENDER_DATA visible_billboards[MAX_STATIC_BILLBOARDS + MAX_DYNAMIC_BILLBOARDS];  
+    int visible_count = 0;  
+      
+    float terrain_fov = 0.7f;  
+      
+    collect_visible_billboards_from_array(static_billboards, static_billboard_count,  
+                                         visible_billboards, &visible_count, terrain_fov);  
+      
+    collect_visible_billboards_from_array(dynamic_billboards, MAX_DYNAMIC_BILLBOARDS,  
+                                         visible_billboards, &visible_count, terrain_fov);  
+      
+    qsort(visible_billboards, visible_count, sizeof(BILLBOARD_RENDER_DATA), compare_billboards_by_distance);  
+      
+    for (int i = 0; i < visible_count; i++) {  
+        BILLBOARD_RENDER_DATA *render_data = &visible_billboards[i];  
+        BILLBOARD_PROJECTION proj = render_data->projection;  
+          
+        gr_blit(target_buffer, NULL,  
+               proj.screen_x - proj.scaled_width/2,  
+               proj.screen_y - proj.scaled_height/2,  
+               0, 0, proj.scaled_width, proj.scaled_height,  
+               render_data->graph->width/2, render_data->graph->height/2,  
+               render_data->graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
+    }  
+}
 
 #include "libmod_heightmap_exports.h"
