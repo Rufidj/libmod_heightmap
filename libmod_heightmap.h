@@ -87,7 +87,7 @@ typedef struct {
     int num_subsectors;  
     SEG *segs;                  // Segmentos de paredes  
     int num_segs;  
-    uint16_t *blockmap_grid;    // Grid de colisiones  
+    BLOCKMAP_CELL *blockmap_grid;    // Grid de colisiones  
     int blockmap_width;  
     int blockmap_height;  
     uint32_t blockmap_cell_size;  

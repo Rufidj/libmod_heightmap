@@ -54,18 +54,12 @@ typedef struct {
 // Vértice compartido (2D)  
 typedef struct {  
     float x, y;  
-} VERTEX;  
-  
-// NUEVA: Entrada de textura con datos empaquetados  
-typedef struct {  
-    char name[64];           // Nombre descriptivo (ej: "wall", "floor")  
-    uint32_t width;          // Ancho de la textura  
-    uint32_t height;         // Alto de la textura  
-    uint32_t data_size;      // Tamaño de los datos de píxeles en bytes  
-    uint32_t format;         // Formato: 0=RGB, 1=RGBA  
-    // Los datos de píxeles se escriben inmediatamente después en el archivo  
-    // NO se incluyen en esta estructura, se leen/escriben por separado  
-} TEXTURE_ENTRY_V2;  
+} VERTEX; 
+ 
+//TEXTURAS  
+typedef struct {    
+    char filename[256];      // Ruta al archivo de textura    
+} TEXTURE_ENTRY_V2;
   
 // Sector con soporte para rampas y movimiento dinámico  
 typedef struct {  
@@ -93,7 +87,7 @@ typedef struct {
       
     // Geometría (índices a array global de vértices)  
     uint32_t num_vertices;  
-    // Los índices de vértices se escriben después como array separado  
+    uint32_t *vertex_indices;  // AGREGADO: Array de índices a vértices globales  
       
     // Iluminación  
     uint8_t light_level; // 0-255  
@@ -156,12 +150,26 @@ typedef struct {
 } SUBSECTOR;  
   
 // Segmento de pared  
+typedef struct {    
+    uint32_t vertex1_index;  // Índice al array global de vértices  
+    uint32_t vertex2_index;  // Índice al array global de vértices  
+    uint32_t sector_id;       // Sector al que pertenece  
+    uint32_t sidedef_id;      // Sidedef para textura  
+    float offset;             // Offset de textura  
+} SEG;
+  
+// AGREGADO: Celda del blockmap para colisiones  
 typedef struct {  
-    uint32_t vertex1_index;  
-    uint32_t vertex2_index;  
-    uint32_t sector_id;  
-    uint32_t sidedef_id;  
-    float offset;  
-} SEG;  
+    uint32_t num_walls;  
+    uint32_t *wall_indices;  
+} BLOCKMAP_CELL;  
+  
+// AGREGADO: Proyección de pared para renderizado  
+typedef struct {  
+    int x1_screen, x2_screen;  
+    float z1, z2;  
+    float wall_height;  
+    int valid;  
+} WALL_PROJECTION;  
   
 #endif // __LIBMOD_HEIGHTMAP_DMAP_H
