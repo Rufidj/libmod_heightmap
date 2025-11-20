@@ -231,92 +231,175 @@ void libmod_heightmap_destroy_render_buffer() {
     }  
 }
 
-void __bgdexport(libmod_heightmap, module_initialize)()  
-{  
-    memset(heightmaps, 0, sizeof(heightmaps));  
-    memset(static_billboards, 0, sizeof(static_billboards));  
-    memset(dynamic_billboards, 0, sizeof(dynamic_billboards));  
-    static_billboard_count = 0;  
-    next_heightmap_id = 1;  
-        for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        heightmaps[i].id = 0;  
-        heightmaps[i].type = MAP_TYPE_HEIGHTMAP;  // NUEVO  
-        heightmaps[i].heightmap = NULL;  
-        heightmaps[i].texturemap = NULL;  
-        heightmaps[i].height_cache = NULL;  
-        heightmaps[i].cache_valid = 0;  
-        // NUEVO: Inicializar campos de sectores  
-        heightmaps[i].sectors = NULL;  
-        heightmaps[i].num_sectors = 0;  
-        heightmaps[i].walls = NULL;  
-        heightmaps[i].num_walls = 0;  
-        heightmaps[i].textures = NULL;  
+void __bgdexport(libmod_heightmap, module_initialize)()    
+{    
+    memset(heightmaps, 0, sizeof(heightmaps));    
+    memset(static_billboards, 0, sizeof(static_billboards));    
+    memset(dynamic_billboards, 0, sizeof(dynamic_billboards));    
+    static_billboard_count = 0;    
+    next_heightmap_id = 1;    
+      
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {    
+        heightmaps[i].id = 0;    
+        heightmaps[i].type = MAP_TYPE_HEIGHTMAP;  
+        heightmaps[i].heightmap = NULL;    
+        heightmaps[i].texturemap = NULL;    
+        heightmaps[i].height_cache = NULL;    
+        heightmaps[i].cache_valid = 0;    
+          
+        // Inicializar campos de sectores legacy  
+        heightmaps[i].sectors = NULL;    
+        heightmaps[i].num_sectors = 0;    
+        heightmaps[i].walls = NULL;    
+        heightmaps[i].num_walls = 0;    
+        heightmaps[i].textures = NULL;    
         heightmaps[i].num_textures = 0;  
-    }  
+          
+        // NUEVO: Inicializar campos DMAP v2  
+        heightmaps[i].vertices = NULL;  
+        heightmaps[i].num_vertices = 0;  
+        heightmaps[i].sidedefs = NULL;  
+        heightmaps[i].num_sidedefs = 0;  
+        heightmaps[i].things = NULL;  
+        heightmaps[i].num_things = 0;  
+        heightmaps[i].bsp_nodes = NULL;  
+        heightmaps[i].num_bsp_nodes = 0;  
+        heightmaps[i].subsectors = NULL;  
+        heightmaps[i].num_subsectors = 0;  
+        heightmaps[i].segs = NULL;  
+        heightmaps[i].num_segs = 0;  
+        heightmaps[i].blockmap_grid = NULL;  
+        heightmaps[i].blockmap_width = 0;  
+        heightmaps[i].blockmap_height = 0;  
+        heightmaps[i].blockmap_cell_size = 0;  
+    }    
 }
 
-void __bgdexport(libmod_heightmap, module_finalize)()  
-{  
-    // Liberar recursos asociados a cada heightmap  
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)  
-    {  
-        if (heightmaps[i].heightmap) // Verificar si el heightmap existe/está en uso  
-        {  
-            // Liberar el cache de altura si existe  
-            if (heightmaps[i].height_cache)  
-            {  
-                free(heightmaps[i].height_cache);  
-                heightmaps[i].height_cache = NULL;  
-            }  
-  
-            // Destruir el GRAPH del heightmap principal  
-            bitmap_destroy(heightmaps[i].heightmap);  
-            heightmaps[i].heightmap = NULL;  
-  
-            // Destruir el GRAPH del texturemap si existe  
-            if (heightmaps[i].texturemap)  
-            {  
-                bitmap_destroy(heightmaps[i].texturemap);  
-                heightmaps[i].texturemap = NULL;  
-            }  
-        }  
-        cleanup_gpu_resources();
+void __bgdexport(libmod_heightmap, module_finalize)()    
+{    
+    // Liberar recursos asociados a cada heightmap    
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++)    
+    {    
+        if (heightmaps[i].heightmap) // Verificar si el heightmap existe/está en uso    
+        {    
+            // Liberar el cache de altura si existe    
+            if (heightmaps[i].height_cache)    
+            {    
+                free(heightmaps[i].height_cache);    
+                heightmaps[i].height_cache = NULL;    
+            }    
+    
+            // Destruir el GRAPH del heightmap principal    
+            bitmap_destroy(heightmaps[i].heightmap);    
+            heightmaps[i].heightmap = NULL;    
+    
+            // Destruir el GRAPH del texturemap si existe    
+            if (heightmaps[i].texturemap)    
+            {    
+                bitmap_destroy(heightmaps[i].texturemap);    
+                heightmaps[i].texturemap = NULL;    
+            }    
+        }    
+        cleanup_gpu_resources();  
+    }    
+    
+    // Liberar el render_buffer global una sola vez    
+    libmod_heightmap_destroy_render_buffer();    
+    
+    // Liberar el fog_table global si existe    
+    if (fog_table) {    
+        free(fog_table);    
+        fog_table = NULL;    
     }  
-  
-    // Liberar el render_buffer global una sola vez  
-    libmod_heightmap_destroy_render_buffer();  
-  
-    // Liberar el fog_table global si existe (como se discutió previamente)  
-    if (fog_table) {  
-        free(fog_table);  
-        fog_table = NULL;  
-    }  
-     // NUEVO: Liberar memoria de mapas de sectores  
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        if (heightmaps[i].type == MAP_TYPE_SECTOR) {  
-            // Liberar vértices de sectores  
-            if (heightmaps[i].sectors) {  
-                for (int j = 0; j < heightmaps[i].num_sectors; j++) {  
-                    if (heightmaps[i].sectors[j].vertices) {  
-                        free(heightmaps[i].sectors[j].vertices);  
-                    }  
+      
+    // Liberar memoria de mapas de sectores (DMAP v1 y v2)  
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {    
+        if (heightmaps[i].type == MAP_TYPE_SECTOR) {    
+              
+            // Determinar si es DMAP v1 (legacy) o v2  
+            // Si hay vertices globales, es v2; si no, es v1  
+            int is_dmap_v2 = (heightmaps[i].vertices != NULL);  
+              
+            if (is_dmap_v2) {  
+                // DMAP v2: Liberar vertex_indices de cada sector  
+                if (heightmaps[i].sectors) {    
+                    for (int j = 0; j < heightmaps[i].num_sectors; j++) {  
+                        SECTOR_V2 *sector = &((SECTOR_V2*)heightmaps[i].sectors)[j];  
+                        if (sector->vertex_indices) {    
+                            free(sector->vertex_indices);  
+                            sector->vertex_indices = NULL;  
+                        }    
+                    }    
+                    free(heightmaps[i].sectors);  
+                    heightmaps[i].sectors = NULL;  
                 }  
-                free(heightmaps[i].sectors);  
+            } else {  
+                // DMAP v1 legacy: Liberar vertices de cada sector  
+                if (heightmaps[i].sectors) {    
+                    for (int j = 0; j < heightmaps[i].num_sectors; j++) {  
+                        SECTOR_LEGACY *sector = &((SECTOR_LEGACY*)heightmaps[i].sectors)[j];  
+                        if (sector->vertices) {    
+                            free(sector->vertices);  
+                            sector->vertices = NULL;  
+                        }    
+                    }    
+                    free(heightmaps[i].sectors);  
+                    heightmaps[i].sectors = NULL;  
+                }  
             }  
-              
-            // Liberar paredes  
-            if (heightmaps[i].walls) {  
+                
+            // Liberar paredes (común para v1 y v2)  
+            if (heightmaps[i].walls) {    
                 free(heightmaps[i].walls);  
+                heightmaps[i].walls = NULL;  
+            }    
+                
+            // Liberar tabla de texturas (común para v1 y v2)  
+            if (heightmaps[i].textures) {    
+                free(heightmaps[i].textures);  
+                heightmaps[i].textures = NULL;  
             }  
               
-            // Liberar tabla de texturas  
-            if (heightmaps[i].textures) {  
-                free(heightmaps[i].textures);  
+            // Liberar estructuras DMAP v2 adicionales  
+            if (heightmaps[i].vertices) {  
+                free(heightmaps[i].vertices);  
+                heightmaps[i].vertices = NULL;  
             }  
-        }  
+  
+            if (heightmaps[i].sidedefs) {  
+                free(heightmaps[i].sidedefs);  
+                heightmaps[i].sidedefs = NULL;  
+            }  
+  
+            if (heightmaps[i].things) {  
+                free(heightmaps[i].things);  
+                heightmaps[i].things = NULL;  
+            }  
+  
+            if (heightmaps[i].bsp_nodes) {  
+                free(heightmaps[i].bsp_nodes);  
+                heightmaps[i].bsp_nodes = NULL;  
+            }  
+  
+            if (heightmaps[i].subsectors) {  
+                free(heightmaps[i].subsectors);  
+                heightmaps[i].subsectors = NULL;  
+            }  
+  
+            if (heightmaps[i].segs) {  
+                free(heightmaps[i].segs);  
+                heightmaps[i].segs = NULL;  
+            }  
+  
+            if (heightmaps[i].blockmap_grid) {  
+                free(heightmaps[i].blockmap_grid);  
+                heightmaps[i].blockmap_grid = NULL;  
+            }  
+        }    
     }  
-    // Limpiar la estructura global heightmaps (opcional, pero buena práctica)  
-    memset(heightmaps, 0, sizeof(heightmaps));  
+      
+    // Limpiar la estructura global heightmaps    
+    memset(heightmaps, 0, sizeof(heightmaps));    
 }
 
 
@@ -3356,282 +3439,679 @@ int64_t libmod_heightmap_get_map_type(INSTANCE *my, int64_t *params) {
 
 ///    MAPAS POR SECTORES    ///
 
-/* Cargar archivo .dmap binario (mapas estilo Doom) */  
-int64_t libmod_heightmap_load_dmap(INSTANCE *my, int64_t *params) {    
-    const char *filename = string_get(params[0]);    
-    FILE *file = fopen(filename, "rb");    
-        
-    if (!file) {    
-        fprintf(stderr, "Error: No se pudo abrir archivo .dmap: %s\n", filename);    
-        string_discard(params[0]);    
-        return 0;    
-    }    
-        
-    // Leer y validar header    
-    typedef struct {    
-        char magic[4];    
-        uint32_t version;    
-        uint32_t num_sectors;    
-        uint32_t num_walls;    
-        uint32_t num_textures;    
-    } DMAP_HEADER;    
-        
-    DMAP_HEADER header;    
-    if (fread(&header, sizeof(DMAP_HEADER), 1, file) != 1) {    
-        fprintf(stderr, "Error: No se pudo leer header de .dmap\n");    
-        fclose(file);    
-        string_discard(params[0]);    
-        return 0;    
-    }    
+/* Cargar archivo .dmap binario (mapas estilo Doom) */    
+/* Cargar archivo .dmap binario (mapas estilo Doom) con texturas empaquetadas */    
+int64_t libmod_heightmap_load_dmap(INSTANCE *my, int64_t *params) {      
+    const char *filename = string_get(params[0]);      
+    FILE *file = fopen(filename, "rb");      
+          
+    if (!file) {      
+        fprintf(stderr, "Error: No se pudo abrir archivo .dmap: %s\n", filename);      
+        string_discard(params[0]);      
+        return 0;      
+    }      
+          
+    // Leer y validar header DMAP v2  
+    DMAP_HEADER_V2 header;  
+    memset(&header, 0, sizeof(DMAP_HEADER_V2));  
       
-    // DEBUG: Verificar header  
-    fprintf(stderr, "DEBUG LOAD: Header leído - magic=%.4s version=%u sectors=%u walls=%u textures=%u\n",  
+    if (fread(&header, sizeof(DMAP_HEADER_V2), 1, file) != 1) {  
+        fprintf(stderr, "Error: No se pudo leer header de .dmap\n");  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+        
+    // DEBUG: Verificar header    
+    fprintf(stderr, "DEBUG LOAD: Header leído - magic=%.4s version=%u sectors=%u walls=%u textures=%u\n",    
             header.magic, header.version, header.num_sectors, header.num_walls, header.num_textures);  
-        
-    // Validar magic number    
-    if (memcmp(header.magic, "DMAP", 4) != 0) {    
-        fprintf(stderr, "Error: Archivo no es un .dmap válido (magic incorrecto)\n");    
-        fclose(file);    
-        string_discard(params[0]);    
-        return 0;    
-    }    
-        
-    // Validar versión    
-    if (header.version != 1) {    
-        fprintf(stderr, "Error: Versión de .dmap no soportada: %u\n", header.version);    
-        fclose(file);    
-        string_discard(params[0]);    
-        return 0;    
-    }    
-        
-    // Buscar slot libre en el array de heightmaps    
-    HEIGHTMAP *map = NULL;    
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {    
-        if (heightmaps[i].id == 0) {    
-            map = &heightmaps[i];    
-            map->id = next_heightmap_id++;    
-            break;    
-        }    
-    }    
-        
-    if (!map) {    
-        fprintf(stderr, "Error: No hay slots disponibles para mapas\n");    
-        fclose(file);    
-        string_discard(params[0]);    
-        return 0;    
-    }    
-        
-    // Inicializar como mapa de sectores    
-    map->type = MAP_TYPE_SECTOR;    
-    map->num_sectors = header.num_sectors;    
-    map->num_walls = header.num_walls;    
-    map->num_textures = header.num_textures;    
-        
-    // Leer tabla de texturas    
-    map->textures = malloc(sizeof(TEXTURE_ENTRY) * header.num_textures);    
-    if (!map->textures) {    
-        fprintf(stderr, "Error: No se pudo asignar memoria para texturas\n");    
-        fclose(file);    
-        string_discard(params[0]);    
-        return 0;    
-    }    
       
-    fprintf(stderr, "DEBUG LOAD: Leyendo %u texturas...\n", header.num_textures);  
-        
-    for (uint32_t i = 0; i < header.num_textures; i++) {    
-        if (fread(map->textures[i].filename, 256, 1, file) != 1) {    
-            fprintf(stderr, "Error: No se pudo leer textura %u\n", i);    
-            free(map->textures);    
-            fclose(file);    
-            string_discard(params[0]);    
-            return 0;    
-        }    
-        // Cargar el GRAPH de BennuGD2    
-        map->textures[i].graph_id = gr_load_img(map->textures[i].filename);    
-        if (map->textures[i].graph_id == 0) {    
-            fprintf(stderr, "Advertencia: No se pudo cargar textura: %s\n",     
-                    map->textures[i].filename);    
-        } else {  
-            fprintf(stderr, "Textura %u: %s -> graph_id=%d\n",   
-                    i, map->textures[i].filename, map->textures[i].graph_id);  
-        }  
-    }    
-        
-    // Leer sectores    
-    map->sectors = malloc(sizeof(SECTOR) * header.num_sectors);    
-    if (!map->sectors) {    
-        fprintf(stderr, "Error: No se pudo asignar memoria para sectores\n");    
-        free(map->textures);    
-        fclose(file);    
-        string_discard(params[0]);    
-        return 0;    
-    }    
-        
-    typedef struct {    
-        uint32_t id;    
-        float floor_height;    
-        float ceiling_height;    
-        uint32_t floor_texture_id;    
-        uint32_t ceiling_texture_id;    
-        uint32_t wall_texture_id;    
-        uint32_t num_vertices;    
-    } DMAP_SECTOR;    
+    if (header.version == 2) {  
+        fprintf(stderr, "DEBUG LOAD: Header v2 - vertices=%u sidedefs=%u things=%u bsp_nodes=%u blockmap=%ux%u\n",  
+                header.num_vertices, header.num_sidedefs, header.num_things,   
+                header.num_bsp_nodes, header.blockmap_width, header.blockmap_height);  
+    }  
+          
+    // Validar magic number      
+    if (memcmp(header.magic, "DMAP", 4) != 0) {      
+        fprintf(stderr, "Error: Archivo no es un .dmap válido (magic incorrecto)\n");      
+        fclose(file);      
+        string_discard(params[0]);      
+        return 0;      
+    }      
+          
+    // Validar versión (soportar v1 y v2)  
+    if (header.version != 1 && header.version != 2) {      
+        fprintf(stderr, "Error: Versión de .dmap no soportada: %u\n", header.version);      
+        fclose(file);      
+        string_discard(params[0]);      
+        return 0;      
+    }      
+          
+    // Buscar slot libre en el array de heightmaps      
+    HEIGHTMAP *map = NULL;      
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {      
+        if (heightmaps[i].id == 0) {      
+            map = &heightmaps[i];      
+            map->id = next_heightmap_id++;      
+            break;      
+        }      
+    }      
+          
+    if (!map) {      
+        fprintf(stderr, "Error: No hay slots disponibles para mapas\n");      
+        fclose(file);      
+        string_discard(params[0]);      
+        return 0;      
+    }      
+          
+    // Inicializar como mapa de sectores      
+    map->type = MAP_TYPE_SECTOR;      
+    map->num_sectors = header.num_sectors;      
+    map->num_walls = header.num_walls;      
+    map->num_textures = header.num_textures;  
       
-    // DEBUG: Verificar tamaño de estructura  
-    fprintf(stderr, "DEBUG LOAD: sizeof(DMAP_SECTOR) = %zu bytes\n", sizeof(DMAP_SECTOR));  
-    fprintf(stderr, "DEBUG LOAD: Posición del archivo antes de leer sectores: %ld\n", ftell(file));  
+    // Inicializar campos DMAP v2  
+    map->vertices = NULL;  
+    map->num_vertices = 0;  
+    map->sidedefs = NULL;  
+    map->num_sidedefs = 0;  
+    map->things = NULL;  
+    map->num_things = 0;  
+    map->bsp_nodes = NULL;  
+    map->num_bsp_nodes = 0;  
+    map->subsectors = NULL;  
+    map->num_subsectors = 0;  
+    map->segs = NULL;  
+    map->num_segs = 0;  
+    map->blockmap_grid = NULL;  
+    map->blockmap_width = 0;  
+    map->blockmap_height = 0;  
+    map->blockmap_cell_size = 0;  
+          
+    // ========================================  
+    // LEER TEXTURAS EMPAQUETADAS  
+    // ========================================  
+      
+    map->textures = malloc(sizeof(TEXTURE_ENTRY) * header.num_textures);      
+    if (!map->textures) {      
+        fprintf(stderr, "Error: No se pudo asignar memoria para texturas\n");      
+        fclose(file);      
+        string_discard(params[0]);      
+        return 0;      
+    }      
         
-    for (uint32_t i = 0; i < header.num_sectors; i++) {    
-        DMAP_SECTOR dmap_sector;    
-          
-        // DEBUG: Posición antes de leer sector  
-        long pos_before = ftell(file);  
-        fprintf(stderr, "DEBUG LOAD: Leyendo sector %u en posición %ld\n", i, pos_before);  
-          
-        if (fread(&dmap_sector, sizeof(DMAP_SECTOR), 1, file) != 1) {    
-            fprintf(stderr, "Error: No se pudo leer sector %u\n", i);    
-            free(map->sectors);    
-            free(map->textures);    
-            fclose(file);    
-            string_discard(params[0]);    
-            return 0;    
-        }    
-          
-        // DEBUG: Posición después de leer sector  
-        long pos_after = ftell(file);  
-        fprintf(stderr, "DEBUG LOAD: Sector %u leído, posición ahora: %ld (avanzó %ld bytes)\n",   
-                i, pos_after, pos_after - pos_before);  
-          
-        // DEBUG: Imprimir información del sector  
-        fprintf(stderr, "Sector %u: num_vertices=%u floor=%.2f ceiling=%.2f\n",  
-                i, dmap_sector.num_vertices,   
-                dmap_sector.floor_height, dmap_sector.ceiling_height);  
-            
-        // Copiar datos del sector    
-        map->sectors[i].id = dmap_sector.id;    
-        map->sectors[i].floor_height = dmap_sector.floor_height;    
-        map->sectors[i].ceiling_height = dmap_sector.ceiling_height;    
-        map->sectors[i].floor_texture_id = dmap_sector.floor_texture_id;    
-        map->sectors[i].ceiling_texture_id = dmap_sector.ceiling_texture_id;    
-        map->sectors[i].wall_texture_id = dmap_sector.wall_texture_id;    
-        map->sectors[i].num_vertices = dmap_sector.num_vertices;    
-            
-        // Leer vértices del sector    
-        map->sectors[i].vertices = malloc(sizeof(float) * dmap_sector.num_vertices * 2);    
-        if (!map->sectors[i].vertices) {    
-            fprintf(stderr, "Error: No se pudo asignar memoria para vértices del sector %u\n", i);    
-            // Liberar sectores anteriores    
-            for (uint32_t j = 0; j < i; j++) {    
-                free(map->sectors[j].vertices);    
-            }    
-            free(map->sectors);    
-            free(map->textures);    
-            fclose(file);    
-            string_discard(params[0]);    
-            return 0;    
-        }    
-          
-        // DEBUG: Información sobre lectura de vértices  
-        size_t floats_to_read = dmap_sector.num_vertices * 2;  
-        fprintf(stderr, "DEBUG LOAD: Intentando leer %zu floats (%zu bytes) para vértices del sector %u\n",  
-                floats_to_read, floats_to_read * sizeof(float), i);  
-          
-        pos_before = ftell(file);  
-        size_t floats_read = fread(map->sectors[i].vertices, sizeof(float),     
-                                    dmap_sector.num_vertices * 2, file);  
-        pos_after = ftell(file);  
-          
-        fprintf(stderr, "DEBUG LOAD: fread() retornó %zu (esperaba %zu), posición: %ld -> %ld\n",  
-                floats_read, floats_to_read, pos_before, pos_after);  
-            
-        if (floats_read != dmap_sector.num_vertices * 2) {    
-            fprintf(stderr, "Error: No se pudieron leer vértices del sector %u (leídos %zu de %u)\n",   
-                    i, floats_read, dmap_sector.num_vertices * 2);    
-            free(map->sectors[i].vertices);    
-            for (uint32_t j = 0; j < i; j++) {    
-                free(map->sectors[j].vertices);    
-            }    
-            free(map->sectors);    
-            free(map->textures);    
-            fclose(file);    
-            string_discard(params[0]);    
-            return 0;    
-        }  
-          
-        // DEBUG: Imprimir primeros vértices  
-        if (dmap_sector.num_vertices > 0) {  
-            fprintf(stderr, "  Primer vértice: (%.2f, %.2f)\n",   
-                    map->sectors[i].vertices[0], map->sectors[i].vertices[1]);  
-            if (dmap_sector.num_vertices > 1) {  
-                fprintf(stderr, "  Segundo vértice: (%.2f, %.2f)\n",  
-                        map->sectors[i].vertices[2], map->sectors[i].vertices[3]);  
+    fprintf(stderr, "DEBUG LOAD: Leyendo %u texturas empaquetadas...\n", header.num_textures);  
+      
+    if (header.version == 2) {  
+        // DMAP v2: Texturas empaquetadas con datos de píxeles  
+        for (uint32_t i = 0; i < header.num_textures; i++) {  
+            // Leer header de textura v2  
+            TEXTURE_ENTRY_V2 tex_header;  
+            if (fread(&tex_header, sizeof(TEXTURE_ENTRY_V2), 1, file) != 1) {  
+                fprintf(stderr, "Error: No se pudo leer header de textura %u\n", i);  
+                free(map->textures);  
+                fclose(file);  
+                string_discard(params[0]);  
+                return 0;  
             }  
-            if (dmap_sector.num_vertices > 2) {  
-                fprintf(stderr, "  Tercer vértice: (%.2f, %.2f)\n",  
-                        map->sectors[i].vertices[4], map->sectors[i].vertices[5]);  
+              
+            fprintf(stderr, "Textura %u: %s (%ux%u) formato=%u data_size=%u\n",  
+                    i, tex_header.name, tex_header.width, tex_header.height,  
+                    tex_header.format, tex_header.data_size);  
+              
+            // Leer datos de píxeles  
+            uint8_t *pixel_data = malloc(tex_header.data_size);  
+            if (!pixel_data) {  
+                fprintf(stderr, "Error: No se pudo asignar memoria para datos de textura %u\n", i);  
+                free(map->textures);  
+                fclose(file);  
+                string_discard(params[0]);  
+                return 0;  
+            }  
+              
+            if (fread(pixel_data, tex_header.data_size, 1, file) != 1) {  
+                fprintf(stderr, "Error: No se pudieron leer datos de textura %u\n", i);  
+                free(pixel_data);  
+                free(map->textures);  
+                fclose(file);  
+                string_discard(params[0]);  
+                return 0;  
+            }  
+              
+            // Crear GRAPH de BennuGD2 desde datos en memoria  
+            GRAPH *texture_graph = bitmap_new(0, tex_header.width, tex_header.height, 32);  
+            if (!texture_graph) {  
+                fprintf(stderr, "Error: No se pudo crear GRAPH para textura %u\n", i);  
+                free(pixel_data);  
+                free(map->textures);  
+                fclose(file);  
+                string_discard(params[0]);  
+                return 0;  
+            }  
+              
+            // Copiar píxeles al GRAPH  
+            if (tex_header.format == 0) { // RGBA8888  
+                for (uint32_t y = 0; y < tex_header.height; y++) {  
+                    for (uint32_t x = 0; x < tex_header.width; x++) {  
+                        uint32_t pixel_index = (y * tex_header.width + x) * 4;  
+                        uint8_t r = pixel_data[pixel_index];  
+                        uint8_t g = pixel_data[pixel_index + 1];  
+                        uint8_t b = pixel_data[pixel_index + 2];  
+                        uint8_t a = pixel_data[pixel_index + 3];  
+                          
+                        uint32_t color = SDL_MapRGBA(gPixelFormat, r, g, b, a);  
+                        gr_put_pixel(texture_graph, x, y, color);  
+                    }  
+                }  
+            } else if (tex_header.format == 1) { // RGB888  
+                for (uint32_t y = 0; y < tex_header.height; y++) {  
+                    for (uint32_t x = 0; x < tex_header.width; x++) {  
+                        uint32_t pixel_index = (y * tex_header.width + x) * 3;  
+                        uint8_t r = pixel_data[pixel_index];  
+                        uint8_t g = pixel_data[pixel_index + 1];  
+                        uint8_t b = pixel_data[pixel_index + 2];  
+                          
+                        uint32_t color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
+                        gr_put_pixel(texture_graph, x, y, color);  
+                    }  
+                }  
+            }  
+              
+            free(pixel_data);  
+              
+            // Guardar en la tabla de texturas  
+            strncpy(map->textures[i].filename, tex_header.name, 255);  
+            map->textures[i].filename[255] = '\0';  
+            map->textures[i].graph_id = texture_graph->code;  
+              
+            fprintf(stderr, "Textura %u cargada: %s -> graph_id=%d\n",  
+                    i, tex_header.name, map->textures[i].graph_id);  
+        }  
+    } else {  
+        // DMAP v1: Texturas como nombres de archivo (legacy)  
+        for (uint32_t i = 0; i < header.num_textures; i++) {      
+            if (fread(map->textures[i].filename, 256, 1, file) != 1) {      
+                fprintf(stderr, "Error: No se pudo leer textura %u\n", i);      
+                free(map->textures);      
+                fclose(file);      
+                string_discard(params[0]);      
+                return 0;      
+            }      
+              
+            // Cargar el GRAPH de BennuGD2 desde archivo externo  
+            map->textures[i].graph_id = gr_load_img(map->textures[i].filename);      
+            if (map->textures[i].graph_id == 0) {      
+                fprintf(stderr, "Advertencia: No se pudo cargar textura: %s\n",       
+                        map->textures[i].filename);      
+            } else {    
+                fprintf(stderr, "Textura %u: %s -> graph_id=%d\n",     
+                        i, map->textures[i].filename, map->textures[i].graph_id);    
+            }    
+        }  
+    }  
+      
+    // ========================================  
+    // LEER VÉRTICES COMPARTIDOS (solo DMAP v2)  
+    // ========================================  
+      
+    if (header.version == 2 && header.num_vertices > 0) {  
+        map->num_vertices = header.num_vertices;  
+        map->vertices = malloc(sizeof(VERTEX) * header.num_vertices);  
+        if (!map->vertices) {  
+            fprintf(stderr, "Error: No se pudo asignar memoria para vértices\n");  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        for (uint32_t i = 0; i < header.num_vertices; i++) {  
+            if (fread(&map->vertices[i], sizeof(VERTEX), 1, file) != 1) {  
+                fprintf(stderr, "Error: No se pudo leer vértice %u\n", i);  
+                free(map->vertices);  
+                free(map->textures);  
+                fclose(file);  
+                string_discard(params[0]);  
+                return 0;  
             }  
         }  
-    }    
-        
-    // Leer paredes    
-    fprintf(stderr, "DEBUG LOAD: Leyendo %u paredes...\n", header.num_walls);  
+        fprintf(stderr, "DEBUG LOAD: %u vértices compartidos leídos\n", header.num_vertices);  
+    }
+        // ========================================  
+    // VÉRTICES COMPARTIDOS (solo DMAP v2)  
+    // ========================================  
       
-    map->walls = malloc(sizeof(WALL) * header.num_walls);    
-    if (!map->walls) {    
-        fprintf(stderr, "Error: No se pudo asignar memoria para paredes\n");    
-        for (uint32_t i = 0; i < header.num_sectors; i++) {    
-            free(map->sectors[i].vertices);    
-        }    
-        free(map->sectors);    
-        free(map->textures);    
-        fclose(file);    
-        string_discard(params[0]);    
-        return 0;    
-    }    
-        
-    typedef struct {    
-        uint32_t sector1_id;    
-        uint32_t sector2_id;    
-        uint32_t texture_id;    
-        float x1, y1, x2, y2;    
-    } DMAP_WALL;    
-        
-    for (uint32_t i = 0; i < header.num_walls; i++) {    
-        DMAP_WALL dmap_wall;    
-        if (fread(&dmap_wall, sizeof(DMAP_WALL), 1, file) != 1) {    
-            fprintf(stderr, "Error: No se pudo leer pared %u\n", i);    
-            free(map->walls);    
-            for (uint32_t j = 0; j < header.num_sectors; j++) {    
-                free(map->sectors[j].vertices);    
-            }    
-            free(map->sectors);    
-            free(map->textures);    
-            fclose(file);    
-            string_discard(params[0]);    
-            return 0;    
-        }    
-            
-        map->walls[i].sector1_id = dmap_wall.sector1_id;    
-        map->walls[i].sector2_id = dmap_wall.sector2_id;    
-        map->walls[i].texture_id = dmap_wall.texture_id;    
-        map->walls[i].x1 = dmap_wall.x1;    
-        map->walls[i].y1 = dmap_wall.y1;    
-        map->walls[i].x2 = dmap_wall.x2;    
-        map->walls[i].y2 = dmap_wall.y2;  
+    if (header.version == 2 && header.num_vertices > 0) {  
+        map->num_vertices = header.num_vertices;  
+        map->vertices = malloc(sizeof(VERTEX) * header.num_vertices);  
+        if (!map->vertices) {  
+            fprintf(stderr, "Error: No se pudo asignar memoria para vértices compartidos\n");  
+            // Liberar texturas ya cargadas  
+            for (uint32_t i = 0; i < header.num_textures; i++) {  
+                if (map->textures[i].graph_id > 0) {  
+                    bitmap_destroy(bitmap_get(0, map->textures[i].graph_id));  
+                }  
+            }  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
           
-        fprintf(stderr, "  Pared %u: (%.2f,%.2f) -> (%.2f,%.2f)\n",  
-                i, dmap_wall.x1, dmap_wall.y1, dmap_wall.x2, dmap_wall.y2);  
-    }    
-        
-    fclose(file);    
-    string_discard(params[0]);    
-        
-    printf("Mapa .dmap cargado exitosamente: %u sectores, %u paredes, %u texturas\n",    
-           header.num_sectors, header.num_walls, header.num_textures);    
-        
-    return map->id;    
-}
+        for (uint32_t i = 0; i < header.num_vertices; i++) {  
+            if (fread(&map->vertices[i], sizeof(VERTEX), 1, file) != 1) {  
+                fprintf(stderr, "Error: No se pudo leer vértice %u\n", i);  
+                free(map->vertices);  
+                for (uint32_t j = 0; j < header.num_textures; j++) {  
+                    if (map->textures[j].graph_id > 0) {  
+                        bitmap_destroy(bitmap_get(0, map->textures[j].graph_id));  
+                    }  
+                }  
+                free(map->textures);  
+                fclose(file);  
+                string_discard(params[0]);  
+                return 0;  
+            }  
+        }  
+        fprintf(stderr, "DEBUG LOAD: %u vértices compartidos leídos\n", header.num_vertices);  
+    }  
+      
+    // ========================================  
+    // SECTORES  
+    // ========================================  
+      
+    if (header.version == 2) {  
+        // Leer sectores v2 con campos extendidos  
+        map->sectors = malloc(sizeof(SECTOR_V2) * header.num_sectors);  
+        if (!map->sectors) {  
+            fprintf(stderr, "Error: No se pudo asignar memoria para sectores v2\n");  
+            if (map->vertices) free(map->vertices);  
+            for (uint32_t i = 0; i < header.num_textures; i++) {  
+                if (map->textures[i].graph_id > 0) {  
+                    bitmap_destroy(bitmap_get(0, map->textures[i].graph_id));  
+                }  
+            }  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        for (uint32_t i = 0; i < header.num_sectors; i++) {  
+            SECTOR_V2 *sector = &((SECTOR_V2*)map->sectors)[i];  
+              
+            // Leer campos básicos del sector  
+            fread(&sector->id, sizeof(uint32_t), 1, file);  
+            fread(&sector->floor_height, sizeof(float), 1, file);  
+            fread(&sector->ceiling_height, sizeof(float), 1, file);  
+            fread(&sector->floor_slope_x, sizeof(float), 1, file);  
+            fread(&sector->floor_slope_y, sizeof(float), 1, file);  
+            fread(&sector->ceiling_slope_x, sizeof(float), 1, file);  
+            fread(&sector->ceiling_slope_y, sizeof(float), 1, file);  
+            fread(&sector->is_dynamic, sizeof(uint8_t), 1, file);  
+            fread(&sector->target_floor_height, sizeof(float), 1, file);  
+            fread(&sector->target_ceiling_height, sizeof(float), 1, file);  
+            fread(&sector->move_speed, sizeof(float), 1, file);  
+            fread(&sector->move_state, sizeof(uint8_t), 1, file);  
+            fread(&sector->sector_type, sizeof(uint32_t), 1, file);  
+            fread(&sector->floor_texture_id, sizeof(uint32_t), 1, file);  
+            fread(&sector->ceiling_texture_id, sizeof(uint32_t), 1, file);  
+            fread(&sector->wall_texture_id, sizeof(uint32_t), 1, file);  
+            fread(&sector->num_vertices, sizeof(uint32_t), 1, file);  
+            fread(&sector->light_level, sizeof(uint8_t), 1, file);  
+              
+            fprintf(stderr, "Sector v2 %u: floor=%.2f ceiling=%.2f type=%u dynamic=%u vertices=%u\n",  
+                    i, sector->floor_height, sector->ceiling_height,   
+                    sector->sector_type, sector->is_dynamic, sector->num_vertices);  
+              
+            // Leer índices de vértices  
+            sector->vertex_indices = malloc(sizeof(uint32_t) * sector->num_vertices);  
+            if (!sector->vertex_indices) {  
+                fprintf(stderr, "Error: No se pudo asignar memoria para índices de vértices del sector %u\n", i);  
+                for (uint32_t j = 0; j < i; j++) {  
+                    free(((SECTOR_V2*)map->sectors)[j].vertex_indices);  
+                }  
+                free(map->sectors);  
+                if (map->vertices) free(map->vertices);  
+                for (uint32_t j = 0; j < header.num_textures; j++) {  
+                    if (map->textures[j].graph_id > 0) {  
+                        bitmap_destroy(bitmap_get(0, map->textures[j].graph_id));  
+                    }  
+                }  
+                free(map->textures);  
+                fclose(file);  
+                string_discard(params[0]);  
+                return 0;  
+            }  
+              
+            for (uint32_t v = 0; v < sector->num_vertices; v++) {  
+                fread(&sector->vertex_indices[v], sizeof(uint32_t), 1, file);  
+            }  
+        }  
+    } else {  
+        // Leer sectores v1 legacy (sin campos extendidos)  
+        map->sectors = malloc(sizeof(SECTOR_LEGACY) * header.num_sectors);  
+        if (!map->sectors) {  
+            fprintf(stderr, "Error: No se pudo asignar memoria para sectores v1\n");  
+            for (uint32_t i = 0; i < header.num_textures; i++) {  
+                if (map->textures[i].graph_id > 0) {  
+                    bitmap_destroy(bitmap_get(0, map->textures[i].graph_id));  
+                }  
+            }  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        for (uint32_t i = 0; i < header.num_sectors; i++) {  
+            SECTOR_LEGACY *sector = &((SECTOR_LEGACY*)map->sectors)[i];  
+              
+            // Leer campos básicos del sector legacy  
+            fread(&sector->id, sizeof(uint32_t), 1, file);  
+            fread(&sector->floor_height, sizeof(float), 1, file);  
+            fread(&sector->ceiling_height, sizeof(float), 1, file);  
+            fread(&sector->floor_texture_id, sizeof(uint32_t), 1, file);  
+            fread(&sector->ceiling_texture_id, sizeof(uint32_t), 1, file);  
+            fread(&sector->wall_texture_id, sizeof(uint32_t), 1, file);  
+            fread(&sector->num_vertices, sizeof(uint32_t), 1, file);  
+              
+            fprintf(stderr, "Sector v1 %u: floor=%.2f ceiling=%.2f vertices=%u\n",  
+                    i, sector->floor_height, sector->ceiling_height, sector->num_vertices);  
+              
+            // Leer vértices directamente (formato legacy)  
+            sector->vertices = malloc(sizeof(float) * sector->num_vertices * 2);  
+            if (!sector->vertices) {  
+                fprintf(stderr, "Error: No se pudo asignar memoria para vértices del sector %u\n", i);  
+                for (uint32_t j = 0; j < i; j++) {  
+                    free(((SECTOR_LEGACY*)map->sectors)[j].vertices);  
+                }  
+                free(map->sectors);  
+                for (uint32_t j = 0; j < header.num_textures; j++) {  
+                    if (map->textures[j].graph_id > 0) {  
+                        bitmap_destroy(bitmap_get(0, map->textures[j].graph_id));  
+                    }  
+                }  
+                free(map->textures);  
+                fclose(file);  
+                string_discard(params[0]);  
+                return 0;  
+            }  
+              
+            fread(sector->vertices, sizeof(float), sector->num_vertices * 2, file);  
+        }  
+    }
 
+        // ========================================  
+    // PAREDES (continuación desde Parte 2A)  
+    // ========================================  
+      
+    // Leer paredes (tanto v1 como v2)  
+    map->walls = malloc(sizeof(WALL_V2) * header.num_walls);  
+    if (!map->walls) {  
+        fprintf(stderr, "Error: No se pudo asignar memoria para paredes\n");  
+        for (uint32_t i = 0; i < header.num_sectors; i++) {  
+            if (header.version == 2) {  
+                free(((SECTOR_V2*)map->sectors)[i].vertex_indices);  
+            } else {  
+                free(((SECTOR_LEGACY*)map->sectors)[i].vertices);  
+            }  
+        }  
+        free(map->sectors);  
+        if (map->vertices) free(map->vertices);  
+        for (uint32_t i = 0; i < header.num_textures; i++) {  
+            if (map->textures[i].graph_id > 0) {  
+                bitmap_destroy(bitmap_get(0, map->textures[i].graph_id));  
+            }  
+        }  
+        free(map->textures);  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    if (header.version == 2) {  
+        // Leer paredes v2 con campos extendidos  
+        for (uint32_t i = 0; i < header.num_walls; i++) {  
+            WALL_V2 *wall = &((WALL_V2*)map->walls)[i];  
+              
+            fread(&wall->sector1_id, sizeof(uint32_t), 1, file);  
+            fread(&wall->sector2_id, sizeof(uint32_t), 1, file);  
+            fread(&wall->vertex1_index, sizeof(uint32_t), 1, file);  
+            fread(&wall->vertex2_index, sizeof(uint32_t), 1, file);  
+            fread(&wall->x1, sizeof(float), 1, file);  
+            fread(&wall->y1, sizeof(float), 1, file);  
+            fread(&wall->x2, sizeof(float), 1, file);  
+            fread(&wall->y2, sizeof(float), 1, file);  
+            fread(&wall->sidedef1_id, sizeof(uint32_t), 1, file);  
+            fread(&wall->sidedef2_id, sizeof(uint32_t), 1, file);  
+            fread(&wall->flags, sizeof(uint8_t), 1, file);  
+            fread(&wall->action_type, sizeof(uint32_t), 1, file);  
+        }  
+    } else {  
+        // Leer paredes v1 legacy  
+        for (uint32_t i = 0; i < header.num_walls; i++) {  
+            WALL_V2 *wall = &((WALL_V2*)map->walls)[i];  
+              
+            fread(&wall->sector1_id, sizeof(uint32_t), 1, file);  
+            fread(&wall->sector2_id, sizeof(uint32_t), 1, file);  
+            fread(&wall->x1, sizeof(float), 1, file);  
+            fread(&wall->y1, sizeof(float), 1, file);  
+            fread(&wall->x2, sizeof(float), 1, file);  
+            fread(&wall->y2, sizeof(float), 1, file);  
+              
+            // Campos v2 no disponibles en v1  
+            wall->vertex1_index = 0;  
+            wall->vertex2_index = 0;  
+            wall->sidedef1_id = 0;  
+            wall->sidedef2_id = 0;  
+            wall->flags = 0x01; // WALL_FLAG_BLOCKS_MOVEMENT  
+            wall->action_type = 0; // ACTION_NONE  
+        }  
+    }  
+    fprintf(stderr, "DEBUG LOAD: %u paredes leídas\n", header.num_walls);  
+      
+    // ========================================  
+    // SIDEDEFS (solo DMAP v2)  
+    // ========================================  
+      
+    if (header.version == 2 && header.num_sidedefs > 0) {  
+        map->num_sidedefs = header.num_sidedefs;  
+        map->sidedefs = malloc(sizeof(SIDEDEF) * header.num_sidedefs);  
+        if (!map->sidedefs) {  
+            fprintf(stderr, "Error: No se pudo asignar memoria para sidedefs\n");  
+            free(map->walls);  
+            for (uint32_t i = 0; i < header.num_sectors; i++) {  
+                free(((SECTOR_V2*)map->sectors)[i].vertex_indices);  
+            }  
+            free(map->sectors);  
+            if (map->vertices) free(map->vertices);  
+            for (uint32_t i = 0; i < header.num_textures; i++) {  
+                if (map->textures[i].graph_id > 0) {  
+                    bitmap_destroy(bitmap_get(0, map->textures[i].graph_id));  
+                }  
+            }  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        for (uint32_t i = 0; i < header.num_sidedefs; i++) {  
+            fread(&map->sidedefs[i], sizeof(SIDEDEF), 1, file);  
+        }  
+        fprintf(stderr, "DEBUG LOAD: %u sidedefs leídos\n", header.num_sidedefs);  
+    }  
+      
+    // ========================================  
+    // THINGS (solo DMAP v2)  
+    // ========================================  
+      
+    if (header.version == 2 && header.num_things > 0) {  
+        map->num_things = header.num_things;  
+        map->things = malloc(sizeof(THING) * header.num_things);  
+        if (!map->things) {  
+            fprintf(stderr, "Error: No se pudo asignar memoria para things\n");  
+            if (map->sidedefs) free(map->sidedefs);  
+            free(map->walls);  
+            for (uint32_t i = 0; i < header.num_sectors; i++) {  
+                free(((SECTOR_V2*)map->sectors)[i].vertex_indices);  
+            }  
+            free(map->sectors);  
+            if (map->vertices) free(map->vertices);  
+            for (uint32_t i = 0; i < header.num_textures; i++) {  
+                if (map->textures[i].graph_id > 0) {  
+                    bitmap_destroy(bitmap_get(0, map->textures[i].graph_id));  
+                }  
+            }  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        for (uint32_t i = 0; i < header.num_things; i++) {  
+            fread(&map->things[i], sizeof(THING), 1, file);  
+        }  
+        fprintf(stderr, "DEBUG LOAD: %u things leídos\n", header.num_things);  
+    }  
+      
+    // ========================================  
+    // BSP NODES (solo DMAP v2)  
+    // ========================================  
+      
+    if (header.version == 2 && header.num_bsp_nodes > 0) {  
+        map->num_bsp_nodes = header.num_bsp_nodes;  
+        map->bsp_nodes = malloc(sizeof(BSP_NODE) * header.num_bsp_nodes);  
+        if (!map->bsp_nodes) {  
+            fprintf(stderr, "Error: No se pudo asignar memoria para BSP nodes\n");  
+            if (map->things) free(map->things);  
+            if (map->sidedefs) free(map->sidedefs);  
+            free(map->walls);  
+            for (uint32_t i = 0; i < header.num_sectors; i++) {  
+                free(((SECTOR_V2*)map->sectors)[i].vertex_indices);  
+            }  
+            free(map->sectors);  
+            if (map->vertices) free(map->vertices);  
+            for (uint32_t i = 0; i < header.num_textures; i++) {  
+                if (map->textures[i].graph_id > 0) {  
+                    bitmap_destroy(bitmap_get(0, map->textures[i].graph_id));  
+                }  
+            }  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        for (uint32_t i = 0; i < header.num_bsp_nodes; i++) {  
+            fread(&map->bsp_nodes[i], sizeof(BSP_NODE), 1, file);  
+        }  
+        fprintf(stderr, "DEBUG LOAD: %u BSP nodes leídos\n", header.num_bsp_nodes);  
+    }  
+      
+    // ========================================  
+    // BLOCKMAP (solo DMAP v2)  
+    // ========================================  
+      
+    if (header.version == 2 && header.blockmap_width > 0 && header.blockmap_height > 0) {  
+        map->blockmap_width = header.blockmap_width;  
+        map->blockmap_height = header.blockmap_height;  
+          
+        uint32_t blockmap_size = header.blockmap_width * header.blockmap_height;  
+        map->blockmap_grid = malloc(sizeof(BLOCKMAP_CELL) * blockmap_size);  
+        if (!map->blockmap_grid) {  
+            fprintf(stderr, "Error: No se pudo asignar memoria para blockmap\n");  
+            if (map->bsp_nodes) free(map->bsp_nodes);  
+            if (map->things) free(map->things);  
+            if (map->sidedefs) free(map->sidedefs);  
+            free(map->walls);  
+            for (uint32_t i = 0; i < header.num_sectors; i++) {  
+                free(((SECTOR_V2*)map->sectors)[i].vertex_indices);  
+            }  
+            free(map->sectors);  
+            if (map->vertices) free(map->vertices);  
+            for (uint32_t i = 0; i < header.num_textures; i++) {  
+                if (map->textures[i].graph_id > 0) {  
+                    bitmap_destroy(bitmap_get(0, map->textures[i].graph_id));  
+                }  
+            }  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        for (uint32_t i = 0; i < blockmap_size; i++) {  
+            fread(&map->blockmap_grid[i].num_walls, sizeof(uint32_t), 1, file);  
+              
+            if (map->blockmap_grid[i].num_walls > 0) {  
+                map->blockmap_grid[i].wall_indices = malloc(sizeof(uint32_t) * map->blockmap_grid[i].num_walls);  
+                if (!map->blockmap_grid[i].wall_indices) {  
+                    fprintf(stderr, "Error: No se pudo asignar memoria para wall_indices en blockmap cell %u\n", i);  
+                    // Liberar celdas anteriores  
+                    for (uint32_t j = 0; j < i; j++) {  
+                        if (map->blockmap_grid[j].wall_indices) {  
+                            free(map->blockmap_grid[j].wall_indices);  
+                        }  
+                    }  
+                    free(map->blockmap_grid);  
+                    if (map->bsp_nodes) free(map->bsp_nodes);  
+                    if (map->things) free(map->things);  
+                    if (map->sidedefs) free(map->sidedefs);  
+                    free(map->walls);  
+                    for (uint32_t k = 0; k < header.num_sectors; k++) {  
+                        free(((SECTOR_V2*)map->sectors)[k].vertex_indices);  
+                    }  
+                    free(map->sectors);  
+                    if (map->vertices) free(map->vertices);  
+                    for (uint32_t k = 0; k < header.num_textures; k++) {  
+                        if (map->textures[k].graph_id > 0) {  
+                            bitmap_destroy(bitmap_get(0, map->textures[k].graph_id));  
+                        }  
+                    }  
+                    free(map->textures);  
+                    fclose(file);  
+                    string_discard(params[0]);  
+                    return 0;  
+                }  
+                  
+                fread(map->blockmap_grid[i].wall_indices, sizeof(uint32_t),   
+                      map->blockmap_grid[i].num_walls, file);  
+            } else {  
+                map->blockmap_grid[i].wall_indices = NULL;  
+            }  
+        }  
+        fprintf(stderr, "DEBUG LOAD: Blockmap %ux%u leído\n",   
+                header.blockmap_width, header.blockmap_height);  
+    }  
+      
+    // ========================================  
+    // CIERRE Y MENSAJE DE ÉXITO  
+    // ========================================  
+      
+    fclose(file);  
+    string_discard(params[0]);  
+      
+    if (header.version == 2) {  
+        printf("Mapa DMAP v2 cargado exitosamente:\n");  
+        printf("  - %u sectores\n", header.num_sectors);  
+        printf("  - %u paredes\n", header.num_walls);  
+        printf("  - %u texturas\n", header.num_textures);  
+        printf("  - %u vértices compartidos\n", header.num_vertices);  
+        printf("  - %u sidedefs\n", header.num_sidedefs);  
+        printf("  - %u things\n", header.num_things);  
+        printf("  - %u nodos BSP\n", header.num_bsp_nodes);  
+    } else {  
+        printf("Mapa DMAP v1 cargado exitosamente:\n");  
+        printf("  - %u sectores\n", header.num_sectors);  
+        printf("  - %u paredes\n", header.num_walls);  
+        printf("  - %u texturas\n", header.num_textures);  
+    }  
+      
+    return map->id;  
+}
 // Proyectar un segmento de pared desde coordenadas mundo a pantalla  
 static WALL_PROJECTION project_wall_segment(float x1, float y1, float x2, float y2,   
                                              float floor_height, float ceiling_height) {  
@@ -3744,460 +4224,472 @@ static void render_wall_column(int screen_x, float distance, float wall_height,
     }  
 }
 
-int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {  
-    int64_t hm_id = params[0];  
-    int64_t render_width = params[1];  
-    int64_t render_height = params[2];  
-      
-    float fov = 0.7f;  // FOV en radianes (~40 grados)  
-      
-    // Buscar heightmap  
-    HEIGHTMAP *hm = NULL;  
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        if (heightmaps[i].id == hm_id) {  
-            hm = &heightmaps[i];  
-            break;  
-        }  
+int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {    
+    int64_t hm_id = params[0];    
+    int64_t render_width = params[1];    
+    int64_t render_height = params[2];    
+        
+    float fov = 0.7f;  // FOV en radianes (~40 grados)    
+        
+    // Buscar heightmap    
+    HEIGHTMAP *hm = NULL;    
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {    
+        if (heightmaps[i].id == hm_id) {    
+            hm = &heightmaps[i];    
+            break;    
+        }    
+    }    
+        
+    if (!hm || hm->type != MAP_TYPE_SECTOR) {    
+        return 0;    
+    }    
+        
+    // Buffer estático local para evitar conflictos con GPU renderer    
+    static GRAPH *cpu_render_buffer = NULL;    
+    static int64_t last_width = 0;    
+    static int64_t last_height = 0;    
+        
+    // Crear o redimensionar buffer si es necesario    
+    if (!cpu_render_buffer || last_width != render_width || last_height != render_height) {    
+        if (cpu_render_buffer) {    
+            bitmap_destroy(cpu_render_buffer);    
+        }    
+        cpu_render_buffer = bitmap_new_syslib(render_width, render_height);    
+        if (!cpu_render_buffer) {    
+            return 0;    
+        }    
+        last_width = render_width;    
+        last_height = render_height;    
+    }    
+        
+    // Depth buffer estático con gestión dinámica    
+    static float *depth_buffer = NULL;    
+    static size_t depth_buffer_size = 0;    
+    size_t required_size = (size_t)render_width * (size_t)render_height;    
+        
+    if (depth_buffer_size < required_size) {    
+        if (depth_buffer) {    
+            free(depth_buffer);    
+        }    
+        depth_buffer = (float*)malloc(required_size * sizeof(float));    
+        if (!depth_buffer) {    
+            return 0;    
+        }    
+        depth_buffer_size = required_size;    
+    }    
+        
+    // Inicializar depth buffer    
+    for (size_t i = 0; i < required_size; i++) {    
+        depth_buffer[i] = max_render_distance;    
+    }    
+        
+    // Variables declaradas UNA SOLA VEZ aquí    
+    size_t buffer_index;    
+    size_t buffer_size = required_size;    
+        
+    // Limpiar buffer con color de cielo    
+    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, 255);    
+    gr_clear_as(cpu_render_buffer, sky_color);    
+        
+    // Obtener texturas EMPAQUETADAS (ya cargadas en memoria como GRAPHs)  
+    GRAPH *wall_texture = NULL;    
+    GRAPH *floor_texture = NULL;    
+    GRAPH *ceiling_texture = NULL;    
+        
+    if (hm->num_textures > 0 && hm->textures) {    
+        // Las texturas ya están cargadas como GRAPHs desde datos empaquetados  
+        if (hm->textures[0].graph_id > 0) {    
+            wall_texture = bitmap_get(0, hm->textures[0].graph_id);    
+        }    
+        if (hm->num_textures > 1 && hm->textures[1].graph_id > 0) {    
+            floor_texture = bitmap_get(0, hm->textures[1].graph_id);    
+        }    
+        if (hm->num_textures > 2 && hm->textures[2].graph_id > 0) {    
+            ceiling_texture = bitmap_get(0, hm->textures[2].graph_id);    
+        }    
     }  
       
-    if (!hm || hm->type != MAP_TYPE_SECTOR) {  
-        return 0;  
-    }  
-      
-    // Buffer estático local para evitar conflictos con GPU renderer  
-    static GRAPH *cpu_render_buffer = NULL;  
-    static int64_t last_width = 0;  
-    static int64_t last_height = 0;  
-      
-    // Crear o redimensionar buffer si es necesario  
-    if (!cpu_render_buffer || last_width != render_width || last_height != render_height) {  
-        if (cpu_render_buffer) {  
-            bitmap_destroy(cpu_render_buffer);  
-        }  
-        cpu_render_buffer = bitmap_new_syslib(render_width, render_height);  
-        if (!cpu_render_buffer) {  
-            return 0;  
-        }  
-        last_width = render_width;  
-        last_height = render_height;  
-    }  
-      
-    // Depth buffer estático con gestión dinámica  
-    static float *depth_buffer = NULL;  
-    static size_t depth_buffer_size = 0;  
-    size_t required_size = (size_t)render_width * (size_t)render_height;  
-      
-    if (depth_buffer_size < required_size) {  
-        if (depth_buffer) {  
-            free(depth_buffer);  
-        }  
-        depth_buffer = (float*)malloc(required_size * sizeof(float));  
-        if (!depth_buffer) {  
-            return 0;  
-        }  
-        depth_buffer_size = required_size;  
-    }  
-      
-    // Inicializar depth buffer  
-    for (size_t i = 0; i < required_size; i++) {  
-        depth_buffer[i] = max_render_distance;  
-    }  
-      
-    // Variables declaradas UNA SOLA VEZ aquí  
-    size_t buffer_index;  
-    size_t buffer_size = required_size;  
-      
-    // Limpiar buffer con color de cielo  
-    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, 255);  
-    gr_clear_as(cpu_render_buffer, sky_color);  
-      
-    // Obtener texturas  
-    GRAPH *wall_texture = NULL;  
-    GRAPH *floor_texture = NULL;  
-    GRAPH *ceiling_texture = NULL;  
-      
-    if (hm->num_textures > 0 && hm->textures) {  
-        if (hm->textures[0].graph_id > 0) {  
-            wall_texture = bitmap_get(0, hm->textures[0].graph_id);  
-        }  
-        if (hm->num_textures > 1 && hm->textures[1].graph_id > 0) {  
-            floor_texture = bitmap_get(0, hm->textures[1].graph_id);  
-        }  
-        if (hm->num_textures > 2 && hm->textures[2].graph_id > 0) {  
-            ceiling_texture = bitmap_get(0, hm->textures[2].graph_id);  
-        }  
+    // Precalcular valores de rotación de cámara    
+    float cos_cam = cosf(-camera.angle);    
+    float sin_cam = sinf(-camera.angle);    
+        
+    // Calcular projection_scale basado en FOV    
+    float projection_scale = (render_width / 2.0f) / tanf(fov / 2.0f);
+     // ============================================================    
+    // PARTE 2: RENDERIZADO DE PAREDES CON TEXTURAS EMPAQUETADAS  
+    // ============================================================    
+        
+    int walls_rendered = 0;    
+        
+    // Precalcular valores de rotación de cámara    
+    float cos_cam = cosf(-camera.angle);    
+    float sin_cam = sinf(-camera.angle);    
+        
+    // Calcular projection_scale basado en FOV    
+    float projection_scale = (render_width / 2.0f) / tanf(fov / 2.0f);    
+        
+    // Iterar sobre cada sector    
+    for (int s = 0; s < hm->num_sectors; s++) {    
+        SECTOR *sector = &hm->sectors[s];    
+            
+        if (sector->num_vertices < 2) {    
+            continue;    
+        }    
+            
+        // Iterar sobre cada segmento de pared del sector    
+        for (uint32_t i = 0; i < sector->num_vertices; i++) {    
+            uint32_t next_i = (i + 1) % sector->num_vertices;    
+                
+            float x1 = sector->vertices[i * 2];    
+            float y1 = sector->vertices[i * 2 + 1];    
+            float x2 = sector->vertices[next_i * 2];    
+            float y2 = sector->vertices[next_i * 2 + 1];    
+                
+            // Transformar vértices al espacio de cámara    
+            float dx1 = x1 - camera.x;    
+            float dy1 = y1 - camera.y;    
+            float dx2 = x2 - camera.x;    
+            float dy2 = y2 - camera.y;    
+                
+            // Rotar al espacio de vista de la cámara    
+            float cam_x1 = dx1 * cos_cam - dy1 * sin_cam;    
+            float cam_z1 = dx1 * sin_cam + dy1 * cos_cam;    
+            float cam_x2 = dx2 * cos_cam - dy2 * sin_cam;    
+            float cam_z2 = dx2 * sin_cam + dy2 * cos_cam;    
+                
+            // Clipping contra near plane    
+            float near_plane = 0.1f;    
+            if (cam_z1 < near_plane && cam_z2 < near_plane) {    
+                continue; // Segmento completamente detrás de la cámara    
+            }    
+                
+            // Proyectar a coordenadas de pantalla    
+            int screen_x1, screen_x2;    
+                
+            if (cam_z1 > near_plane) {    
+                screen_x1 = (int)(render_width / 2.0f + (cam_x1 / cam_z1) * projection_scale);    
+            } else {    
+                screen_x1 = (cam_x1 < 0) ? -1 : render_width;    
+            }    
+                
+            if (cam_z2 > near_plane) {    
+                screen_x2 = (int)(render_width / 2.0f + (cam_x2 / cam_z2) * projection_scale);    
+            } else {    
+                screen_x2 = (cam_x2 < 0) ? -1 : render_width;    
+            }    
+                
+            // Verificar que el segmento esté dentro de la pantalla    
+            if (screen_x1 < 0 && screen_x2 < 0) continue;    
+            if (screen_x1 >= render_width && screen_x2 >= render_width) continue;    
+                
+            // Clamp a límites de pantalla    
+            if (screen_x1 < 0) screen_x1 = 0;    
+            if (screen_x2 >= render_width) screen_x2 = render_width - 1;    
+            if (screen_x1 > screen_x2) {    
+                int temp = screen_x1;    
+                screen_x1 = screen_x2;    
+                screen_x2 = temp;    
+            }    
+                
+            // Renderizar columnas del segmento    
+            for (int screen_x = screen_x1; screen_x <= screen_x2; screen_x++) {    
+                if (screen_x < 0 || screen_x >= render_width) continue;    
+                    
+                // Interpolación lineal de profundidad    
+                float t = (screen_x2 != screen_x1) ?     
+                         (float)(screen_x - screen_x1) / (float)(screen_x2 - screen_x1) : 0.0f;    
+                float depth = cam_z1 + t * (cam_z2 - cam_z1);    
+                    
+                if (depth < near_plane) continue;    
+                    
+                // Calcular altura de pared en pantalla    
+                float wall_height = sector->ceiling_height - sector->floor_height;    
+                float wall_top_screen = render_height / 2.0f -     
+                                       ((sector->ceiling_height - camera.z) / depth) * projection_scale;    
+                float wall_bottom_screen = render_height / 2.0f -     
+                                          ((sector->floor_height - camera.z) / depth) * projection_scale;    
+                    
+                int wall_top = (int)wall_top_screen;    
+                int wall_bottom = (int)wall_bottom_screen;    
+                    
+                // Clamp a límites de pantalla    
+                if (wall_top < 0) wall_top = 0;    
+                if (wall_bottom >= render_height) wall_bottom = render_height - 1;    
+                    
+                if (wall_top >= wall_bottom) continue;    
+                    
+                // Obtener textura de pared (ahora empaquetada)  
+                GRAPH *current_wall_texture = NULL;    
+                if (wall_texture && wall_texture->width > 0 && wall_texture->height > 0) {    
+                    current_wall_texture = wall_texture;    
+                }    
+                    
+                // Renderizar píxeles de la pared    
+                for (int screen_y = wall_top; screen_y < wall_bottom; screen_y++) {    
+                    buffer_index = (size_t)screen_y * (size_t)render_width + (size_t)screen_x;    
+                        
+                    if (buffer_index >= buffer_size) {    
+                        continue;    
+                    }    
+                        
+                    // Verificar depth buffer    
+                    if (depth >= depth_buffer[buffer_index]) {    
+                        continue;    
+                    }    
+                        
+                    uint32_t color;    
+                        
+                    if (current_wall_texture) {    
+                        // Calcular coordenadas de textura    
+                        float wall_length = sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));    
+                        float u = (t * wall_length) / 64.0f;    
+                        u = u - floorf(u);    
+                            
+                        float v = (float)(screen_y - wall_top) / (float)(wall_bottom - wall_top);    
+                            
+                        int tex_x = (int)(u * current_wall_texture->width) % current_wall_texture->width;    
+                        int tex_y = (int)(v * current_wall_texture->height) % current_wall_texture->height;    
+                            
+                        if (tex_x < 0) tex_x = 0;    
+                        if (tex_x >= current_wall_texture->width) tex_x = current_wall_texture->width - 1;    
+                        if (tex_y < 0) tex_y = 0;    
+                        if (tex_y >= current_wall_texture->height) tex_y = current_wall_texture->height - 1;    
+                            
+                        color = gr_get_pixel(current_wall_texture, tex_x, tex_y);    
+                            
+                        // Extraer componentes RGB correctamente    
+                        uint8_t r, g, b, a;    
+                        SDL_GetRGBA(color, gPixelFormat, &r, &g, &b, &a);    
+                            
+                        // Aplicar fog    
+                        float fog = 1.0f - (depth / max_render_distance);    
+                        if (fog < 0.3f) fog = 0.3f;    
+                        if (fog > 1.0f) fog = 1.0f;    
+                            
+                        r = (uint8_t)(r * fog);    
+                        g = (uint8_t)(g * fog);    
+                        b = (uint8_t)(b * fog);    
+                            
+                        color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);    
+                    } else {    
+                        // Color sólido si no hay textura    
+                        color = SDL_MapRGBA(gPixelFormat, 150, 120, 100, 255);    
+                    }    
+                        
+                    gr_put_pixel(cpu_render_buffer, screen_x, screen_y, color);    
+                    depth_buffer[buffer_index] = depth;    
+                    walls_rendered++;    
+                }    
+            }    
+        }    
     }
-        // ============================================================  
-    // PARTE 2: RENDERIZADO DE PAREDES VERTICALES  
+     // ============================================================    
+    // PARTE 3: RENDERIZADO DE SUELOS Y TECHOS CON TEXTURAS EMPAQUETADAS  
+    // ============================================================    
+        
+    int floor_pixels_rendered = 0;    
+    int ceiling_pixels_rendered = 0;    
+        
+    // Renderizar suelos y techos para píxeles no cubiertos por paredes    
+    for (int screen_y = 0; screen_y < render_height; screen_y++) {    
+        for (int screen_x = 0; screen_x < render_width; screen_x++) {    
+            buffer_index = (size_t)screen_y * (size_t)render_width + (size_t)screen_x;    
+                
+            // Verificar límites del buffer    
+            if (buffer_index >= buffer_size) {    
+                continue;    
+            }    
+                
+            // Solo renderizar si no hay pared en este píxel    
+            if (depth_buffer[buffer_index] >= max_render_distance * 0.99f) {    
+                // Calcular ángulo del rayo para esta columna    
+                float column_angle = camera.angle - fov * 0.5f + (screen_x / (float)render_width) * fov;    
+                float ray_dir_x = cosf(column_angle);    
+                float ray_dir_y = sinf(column_angle);    
+                    
+                // RENDERIZADO DE SUELO CON TEXTURAS EMPAQUETADAS  
+                if (screen_y > render_height / 2) {    
+                    if (floor_texture && floor_texture->width > 0 && floor_texture->height > 0) {    
+                        // Calcular pitch del rayo para esta fila    
+                        float screen_y_normalized = (screen_y / (float)render_height) - 0.5f;    
+                        float vertical_fov = fov * 0.75f;    
+                        float tan_half_vfov = tanf(vertical_fov * 0.5f);    
+                        float ray_pitch_offset = atanf(screen_y_normalized * 2.0f * tan_half_vfov);    
+                        float ray_pitch = camera.pitch + ray_pitch_offset;    
+                        float sin_pitch = sinf(ray_pitch);    
+                            
+                        if (fabsf(sin_pitch) > 0.001f) {    
+                            // Iterar sobre sectores para encontrar intersección con suelo    
+                            for (int s = 0; s < hm->num_sectors; s++) {    
+                                SECTOR *sector = &hm->sectors[s];    
+                                    
+                                float floor_height = sector->floor_height;    
+                                float height_diff = camera.z - floor_height;    
+                                float distance_to_floor = height_diff / sin_pitch;    
+                                    
+                                if (distance_to_floor > 0.0f && distance_to_floor < max_render_distance) {    
+                                    // Calcular punto de intersección en el mundo    
+                                    float world_x = camera.x + ray_dir_x * distance_to_floor;    
+                                    float world_y = camera.y + ray_dir_y * distance_to_floor;    
+                                        
+                                    // Verificar si el punto está dentro del sector usando point-in-polygon    
+                                    int inside = 0;    
+                                    for (uint32_t v = 0; v < sector->num_vertices; v++) {    
+                                        uint32_t next_v = (v + 1) % sector->num_vertices;    
+                                        float v1_x = sector->vertices[v * 2];    
+                                        float v1_y = sector->vertices[v * 2 + 1];    
+                                        float v2_x = sector->vertices[next_v * 2];    
+                                        float v2_y = sector->vertices[next_v * 2 + 1];    
+                                            
+                                        if (((v1_y > world_y) != (v2_y > world_y)) &&    
+                                            (world_x < (v2_x - v1_x) * (world_y - v1_y) / (v2_y - v1_y) + v1_x)) {    
+                                            inside = !inside;    
+                                        }    
+                                    }    
+                                        
+                                    if (inside) {    
+                                        // Samplear textura de suelo empaquetada  
+                                        float tex_u = fmodf(world_x / 100.0f, 1.0f);    
+                                        float tex_v = fmodf(world_y / 100.0f, 1.0f);    
+                                        if (tex_u < 0.0f) tex_u += 1.0f;    
+                                        if (tex_v < 0.0f) tex_v += 1.0f;    
+                                            
+                                        int tex_x = (int)(tex_u * (floor_texture->width - 1));    
+                                        int tex_y = (int)(tex_v * (floor_texture->height - 1));    
+                                            
+                                        // Verificar límites de textura    
+                                        if (tex_x >= 0 && tex_x < floor_texture->width &&    
+                                            tex_y >= 0 && tex_y < floor_texture->height) {    
+                                                
+                                            uint32_t pixel = gr_get_pixel(floor_texture, tex_x, tex_y);    
+                                                
+                                            // Extraer componentes RGB    
+                                            uint8_t r, g, b, a;    
+                                            SDL_GetRGBA(pixel, gPixelFormat, &r, &g, &b, &a);    
+                                                
+                                            // Aplicar iluminación    
+                                            r = (uint8_t)(r * (light_intensity / 255.0f));    
+                                            g = (uint8_t)(g * (light_intensity / 255.0f));    
+                                            b = (uint8_t)(b * (light_intensity / 255.0f));    
+                                                
+                                            // Aplicar fog    
+                                            float fog = 1.0f - (distance_to_floor / max_render_distance);    
+                                            fog = fmaxf(0.3f, fminf(1.0f, fog));    
+                                                
+                                            r = (uint8_t)(r * fog + sky_color_r * (1.0f - fog));    
+                                            g = (uint8_t)(g * fog + sky_color_g * (1.0f - fog));    
+                                            b = (uint8_t)(b * fog + sky_color_b * (1.0f - fog));    
+                                                
+                                            uint32_t final_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);    
+                                            gr_put_pixel(cpu_render_buffer, screen_x, screen_y, final_color);    
+                                                
+                                            depth_buffer[buffer_index] = distance_to_floor;    
+                                            floor_pixels_rendered++;    
+                                        }    
+                                    }    
+                                }    
+                            }    
+                        }    
+                    }    
+                }    
+                    
+                // RENDERIZADO DE TECHO CON TEXTURAS EMPAQUETADAS  
+                else if (screen_y < render_height / 2) {    
+                    if (ceiling_texture && ceiling_texture->width > 0 && ceiling_texture->height > 0) {    
+                        // Calcular pitch del rayo para esta fila    
+                        float screen_y_normalized = (screen_y / (float)render_height) - 0.5f;    
+                        float vertical_fov = fov * 0.75f;    
+                        float tan_half_vfov = tanf(vertical_fov * 0.5f);    
+                        float ray_pitch_offset = atanf(screen_y_normalized * 2.0f * tan_half_vfov);    
+                        float ray_pitch = camera.pitch + ray_pitch_offset;    
+                        float sin_pitch = sinf(ray_pitch);    
+                            
+                        if (fabsf(sin_pitch) > 0.001f) {    
+                            // Iterar sobre sectores para encontrar intersección con techo    
+                            for (int s = 0; s < hm->num_sectors; s++) {    
+                                SECTOR *sector = &hm->sectors[s];    
+                                    
+                                float ceiling_height = sector->ceiling_height;    
+                                float height_diff = camera.z - ceiling_height;    
+                                float distance_to_ceiling = height_diff / sin_pitch;    
+                                    
+                                if (distance_to_ceiling > 0.0f && distance_to_ceiling < max_render_distance) {    
+                                    // Calcular punto de intersección en el mundo    
+                                    float world_x = camera.x + ray_dir_x * distance_to_ceiling;    
+                                    float world_y = camera.y + ray_dir_y * distance_to_ceiling;    
+                                        
+                                    // Verificar si el punto está dentro del sector usando point-in-polygon    
+                                    int inside = 0;    
+                                    for (uint32_t v = 0; v < sector->num_vertices; v++) {    
+                                        uint32_t next_v = (v + 1) % sector->num_vertices;    
+                                        float v1_x = sector->vertices[v * 2];    
+                                        float v1_y = sector->vertices[v * 2 + 1];    
+                                        float v2_x = sector->vertices[next_v * 2];    
+                                        float v2_y = sector->vertices[next_v * 2 + 1];    
+                                            
+                                        if (((v1_y > world_y) != (v2_y > world_y)) &&    
+                                            (world_x < (v2_x - v1_x) * (world_y - v1_y) / (v2_y - v1_y) + v1_x)) {    
+                                            inside = !inside;    
+                                        }    
+                                    }    
+                                        
+                                    if (inside) {    
+                                        // Samplear textura de techo empaquetada  
+                                        float tex_u = fmodf(world_x / 100.0f, 1.0f);    
+                                        float tex_v = fmodf(world_y / 100.0f, 1.0f);    
+                                        if (tex_u < 0.0f) tex_u += 1.0f;    
+                                        if (tex_v < 0.0f) tex_v += 1.0f;    
+                                            
+                                        int tex_x = (int)(tex_u * (ceiling_texture->width - 1));    
+                                        int tex_y = (int)(tex_v * (ceiling_texture->height - 1));    
+                                            
+                                        // Verificar límites de textura    
+                                        if (tex_x >= 0 && tex_x < ceiling_texture->width &&    
+                                            tex_y >= 0 && tex_y < ceiling_texture->height) {    
+                                                
+                                            uint32_t pixel = gr_get_pixel(ceiling_texture, tex_x, tex_y);    
+                                                
+                                            // Extraer componentes RGB    
+                                            uint8_t r, g, b, a;    
+                                            SDL_GetRGBA(pixel, gPixelFormat, &r, &g, &b, &a);    
+                                                
+                                            // Aplicar iluminación    
+                                            r = (uint8_t)(r * (light_intensity / 255.0f));    
+                                            g = (uint8_t)(g * (light_intensity / 255.0f));    
+                                            b = (uint8_t)(b * (light_intensity / 255.0f));    
+                                                
+                                            // Aplicar fog    
+                                            float fog = 1.0f - (distance_to_ceiling / max_render_distance);    
+                                            fog = fmaxf(0.3f, fminf(1.0f, fog));    
+                                                
+                                            r = (uint8_t)(r * fog + sky_color_r * (1.0f - fog));    
+                                            g = (uint8_t)(g * fog + sky_color_g * (1.0f - fog));    
+                                            b = (uint8_t)(b * fog + sky_color_b * (1.0f - fog));    
+                                                
+                                            uint32_t final_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);    
+                                            gr_put_pixel(cpu_render_buffer, screen_x, screen_y, final_color);    
+                                                
+                                            depth_buffer[buffer_index] = distance_to_ceiling;    
+                                            ceiling_pixels_rendered++;    
+                                        }    
+                                    }    
+                                }    
+                            }    
+                        }    
+                    }    
+                }    
+            }    
+        }    
+    }    
+          // Debug: Mostrar estadísticas de renderizado  
+    fprintf(stderr, "Renderizado completado: %d paredes, %d píxeles de suelo, %d píxeles de techo\n",  
+            walls_rendered, floor_pixels_rendered, ceiling_pixels_rendered);
+             // ============================================================    
+    // PARTE 4: RENDERIZADO DE BILLBOARDS Y RETORNO  
     // ============================================================  
       
-    int walls_rendered = 0;  
-      
-    // Precalcular valores de rotación de cámara  
-    float cos_cam = cosf(-camera.angle);  
-    float sin_cam = sinf(-camera.angle);  
-      
-    // Calcular projection_scale basado en FOV  
-    float projection_scale = (render_width / 2.0f) / tanf(fov / 2.0f);  
-      
-    // Iterar sobre cada sector  
-    for (int s = 0; s < hm->num_sectors; s++) {  
-        SECTOR *sector = &hm->sectors[s];  
-          
-        if (sector->num_vertices < 2) {  
-            continue;  
-        }  
-          
-        // Verificar que la cámara esté dentro del rango válido del sector  
-        if (camera.z < sector->floor_height || camera.z > sector->ceiling_height) {  
-            continue;  
-        }  
-          
-        // Iterar sobre cada segmento de pared del sector  
-        for (uint32_t i = 0; i < sector->num_vertices; i++) {  
-            uint32_t next_i = (i + 1) % sector->num_vertices;  
-              
-            float x1 = sector->vertices[i * 2];  
-            float y1 = sector->vertices[i * 2 + 1];  
-            float x2 = sector->vertices[next_i * 2];  
-            float y2 = sector->vertices[next_i * 2 + 1];  
-              
-            // Transformar vértices al espacio de cámara  
-            float dx1 = x1 - camera.x;  
-            float dy1 = y1 - camera.y;  
-            float dx2 = x2 - camera.x;  
-            float dy2 = y2 - camera.y;  
-              
-            // Rotar al espacio de vista de la cámara  
-            float cam_x1 = dx1 * cos_cam - dy1 * sin_cam;  
-            float cam_z1 = dx1 * sin_cam + dy1 * cos_cam;  
-            float cam_x2 = dx2 * cos_cam - dy2 * sin_cam;  
-            float cam_z2 = dx2 * sin_cam + dy2 * cos_cam;  
-              
-            // Clipping contra near plane  
-            float near_plane = 0.1f;  
-            if (cam_z1 < near_plane && cam_z2 < near_plane) {  
-                continue; // Segmento completamente detrás de la cámara  
-            }  
-              
-            // Proyectar a coordenadas de pantalla  
-            int screen_x1, screen_x2;  
-              
-            if (cam_z1 > near_plane) {  
-                screen_x1 = (int)(render_width / 2.0f + (cam_x1 / cam_z1) * projection_scale);  
-            } else {  
-                screen_x1 = (cam_x1 < 0) ? -1 : render_width;  
-            }  
-              
-            if (cam_z2 > near_plane) {  
-                screen_x2 = (int)(render_width / 2.0f + (cam_x2 / cam_z2) * projection_scale);  
-            } else {  
-                screen_x2 = (cam_x2 < 0) ? -1 : render_width;  
-            }  
-              
-            // Verificar que el segmento esté dentro de la pantalla  
-            if (screen_x1 < 0 && screen_x2 < 0) continue;  
-            if (screen_x1 >= render_width && screen_x2 >= render_width) continue;  
-              
-            // Clamp a límites de pantalla  
-            if (screen_x1 < 0) screen_x1 = 0;  
-            if (screen_x2 >= render_width) screen_x2 = render_width - 1;  
-            if (screen_x1 > screen_x2) {  
-                int temp = screen_x1;  
-                screen_x1 = screen_x2;  
-                screen_x2 = temp;  
-            }  
-              
-            // Renderizar columnas del segmento  
-            for (int screen_x = screen_x1; screen_x <= screen_x2; screen_x++) {  
-                if (screen_x < 0 || screen_x >= render_width) continue;  
-                  
-                // Interpolación lineal de profundidad  
-                float t = (screen_x2 != screen_x1) ?   
-                         (float)(screen_x - screen_x1) / (float)(screen_x2 - screen_x1) : 0.0f;  
-                float depth = cam_z1 + t * (cam_z2 - cam_z1);  
-                  
-                if (depth < near_plane) continue;  
-                  
-                // Calcular altura de pared en pantalla  
-                float wall_height = sector->ceiling_height - sector->floor_height;  
-                float wall_top_screen = render_height / 2.0f -   
-                                       ((sector->ceiling_height - camera.z) / depth) * projection_scale;  
-                float wall_bottom_screen = render_height / 2.0f -   
-                                          ((sector->floor_height - camera.z) / depth) * projection_scale;  
-                  
-                int wall_top = (int)wall_top_screen;  
-                int wall_bottom = (int)wall_bottom_screen;  
-                  
-                // Clamp a límites de pantalla  
-                if (wall_top < 0) wall_top = 0;  
-                if (wall_bottom >= render_height) wall_bottom = render_height - 1;  
-                  
-                if (wall_top >= wall_bottom) continue;  
-                  
-                // Obtener textura de pared  
-                GRAPH *wall_texture = NULL;  
-                if (hm->num_textures > 0 && hm->textures[0].graph_id > 0) {  
-                    wall_texture = bitmap_get(0, hm->textures[0].graph_id);  
-                }  
-                  
-                // Renderizar píxeles de la pared  
-                for (int screen_y = wall_top; screen_y < wall_bottom; screen_y++) {  
-                    buffer_index = (size_t)screen_y * (size_t)render_width + (size_t)screen_x;  
-                      
-                    if (buffer_index >= buffer_size) {  
-                        continue;  
-                    }  
-                      
-                    // Verificar depth buffer  
-                    if (depth >= depth_buffer[buffer_index]) {  
-                        continue;  
-                    }  
-                      
-                    uint32_t color;  
-                      
-                    if (wall_texture && wall_texture->width > 0 && wall_texture->height > 0) {  
-                        // Calcular coordenadas de textura  
-                        float wall_length = sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));  
-                        float u = (t * wall_length) / 64.0f;  
-                        u = u - floorf(u);  
-                          
-                        float v = (float)(screen_y - wall_top) / (float)(wall_bottom - wall_top);  
-                          
-                        int tex_x = (int)(u * wall_texture->width) % wall_texture->width;  
-                        int tex_y = (int)(v * wall_texture->height) % wall_texture->height;  
-                          
-                        if (tex_x < 0) tex_x = 0;  
-                        if (tex_x >= wall_texture->width) tex_x = wall_texture->width - 1;  
-                        if (tex_y < 0) tex_y = 0;  
-                        if (tex_y >= wall_texture->height) tex_y = wall_texture->height - 1;  
-                          
-                        color = gr_get_pixel(wall_texture, tex_x, tex_y);  
-                          
-                        // Extraer componentes RGB correctamente  
-                        uint8_t r, g, b, a;  
-                        SDL_GetRGBA(color, gPixelFormat, &r, &g, &b, &a);  
-                          
-                        // Aplicar fog  
-                        float fog = 1.0f - (depth / max_render_distance);  
-                        if (fog < 0.3f) fog = 0.3f;  
-                        if (fog > 1.0f) fog = 1.0f;  
-                          
-                        r = (uint8_t)(r * fog);  
-                        g = (uint8_t)(g * fog);  
-                        b = (uint8_t)(b * fog);  
-                          
-                        color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
-                    } else {  
-                        // Color sólido si no hay textura  
-                        color = SDL_MapRGBA(gPixelFormat, 150, 120, 100, 255);  
-                    }  
-                      
-                    gr_put_pixel(cpu_render_buffer, screen_x, screen_y, color);  
-                    depth_buffer[buffer_index] = depth;  
-                    walls_rendered++;  
-                }  
-            }  
-        }  
-    }
-       // ============================================================  
-    // PARTE 3: RENDERIZADO DE SUELOS Y TECHOS  
-    // ============================================================  
-      
-    int floor_pixels_rendered = 0;  
-    int ceiling_pixels_rendered = 0;  
-      
-    // Renderizar suelos y techos para píxeles no cubiertos por paredes  
-    for (int screen_y = 0; screen_y < render_height; screen_y++) {  
-        for (int screen_x = 0; screen_x < render_width; screen_x++) {  
-            buffer_index = (size_t)screen_y * (size_t)render_width + (size_t)screen_x;  
-              
-            // Verificar límites del buffer  
-            if (buffer_index >= buffer_size) {  
-                continue;  
-            }  
-              
-            // Solo renderizar si no hay pared en este píxel  
-            if (depth_buffer[buffer_index] >= max_render_distance * 0.99f) {  
-                // Calcular ángulo del rayo para esta columna  
-                float column_angle = camera.angle - fov * 0.5f + (screen_x / (float)render_width) * fov;  
-                float ray_dir_x = cosf(column_angle);  
-                float ray_dir_y = sinf(column_angle);  
-                  
-                // RENDERIZADO DE SUELO  
-                if (screen_y > render_height / 2) {  
-                    if (floor_texture) {  
-                        // Calcular pitch del rayo para esta fila  
-                        float screen_y_normalized = (screen_y / (float)render_height) - 0.5f;  
-                        float vertical_fov = fov * 0.75f;  
-                        float tan_half_vfov = tanf(vertical_fov * 0.5f);  
-                        float ray_pitch_offset = atanf(screen_y_normalized * 2.0f * tan_half_vfov);  
-                        float ray_pitch = camera.pitch + ray_pitch_offset;  
-                        float sin_pitch = sinf(ray_pitch);  
-                          
-                        if (fabsf(sin_pitch) > 0.001f) {  
-                            // Iterar sobre sectores para encontrar intersección con suelo  
-                            for (int s = 0; s < hm->num_sectors; s++) {  
-                                SECTOR *sector = &hm->sectors[s];  
-                                  
-                                float floor_height = sector->floor_height;  
-                                float height_diff = camera.z - floor_height;  
-                                float distance_to_floor = height_diff / sin_pitch;  
-                                  
-                                if (distance_to_floor > 0.0f && distance_to_floor < max_render_distance) {  
-                                    // Calcular punto de intersección en el mundo  
-                                    float world_x = camera.x + ray_dir_x * distance_to_floor;  
-                                    float world_y = camera.y + ray_dir_y * distance_to_floor;  
-                                      
-                                    // Verificar si el punto está dentro del sector usando point-in-polygon  
-                                    int inside = 0;  
-                                    for (uint32_t v = 0; v < sector->num_vertices; v++) {  
-                                        uint32_t next_v = (v + 1) % sector->num_vertices;  
-                                        float v1_x = sector->vertices[v * 2];  
-                                        float v1_y = sector->vertices[v * 2 + 1];  
-                                        float v2_x = sector->vertices[next_v * 2];  
-                                        float v2_y = sector->vertices[next_v * 2 + 1];  
-                                          
-                                        if (((v1_y > world_y) != (v2_y > world_y)) &&  
-                                            (world_x < (v2_x - v1_x) * (world_y - v1_y) / (v2_y - v1_y) + v1_x)) {  
-                                            inside = !inside;  
-                                        }  
-                                    }  
-                                      
-                                    if (inside) {  
-                                        // Samplear textura de suelo  
-                                        float tex_u = fmodf(world_x / 100.0f, 1.0f);  
-                                        float tex_v = fmodf(world_y / 100.0f, 1.0f);  
-                                        if (tex_u < 0.0f) tex_u += 1.0f;  
-                                        if (tex_v < 0.0f) tex_v += 1.0f;  
-                                          
-                                        int tex_x = (int)(tex_u * (floor_texture->width - 1));  
-                                        int tex_y = (int)(tex_v * (floor_texture->height - 1));  
-                                          
-                                        // Verificar límites de textura  
-                                        if (tex_x >= 0 && tex_x < floor_texture->width &&  
-                                            tex_y >= 0 && tex_y < floor_texture->height) {  
-                                              
-                                            uint32_t pixel = gr_get_pixel(floor_texture, tex_x, tex_y);  
-                                              
-                                            // Extraer componentes RGB  
-                                            uint8_t r, g, b, a;  
-                                            SDL_GetRGBA(pixel, gPixelFormat, &r, &g, &b, &a);  
-                                              
-                                            // Aplicar iluminación  
-                                            r = (uint8_t)(r * (light_intensity / 255.0f));  
-                                            g = (uint8_t)(g * (light_intensity / 255.0f));  
-                                            b = (uint8_t)(b * (light_intensity / 255.0f));  
-                                              
-                                            // Aplicar fog  
-                                            float fog = 1.0f - (distance_to_floor / max_render_distance);  
-                                            fog = fmaxf(0.3f, fminf(1.0f, fog));  
-                                              
-                                            r = (uint8_t)(r * fog + sky_color_r * (1.0f - fog));  
-                                            g = (uint8_t)(g * fog + sky_color_g * (1.0f - fog));  
-                                            b = (uint8_t)(b * fog + sky_color_b * (1.0f - fog));  
-                                              
-                                            uint32_t final_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
-                                            gr_put_pixel(cpu_render_buffer, screen_x, screen_y, final_color);  
-                                              
-                                            depth_buffer[buffer_index] = distance_to_floor;  
-                                            floor_pixels_rendered++;  
-                                        }  
-                                    }  
-                                }  
-                            }  
-                        }  
-                    }  
-                }  
-                  
-                // RENDERIZADO DE TECHO  
-                else if (screen_y < render_height / 2) {  
-                    if (ceiling_texture) {  
-                        // Calcular pitch del rayo para esta fila  
-                        float screen_y_normalized = (screen_y / (float)render_height) - 0.5f;  
-                        float vertical_fov = fov * 0.75f;  
-                        float tan_half_vfov = tanf(vertical_fov * 0.5f);  
-                        float ray_pitch_offset = atanf(screen_y_normalized * 2.0f * tan_half_vfov);  
-                        float ray_pitch = camera.pitch + ray_pitch_offset;  
-                        float sin_pitch = sinf(ray_pitch);  
-                          
-                        if (fabsf(sin_pitch) > 0.001f) {  
-                            // Iterar sobre sectores para encontrar intersección con techo  
-                            for (int s = 0; s < hm->num_sectors; s++) {  
-                                SECTOR *sector = &hm->sectors[s];  
-                                  
-                                float ceiling_height = sector->ceiling_height;  
-                                float height_diff = camera.z - ceiling_height;  
-                                float distance_to_ceiling = height_diff / sin_pitch;  
-                                  
-                                if (distance_to_ceiling > 0.0f && distance_to_ceiling < max_render_distance) {  
-                                    // Calcular punto de intersección en el mundo  
-                                    float world_x = camera.x + ray_dir_x * distance_to_ceiling;  
-                                    float world_y = camera.y + ray_dir_y * distance_to_ceiling;  
-                                      
-                                    // Verificar si el punto está dentro del sector usando point-in-polygon  
-                                    int inside = 0;  
-                                    for (uint32_t v = 0; v < sector->num_vertices; v++) {  
-                                        uint32_t next_v = (v + 1) % sector->num_vertices;  
-                                        float v1_x = sector->vertices[v * 2];  
-                                        float v1_y = sector->vertices[v * 2 + 1];  
-                                        float v2_x = sector->vertices[next_v * 2];  
-                                        float v2_y = sector->vertices[next_v * 2 + 1];  
-                                          
-                                        if (((v1_y > world_y) != (v2_y > world_y)) &&  
-                                            (world_x < (v2_x - v1_x) * (world_y - v1_y) / (v2_y - v1_y) + v1_x)) {  
-                                            inside = !inside;  
-                                        }  
-                                    }  
-                                      
-                                    if (inside) {  
-                                        // Samplear textura de techo  
-                                        float tex_u = fmodf(world_x / 100.0f, 1.0f);  
-                                        float tex_v = fmodf(world_y / 100.0f, 1.0f);  
-                                        if (tex_u < 0.0f) tex_u += 1.0f;  
-                                        if (tex_v < 0.0f) tex_v += 1.0f;  
-                                          
-                                        int tex_x = (int)(tex_u * (ceiling_texture->width - 1));  
-                                        int tex_y = (int)(tex_v * (ceiling_texture->height - 1));  
-                                          
-                                        // Verificar límites de textura  
-                                        if (tex_x >= 0 && tex_x < ceiling_texture->width &&  
-                                            tex_y >= 0 && tex_y < ceiling_texture->height) {  
-                                              
-                                            uint32_t pixel = gr_get_pixel(ceiling_texture, tex_x, tex_y);  
-                                              
-                                            // Extraer componentes RGB  
-                                            uint8_t r, g, b, a;  
-                                            SDL_GetRGBA(pixel, gPixelFormat, &r, &g, &b, &a);  
-                                              
-                                            // Aplicar iluminación  
-                                            r = (uint8_t)(r * (light_intensity / 255.0f));  
-                                            g = (uint8_t)(g * (light_intensity / 255.0f));  
-                                            b = (uint8_t)(b * (light_intensity / 255.0f));  
-                                              
-                                            // Aplicar fog  
-                                            float fog = 1.0f - (distance_to_ceiling / max_render_distance);  
-                                            fog = fmaxf(0.3f, fminf(1.0f, fog));  
-                                              
-                                            r = (uint8_t)(r * fog + sky_color_r * (1.0f - fog));  
-                                            g = (uint8_t)(g * fog + sky_color_g * (1.0f - fog));  
-                                            b = (uint8_t)(b * fog + sky_color_b * (1.0f - fog));  
-                                              
-                                            uint32_t final_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
-                                            gr_put_pixel(cpu_render_buffer, screen_x, screen_y, final_color);  
-                                              
-                                            depth_buffer[buffer_index] = distance_to_ceiling;  
-                                            ceiling_pixels_rendered++;  
-                                        }  
-                                    }  
-                                }  
-                            }  
-                        }  
-                    }  
-                }  
-            }  
-        }  
-    }  
+    // Renderizar billboards sobre el buffer de sectores  
+    render_billboards_to_buffer(cpu_render_buffer, depth_buffer, render_width, render_height);  
       
     // Retornar el graph_id del buffer renderizado  
     return cpu_render_buffer->code;  
@@ -4264,5 +4756,638 @@ int64_t libmod_heightmap_sector_strafe_right(INSTANCE *my, int64_t *params) {
     float speed = (params[0] > 0) ? (float)params[0] : move_speed;  
     move_camera_in_sector(M_PI_2, speed);  
     return 1;  
+}
+
+/* Actualizar sectores dinámicos (ascensores, plataformas móviles) */  
+void update_dynamic_sectors(HEIGHTMAP *hm, float delta_time) {  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return;  
+      
+    for (int i = 0; i < hm->num_sectors; i++) {  
+        SECTOR_V2 *sector = &((SECTOR_V2*)hm->sectors)[i];  
+          
+        // Solo procesar sectores dinámicos en movimiento  
+        if (!sector->is_dynamic || sector->move_state == 0) continue;  
+          
+        float move_amount = sector->move_speed * delta_time;  
+          
+        if (sector->move_state == 1) { // Subiendo  
+            sector->floor_height += move_amount;  
+            sector->ceiling_height += move_amount;  
+              
+            // Verificar si alcanzó el objetivo  
+            if (sector->floor_height >= sector->target_floor_height) {  
+                sector->floor_height = sector->target_floor_height;  
+                sector->ceiling_height = sector->target_ceiling_height;  
+                sector->move_state = 0; // Detener  
+                  
+                fprintf(stderr, "Sector %u alcanzó altura objetivo: %.2f\n",   
+                        sector->id, sector->floor_height);  
+            }  
+        } else if (sector->move_state == 2) { // Bajando  
+            sector->floor_height -= move_amount;  
+            sector->ceiling_height -= move_amount;  
+              
+            // Verificar si alcanzó el objetivo  
+            if (sector->floor_height <= sector->target_floor_height) {  
+                sector->floor_height = sector->target_floor_height;  
+                sector->ceiling_height = sector->target_ceiling_height;  
+                sector->move_state = 0; // Detener  
+                  
+                fprintf(stderr, "Sector %u alcanzó altura objetivo: %.2f\n",   
+                        sector->id, sector->floor_height);  
+            }  
+        }  
+    }  
+}
+
+/* Calcular altura del suelo en un punto, considerando pendientes */  
+float floor_height_at_point(SECTOR_V2 *sector, float world_x, float world_y) {  
+    if (!sector) return 0.0f;  
+      
+    // Altura base del sector  
+    float base_height = sector->floor_height;  
+      
+    // Si no hay pendiente, retornar altura constante  
+    if (sector->floor_slope_x == 0.0f && sector->floor_slope_y == 0.0f) {  
+        return base_height;  
+    }  
+      
+    // Calcular punto de referencia (primer vértice del sector)  
+    if (sector->num_vertices == 0 || !sector->vertex_indices) {  
+        return base_height;  
+    }  
+      
+    // Obtener primer vértice como origen  
+    VERTEX *first_vertex = &((HEIGHTMAP*)sector)->vertices[sector->vertex_indices[0]];  
+      
+    // Calcular desplazamiento desde el origen  
+    float dx = world_x - first_vertex->x;  
+    float dy = world_y - first_vertex->y;  
+      
+    // Aplicar pendientes  
+    float height = base_height + (dx * sector->floor_slope_x) + (dy * sector->floor_slope_y);  
+      
+    return height;  
+}
+
+/* Verificar colisión con paredes usando blockmap */  
+int check_wall_collision(float x, float y, HEIGHTMAP *hm) {  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return 0;  
+      
+    // Si no hay blockmap, verificar todas las paredes (lento)  
+    if (!hm->blockmap_grid || hm->blockmap_width == 0 || hm->blockmap_height == 0) {  
+        for (int i = 0; i < hm->num_walls; i++) {  
+            WALL_V2 *wall = &((WALL_V2*)hm->walls)[i];  
+              
+            // Solo verificar paredes que bloquean movimiento  
+            if (!(wall->flags & 0x01)) continue;  
+              
+            // Obtener vértices de la pared  
+            VERTEX *v1 = &hm->vertices[wall->vertex1_index];  
+            VERTEX *v2 = &hm->vertices[wall->vertex2_index];  
+              
+            // Calcular distancia punto-línea  
+            float dx = v2->x - v1->x;  
+            float dy = v2->y - v1->y;  
+            float length_sq = dx*dx + dy*dy;  
+              
+            if (length_sq < 0.001f) continue; // Pared degenerada  
+              
+            // Proyección del punto sobre la línea  
+            float t = ((x - v1->x) * dx + (y - v1->y) * dy) / length_sq;  
+            t = fmaxf(0.0f, fminf(1.0f, t)); // Clamp a [0,1]  
+              
+            // Punto más cercano en la línea  
+            float closest_x = v1->x + t * dx;  
+            float closest_y = v1->y + t * dy;  
+              
+            // Distancia al punto más cercano  
+            float dist_sq = (x - closest_x)*(x - closest_x) + (y - closest_y)*(y - closest_y);  
+              
+            // Radio de colisión (5 unidades)  
+            if (dist_sq < 25.0f) {  
+                return 1; // Colisión detectada  
+            }  
+        }  
+        return 0;  
+    }  
+      
+    // Usar blockmap para optimización  
+    int cell_x = (int)(x / hm->blockmap_cell_size);  
+    int cell_y = (int)(y / hm->blockmap_cell_size);  
+      
+    // Verificar límites del blockmap  
+    if (cell_x < 0 || cell_x >= hm->blockmap_width ||  
+        cell_y < 0 || cell_y >= hm->blockmap_height) {  
+        return 1; // Fuera del mapa = colisión  
+    }  
+      
+    // Obtener índice de la celda  
+    uint16_t cell_index = hm->blockmap_grid[cell_y * hm->blockmap_width + cell_x];  
+      
+    // Si cell_index es 0xFFFF, no hay paredes en esta celda  
+    if (cell_index == 0xFFFF) {  
+        return 0;  
+    }  
+      
+    // Verificar paredes en esta celda  
+    // Nota: Esto asume que blockmap_grid contiene índices de paredes  
+    // La implementación exacta depende de cómo se construya el blockmap  
+    for (int i = 0; i < hm->num_walls; i++) {  
+        WALL_V2 *wall = &((WALL_V2*)hm->walls)[i];  
+          
+        if (!(wall->flags & 0x01)) continue;  
+          
+        VERTEX *v1 = &hm->vertices[wall->vertex1_index];  
+        VERTEX *v2 = &hm->vertices[wall->vertex2_index];  
+          
+        // Verificar si la pared está en esta celda (aproximación)  
+        int wall_cell_x1 = (int)(v1->x / hm->blockmap_cell_size);  
+        int wall_cell_y1 = (int)(v1->y / hm->blockmap_cell_size);  
+        int wall_cell_x2 = (int)(v2->x / hm->blockmap_cell_size);  
+        int wall_cell_y2 = (int)(v2->y / hm->blockmap_cell_size);  
+          
+        if ((wall_cell_x1 == cell_x && wall_cell_y1 == cell_y) ||  
+            (wall_cell_x2 == cell_x && wall_cell_y2 == cell_y)) {  
+              
+            // Calcular distancia  
+            float dx = v2->x - v1->x;  
+            float dy = v2->y - v1->y;  
+            float length_sq = dx*dx + dy*dy;  
+              
+            if (length_sq < 0.001f) continue;  
+              
+            float t = ((x - v1->x) * dx + (y - v1->y) * dy) / length_sq;  
+            t = fmaxf(0.0f, fminf(1.0f, t));  
+              
+            float closest_x = v1->x + t * dx;  
+            float closest_y = v1->y + t * dy;  
+            float dist_sq = (x - closest_x)*(x - closest_x) + (y - closest_y)*(y - closest_y);  
+              
+            if (dist_sq < 25.0f) {  
+                return 1;  
+            }  
+        }  
+    }  
+      
+    return 0;  
+}
+
+/* Encontrar el sector que contiene un punto (x, y) */  
+int get_sector_at_position(HEIGHTMAP *hm, float x, float y) {  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return -1;  
+      
+    for (int i = 0; i < hm->num_sectors; i++) {  
+        SECTOR_V2 *sector = &((SECTOR_V2*)hm->sectors)[i];  
+          
+        // Verificar si el punto está dentro del polígono del sector  
+        // Usando algoritmo de ray casting (point-in-polygon)  
+        int inside = 0;  
+          
+        for (uint32_t v = 0; v < sector->num_vertices; v++) {  
+            uint32_t next_v = (v + 1) % sector->num_vertices;  
+              
+            VERTEX *v1 = &hm->vertices[sector->vertex_indices[v]];  
+            VERTEX *v2 = &hm->vertices[sector->vertex_indices[next_v]];  
+              
+            if (((v1->y > y) != (v2->y > y)) &&  
+                (x < (v2->x - v1->x) * (y - v1->y) / (v2->y - v1->y) + v1->x)) {  
+                inside = !inside;  
+            }  
+        }  
+          
+        if (inside) {  
+            return i; // Retornar índice del sector  
+        }  
+    }  
+      
+    return -1; // No se encontró sector  
+}
+
+/* Activar ascensor (cambiar estado de movimiento) */  
+int64_t libmod_heightmap_activate_elevator(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    int64_t sector_id = params[1];  
+      
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return 0;  
+      
+    // Buscar el sector  
+    for (int i = 0; i < hm->num_sectors; i++) {  
+        SECTOR_V2 *sector = &((SECTOR_V2*)hm->sectors)[i];  
+          
+        if (sector->id == sector_id && sector->is_dynamic) {  
+            // Alternar estado: si está arriba, bajar; si está abajo, subir  
+            if (sector->floor_height >= sector->target_floor_height) {  
+                sector->move_state = 2; // Bajar  
+            } else {  
+                sector->move_state = 1; // Subir  
+            }  
+              
+            fprintf(stderr, "Ascensor sector %u activado, estado: %u\n",   
+                    sector_id, sector->move_state);  
+            return 1;  
+        }  
+    }  
+      
+    return 0;  
+}
+
+/* Establecer altura objetivo de un sector dinámico */  
+int64_t libmod_heightmap_set_sector_target_height(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    int64_t sector_id = params[1];  
+    float target_floor = *(float*)&params[2];  
+    float target_ceiling = *(float*)&params[3];  
+      
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return 0;  
+      
+    for (int i = 0; i < hm->num_sectors; i++) {  
+        SECTOR_V2 *sector = &((SECTOR_V2*)hm->sectors)[i];  
+          
+        if (sector->id == sector_id && sector->is_dynamic) {  
+            sector->target_floor_height = target_floor;  
+            sector->target_ceiling_height = target_ceiling;  
+            return 1;  
+        }  
+    }  
+      
+    return 0;  
+}
+
+/* Verificar colisión con paredes desde código BennuGD2 */  
+int64_t libmod_heightmap_check_wall_collision(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    float x = *(float*)&params[1];  
+    float y = *(float*)&params[2];  
+      
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+    if (!hm) return 0;  
+      
+    return check_wall_collision(x, y, hm);  
+}
+
+/* Obtener ID del sector en una posición */  
+int64_t libmod_heightmap_get_sector_at_position(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    float x = *(float*)&params[1];  
+    float y = *(float*)&params[2];  
+      
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return -1;  
+      
+    int sector_index = get_sector_at_position(hm, x, y);  
+      
+    if (sector_index >= 0 && sector_index < hm->num_sectors) {  
+        SECTOR_V2 *sector = &((SECTOR_V2*)hm->sectors)[sector_index];  
+        return sector->id;  
+    }  
+      
+    return -1; // No se encontró sector  
+}
+
+/* Activar acción de una pared (abrir puerta, activar trigger) */  
+int64_t libmod_heightmap_activate_wall_action(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    int64_t wall_id = params[1];  
+      
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return 0;  
+      
+    // Buscar la pared por ID  
+    for (int i = 0; i < hm->num_walls; i++) {  
+        WALL_V2 *wall = &((WALL_V2*)hm->walls)[i];  
+          
+        if (i == wall_id) { // Usar índice como ID por simplicidad  
+            // Ejecutar acción según el tipo  
+            switch (wall->action_type) {  
+                case ACTION_NONE:  
+                    return 0;  
+                      
+                case ACTION_OPEN_DOOR:  
+                    // Lógica para abrir puerta (cambiar textura, mover sectores, etc.)  
+                    fprintf(stderr, "Abriendo puerta en pared %ld\n", wall_id);  
+                    // Aquí podrías modificar los sectores conectados  
+                    return 1;  
+                      
+                case ACTION_ACTIVATE_ELEVATOR:  
+                    // Activar ascensor en uno de los sectores conectados  
+                    fprintf(stderr, "Activando ascensor desde pared %ld\n", wall_id);  
+                    for (int s = 0; s < hm->num_sectors; s++) {  
+                        SECTOR_V2 *sector = &((SECTOR_V2*)hm->sectors)[s];  
+                        if ((sector->id == wall->sector1_id || sector->id == wall->sector2_id)   
+                            && sector->is_dynamic) {  
+                            // Alternar estado del ascensor  
+                            if (sector->floor_height >= sector->target_floor_height) {  
+                                sector->move_state = 2; // Bajar  
+                            } else {  
+                                sector->move_state = 1; // Subir  
+                            }  
+                            return 1;  
+                        }  
+                    }  
+                    return 0;  
+                      
+                case ACTION_TRIGGER_SCRIPT:  
+                    // Ejecutar script personalizado  
+                    fprintf(stderr, "Trigger de script en pared %ld\n", wall_id);  
+                    return 1;  
+                      
+                default:  
+                    return 0;  
+            }  
+        }  
+    }  
+      
+    return 0; // Pared no encontrada  
+}
+
+/* Actualizar todos los sectores dinámicos (llamar cada frame) */  
+int64_t libmod_heightmap_update_dynamic_sectors(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    float delta_time = *(float*)&params[1]; // Tiempo transcurrido en segundos  
+      
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return 0;  
+      
+    update_dynamic_sectors(hm, delta_time);  
+    return 1;  
+}
+
+/* Obtener altura del suelo en un punto específico (considerando rampas) */  
+int64_t libmod_heightmap_get_floor_height_at_point(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+    int64_t sector_id = params[1];  
+    float x = *(float*)&params[2];  
+    float y = *(float*)&params[3];  
+      
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return 0;  
+      
+    // Buscar el sector  
+    for (int i = 0; i < hm->num_sectors; i++) {  
+        SECTOR_V2 *sector = &((SECTOR_V2*)hm->sectors)[i];  
+          
+        if (sector->id == sector_id) {  
+            float height = floor_height_at_point(sector, x, y);  
+              
+            // Convertir float a int64_t para retorno  
+            // (BennuGD2 puede necesitar conversión especial)  
+            int32_t height_int = (int32_t)(height * 100.0f); // Escalar por 100 para precisión  
+            return height_int;  
+        }  
+    }  
+      
+    return 0;  
+}
+
+/* Renderizar nodo BSP recursivamente (back-to-front ordering) */  
+static void render_bsp_node(HEIGHTMAP *hm, int node_index,   
+                           float cam_x, float cam_y,  
+                           int render_width, int render_height,  
+                           float projection_scale, float fov,  
+                           float cos_cam, float sin_cam,  
+                           float *depth_buffer, GRAPH *render_buffer,  
+                           int *walls_rendered) {  
+      
+    // Caso base: si es un subsector (hoja del árbol)  
+    if (node_index < 0) {  
+        // Los índices negativos indican subsectores  
+        // En DOOM: subsector_index = -(node_index + 1)  
+        int subsector_index = -(node_index + 1);  
+          
+        if (subsector_index >= 0 && subsector_index < hm->num_subsectors) {  
+            SUBSECTOR *subsector = &hm->subsectors[subsector_index];  
+              
+            // Renderizar todos los segmentos (SEGS) de este subsector  
+            for (int i = 0; i < subsector->num_segs; i++) {  
+                int seg_index = subsector->first_seg + i;  
+                if (seg_index >= 0 && seg_index < hm->num_segs) {  
+                    SEG *seg = &hm->segs[seg_index];  
+                      
+                    // Obtener vértices del segmento  
+                    VERTEX *v1 = &hm->vertices[seg->vertex1_index];  
+                    VERTEX *v2 = &hm->vertices[seg->vertex2_index];  
+                      
+                    // Obtener sector asociado  
+                    SECTOR_V2 *sector = &((SECTOR_V2*)hm->sectors)[seg->sector_id];  
+                      
+                    // Renderizar este segmento de pared  
+                    render_wall_segment(hm, v1->x, v1->y, v2->x, v2->y,  
+                                      sector, seg->sidedef_id,  
+                                      render_width, render_height,  
+                                      projection_scale, fov,  
+                                      cos_cam, sin_cam,  
+                                      depth_buffer, render_buffer,  
+                                      walls_rendered);  
+                }  
+            }  
+        }  
+        return;  
+    }  
+      
+    // Caso recursivo: nodo interno del BSP  
+    if (node_index >= hm->num_bsp_nodes) {  
+        return; // Índice inválido  
+    }  
+      
+    BSP_NODE *node = &hm->bsp_nodes[node_index];  
+      
+    // Determinar en qué lado de la línea de partición está la cámara  
+    // Ecuación de la línea: (x - px) * dy - (y - py) * dx  
+    float dx = cam_x - node->partition_x;  
+    float dy = cam_y - node->partition_y;  
+    float side = dx * node->partition_dy - dy * node->partition_dx;  
+      
+    // Renderizar en orden back-to-front  
+    if (side >= 0.0f) {  
+        // Cámara en lado frontal: renderizar back primero (más lejos)  
+        render_bsp_node(hm, node->back_child, cam_x, cam_y,  
+                       render_width, render_height,  
+                       projection_scale, fov, cos_cam, sin_cam,  
+                       depth_buffer, render_buffer, walls_rendered);  
+          
+        // Luego renderizar front (más cerca)  
+        render_bsp_node(hm, node->front_child, cam_x, cam_y,  
+                       render_width, render_height,  
+                       projection_scale, fov, cos_cam, sin_cam,  
+                       depth_buffer, render_buffer, walls_rendered);  
+    } else {  
+        // Cámara en lado trasero: renderizar front primero  
+        render_bsp_node(hm, node->front_child, cam_x, cam_y,  
+                       render_width, render_height,  
+                       projection_scale, fov, cos_cam, sin_cam,  
+                       depth_buffer, render_buffer, walls_rendered);  
+          
+        // Luego renderizar back  
+        render_bsp_node(hm, node->back_child, cam_x, cam_y,  
+                       render_width, render_height,  
+                       projection_scale, fov, cos_cam, sin_cam,  
+                       depth_buffer, render_buffer, walls_rendered);  
+    }  
+}
+
+/* Renderizar un segmento de pared individual */  
+static void render_wall_segment(HEIGHTMAP *hm,   
+                                float x1, float y1, float x2, float y2,  
+                                SECTOR_V2 *sector, int sidedef_id,  
+                                int render_width, int render_height,  
+                                float projection_scale, float fov,  
+                                float cos_cam, float sin_cam,  
+                                float *depth_buffer, GRAPH *render_buffer,  
+                                int *walls_rendered) {  
+      
+    // Verificar que la cámara esté dentro del rango válido del sector  
+    float current_floor = sector->floor_height;  
+    float current_ceiling = sector->ceiling_height;  
+      
+    if (camera.z < current_floor || camera.z > current_ceiling) {  
+        return;  
+    }  
+      
+    // Transformar vértices al espacio de cámara  
+    float dx1 = x1 - camera.x;  
+    float dy1 = y1 - camera.y;  
+    float dx2 = x2 - camera.x;  
+    float dy2 = y2 - camera.y;  
+      
+    // Rotar al espacio de vista de la cámara  
+    float cam_x1 = dx1 * cos_cam - dy1 * sin_cam;  
+    float cam_z1 = dx1 * sin_cam + dy1 * cos_cam;  
+    float cam_x2 = dx2 * cos_cam - dy2 * sin_cam;  
+    float cam_z2 = dx2 * sin_cam + dy2 * cos_cam;  
+      
+    // Clipping contra near plane  
+    float near_plane = 0.1f;  
+    if (cam_z1 < near_plane && cam_z2 < near_plane) {  
+        return; // Segmento completamente detrás de la cámara  
+    }  
+      
+    // Proyectar a coordenadas de pantalla  
+    int screen_x1, screen_x2;  
+      
+    if (cam_z1 > near_plane) {  
+        screen_x1 = (int)(render_width / 2.0f + (cam_x1 / cam_z1) * projection_scale);  
+    } else {  
+        screen_x1 = (cam_x1 < 0) ? -1 : render_width;  
+    }  
+      
+    if (cam_z2 > near_plane) {  
+        screen_x2 = (int)(render_width / 2.0f + (cam_x2 / cam_z2) * projection_scale);  
+    } else {  
+        screen_x2 = (cam_x2 < 0) ? -1 : render_width;  
+    }  
+      
+    // Verificar que el segmento esté dentro de la pantalla  
+    if (screen_x1 < 0 && screen_x2 < 0) return;  
+    if (screen_x1 >= render_width && screen_x2 >= render_width) return;  
+      
+    // Clamp a límites de pantalla  
+    if (screen_x1 < 0) screen_x1 = 0;  
+    if (screen_x2 >= render_width) screen_x2 = render_width - 1;  
+    if (screen_x1 > screen_x2) {  
+        int temp = screen_x1;  
+        screen_x1 = screen_x2;  
+        screen_x2 = temp;  
+    }  
+      
+    // Obtener textura del sidedef  
+    GRAPH *wall_texture = NULL;  
+    if (sidedef_id >= 0 && sidedef_id < hm->num_sidedefs) {  
+        SIDEDEF *sidedef = &hm->sidedefs[sidedef_id];  
+        if (sidedef->texture_id < hm->num_textures) {  
+            wall_texture = bitmap_get(0, hm->textures[sidedef->texture_id].graph_id);  
+        }  
+    }  
+      
+    // Renderizar columnas del segmento  
+    for (int screen_x = screen_x1; screen_x <= screen_x2; screen_x++) {  
+        if (screen_x < 0 || screen_x >= render_width) continue;  
+          
+        // Interpolación lineal de profundidad  
+        float t = (screen_x2 != screen_x1) ?   
+                 (float)(screen_x - screen_x1) / (float)(screen_x2 - screen_x1) : 0.0f;  
+        float depth = cam_z1 + t * (cam_z2 - cam_z1);  
+          
+        if (depth < near_plane) continue;  
+          
+        // Calcular altura de pared en pantalla  
+        float wall_height = current_ceiling - current_floor;  
+        float wall_top_screen = render_height / 2.0f -   
+                               ((current_ceiling - camera.z) / depth) * projection_scale;  
+        float wall_bottom_screen = render_height / 2.0f -   
+                                  ((current_floor - camera.z) / depth) * projection_scale;  
+          
+        int wall_top = (int)wall_top_screen;  
+        int wall_bottom = (int)wall_bottom_screen;  
+          
+        // Clamp a límites de pantalla  
+        if (wall_top < 0) wall_top = 0;  
+        if (wall_bottom >= render_height) wall_bottom = render_height - 1;  
+          
+        if (wall_top >= wall_bottom) continue;  
+          
+        // Renderizar píxeles de la pared  
+        for (int screen_y = wall_top; screen_y < wall_bottom; screen_y++) {  
+            size_t buffer_index = (size_t)screen_y * (size_t)render_width + (size_t)screen_x;  
+              
+            // Verificar depth buffer  
+            if (depth >= depth_buffer[buffer_index]) {  
+                continue;  
+            }  
+              
+            uint32_t color;  
+              
+            if (wall_texture && wall_texture->width > 0 && wall_texture->height > 0) {  
+                // Calcular coordenadas de textura  
+                float wall_length = sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));  
+                float u = (t * wall_length) / 64.0f;  
+                u = u - floorf(u);  
+                  
+                float v = (float)(screen_y - wall_top) / (float)(wall_bottom - wall_top);  
+                  
+                int tex_x = (int)(u * wall_texture->width) % wall_texture->width;  
+                int tex_y = (int)(v * wall_texture->height) % wall_texture->height;  
+                  
+                if (tex_x < 0) tex_x = 0;  
+                if (tex_x >= wall_texture->width) tex_x = wall_texture->width - 1;  
+                if (tex_y < 0) tex_y = 0;  
+                if (tex_y >= wall_texture->height) tex_y = wall_texture->height - 1;  
+                  
+                color = gr_get_pixel(wall_texture, tex_x, tex_y);  
+                  
+                // Extraer componentes RGB  
+                uint8_t r, g, b, a;  
+                SDL_GetRGBA(color, gPixelFormat, &r, &g, &b, &a);  
+                  
+                // Aplicar fog  
+                float fog = 1.0f - (depth / max_render_distance);  
+                if (fog < 0.3f) fog = 0.3f;  
+                if (fog > 1.0f) fog = 1.0f;  
+                  
+                // Aplicar iluminación por sector  
+                if (sector->light_level > 0) {  
+                    float light_factor = sector->light_level / 255.0f;  
+                    r = (uint8_t)(r * fog * light_factor);  
+                    g = (uint8_t)(g * fog * light_factor);  
+                    b = (uint8_t)(b * fog * light_factor);  
+                } else {  
+                    r = (uint8_t)(r * fog);  
+                    g = (uint8_t)(g * fog);  
+                    b = (uint8_t)(b * fog);  
+                }  
+                  
+                color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
+            } else {  
+                // Color sólido si no hay textura  
+                color = SDL_MapRGBA(gPixelFormat, 150, 120, 100, 255);  
+            }  
+              
+            gr_put_pixel(render_buffer, screen_x, screen_y, color);  
+            depth_buffer[buffer_index] = depth;  
+            (*walls_rendered)++;  
+        }  
+    }  
 }
 #include "libmod_heightmap_exports.h"

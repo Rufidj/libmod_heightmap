@@ -95,6 +95,14 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC("HEIGHTMAP_SECTOR_STRAFE_LEFT", "I", TYPE_INT, libmod_heightmap_sector_strafe_left),  
     FUNC("HEIGHTMAP_SECTOR_STRAFE_RIGHT", "I", TYPE_INT, libmod_heightmap_sector_strafe_right),
     FUNC("HEIGHTMAP_RENDER_SECTOR_CPU", "III", TYPE_INT, libmod_heightmap_render_sector_cpu),
+    // NUEVO: Funciones DMAP v2  
+    FUNC("HEIGHTMAP_ACTIVATE_ELEVATOR", "II", TYPE_INT, libmod_heightmap_activate_elevator),  
+    FUNC("HEIGHTMAP_SET_SECTOR_TARGET_HEIGHT", "IIFF", TYPE_INT, libmod_heightmap_set_sector_target_height),  
+    FUNC("HEIGHTMAP_CHECK_WALL_COLLISION", "IFF", TYPE_INT, libmod_heightmap_check_wall_collision),  
+    FUNC("HEIGHTMAP_GET_SECTOR_AT_POSITION", "IFF", TYPE_INT, libmod_heightmap_get_sector_at_position),  
+    FUNC("HEIGHTMAP_ACTIVATE_WALL_ACTION", "II", TYPE_INT, libmod_heightmap_activate_wall_action),  
+    FUNC("HEIGHTMAP_UPDATE_DYNAMIC_SECTORS", "IF", TYPE_INT, libmod_heightmap_update_dynamic_sectors),  
+    FUNC("HEIGHTMAP_GET_FLOOR_HEIGHT_AT_POINT", "IIFF", TYPE_INT, libmod_heightmap_get_floor_height_at_point),
     FUNC(0, 0, 0, 0)};  
   
 #endif  
