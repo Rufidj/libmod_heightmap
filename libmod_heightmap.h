@@ -60,6 +60,12 @@ typedef struct {
     TEXTURE_ENTRY *textures;  
     int num_textures;          
 } HEIGHTMAP;      
+
+// Estructura de clip buffer por columna (equivalente a VLine de VPE)  
+typedef struct {  
+    int top;     // Límite superior de píxel visible  
+    int bottom;  // Límite inferior de píxel visible  
+} COLUMN_CLIP;  
       
 // Constantes de conversión de coordenadas        
 #define WORLD_TO_SPRITE_SCALE 10.0f        

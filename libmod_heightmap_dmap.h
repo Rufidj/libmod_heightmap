@@ -56,6 +56,7 @@ typedef struct {
     // Ascensores  
     uint8_t is_dynamic;  
     float target_floor_height;  
+    float target_ceiling_height;  // ← AÑADIR ESTE CAMPO 
     float move_speed;  
     uint8_t move_state;  
       
