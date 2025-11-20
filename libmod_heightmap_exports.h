@@ -90,7 +90,11 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     // Mapas por sectores
     FUNC("HEIGHTMAP_LOAD_DMAP", "S", TYPE_INT, libmod_heightmap_load_dmap),  
     FUNC("HEIGHTMAP_GET_MAP_TYPE", "I", TYPE_INT, libmod_heightmap_get_map_type),  
-    FUNC("HEIGHTMAP_RENDER_SECTOR_GPU", "III", TYPE_INT, libmod_heightmap_render_sector_gpu),
+    FUNC("HEIGHTMAP_SECTOR_MOVE_FORWARD", "I", TYPE_INT, libmod_heightmap_sector_move_forward),  
+    FUNC("HEIGHTMAP_SECTOR_MOVE_BACKWARD", "I", TYPE_INT, libmod_heightmap_sector_move_backward),  
+    FUNC("HEIGHTMAP_SECTOR_STRAFE_LEFT", "I", TYPE_INT, libmod_heightmap_sector_strafe_left),  
+    FUNC("HEIGHTMAP_SECTOR_STRAFE_RIGHT", "I", TYPE_INT, libmod_heightmap_sector_strafe_right),
+    FUNC("HEIGHTMAP_RENDER_SECTOR_CPU", "III", TYPE_INT, libmod_heightmap_render_sector_cpu),
     FUNC(0, 0, 0, 0)};  
   
 #endif  
