@@ -3782,7 +3782,7 @@ int64_t libmod_heightmap_load_dmap(INSTANCE *my, int64_t *params) {
     for (uint32_t i = 0; i < header.num_things; i++) {    
         fread(&map->things[i], sizeof(THING), 1, file);    
     }    
-    fprintf(stderr, "DEBUG LOAD: %u things leídos\n", header.num_things);    
+    fprintf(stderr, "DEBUG LOAD: %u things leídos\n", header.num_things);   
         
     // ========================================    
     // LEER BSP NODES    
@@ -3790,6 +3790,7 @@ int64_t libmod_heightmap_load_dmap(INSTANCE *my, int64_t *params) {
         
     map->num_bsp_nodes = header.num_bsp_nodes;    
     map->bsp_nodes = malloc(sizeof(BSP_NODE) * header.num_bsp_nodes);    
+    
     if (!map->bsp_nodes) {    
         fprintf(stderr, "Error: No se pudo asignar memoria para BSP nodes\n");    
         if (map->things) free(map->things);    
@@ -3821,6 +3822,9 @@ int64_t libmod_heightmap_load_dmap(INSTANCE *my, int64_t *params) {
             i, map->bsp_nodes[i].front_child, map->bsp_nodes[i].back_child);  
     fflush(stderr);  
 }
+fprintf(stderr, "sizeof(BSP_NODE) en loader: %zu bytes\n", sizeof(BSP_NODE));  
+fprintf(stderr, "Bytes leídos: front_child=%d back_child=%d\n",   
+        map->bsp_nodes[0].front_child, map->bsp_nodes[0].back_child);
     // ========================================      
     // SUBSECTORS (solo DMAP v2)      
     // ========================================      

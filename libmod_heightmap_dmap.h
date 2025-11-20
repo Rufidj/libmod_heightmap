@@ -2,7 +2,7 @@
 #define __LIBMOD_HEIGHTMAP_DMAP_H  
   
 #include <stdint.h>  
-  
+#pragma pack(push, 1)  // ← AGREGAR AQUÍ    
 // ============================================================================  
 // FORMATO DMAP v2 - Sistema de mapas por sectores estilo DOOM  
 // ============================================================================  
@@ -134,14 +134,13 @@ typedef struct {
 } THING;  
   
 // Nodo del árbol BSP  
-typedef struct {  
-    float partition_x, partition_y;  
-    float partition_dx, partition_dy;  
-    int32_t front_child; // Índice a nodo hijo o -subsector_id-1  
-    int32_t back_child;  
-    float front_bbox_top, front_bbox_bottom, front_bbox_left, front_bbox_right;  
-    float back_bbox_top, back_bbox_bottom, back_bbox_left, back_bbox_right;  
-} BSP_NODE;  
+typedef struct {    
+    float partition_x, partition_y;       // 8 bytes  
+    float partition_dx, partition_dy;     // 8 bytes  
+    int32_t front_child, back_child;      // 8 bytes ← AQUÍ ESTÁN LOS VALORES  
+    float front_bbox_top, front_bbox_bottom, front_bbox_left, front_bbox_right;  // 16 bytes  
+    float back_bbox_top, back_bbox_bottom, back_bbox_left, back_bbox_right;      // 16 bytes  
+} BSP_NODE;  // Total: 56 bytes
   
 // Subsector (hoja del árbol BSP)  
 typedef struct {  
@@ -171,5 +170,7 @@ typedef struct {
     float wall_height;  
     int valid;  
 } WALL_PROJECTION;  
+
+#pragma pack(pop)  // ← DEBE ESTAR AQUÍ 
   
 #endif // __LIBMOD_HEIGHTMAP_DMAP_H

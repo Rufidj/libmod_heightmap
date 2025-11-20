@@ -34,7 +34,6 @@ typedef struct {
     float x, y;    
 } VERTEX;    
   
-// CORREGIDO: Estructura con orden correcto y sector_type como uint32_t  
 typedef struct {    
     uint32_t id;    
     float floor_height;    
@@ -48,7 +47,7 @@ typedef struct {
     float target_ceiling_height;    
     float move_speed;    
     uint8_t move_state;    
-    uint32_t sector_type;        // ← uint32_t, no uint8_t  
+    uint32_t sector_type;        // ← CORREGIDO: uint32_t para coincidir con loader  
     uint32_t floor_texture_id;    
     uint32_t ceiling_texture_id;    
     uint32_t wall_texture_id;    
@@ -82,9 +81,8 @@ typedef struct {
     uint32_t flags;    
 } DMAP_THING;    
   
-// CORREGIDO: Sin texturas empaquetadas, solo filename  
 typedef struct {    
-    char filename[256];  // Ruta al archivo de textura    
+    char filename[256];  // ← CORREGIDO: Solo filename, sin datos empaquetados  
 } TEXTURE_ENTRY_V2;    
   
 typedef struct {    
@@ -112,7 +110,7 @@ typedef struct {
 // ============================================================================    
   
 int main() {    
-    FILE *f = fopen("test_level.dmap", "wb");    
+    FILE *f = fopen("test_level_v2.dmap", "wb");    
     if (!f) {    
         fprintf(stderr, "Error: No se pudo crear archivo\n");    
         return 1;    
@@ -148,23 +146,21 @@ int main() {
         
     TEXTURE_ENTRY_V2 textures[3];    
         
-    // Textura 0: Pared (archivo externo)  
+    // Textura 0: Pared (archivo externo)    
     strcpy(textures[0].filename, "textures/wall_bricks.png");    
         
-    // Textura 1: Suelo (archivo externo)  
+    // Textura 1: Suelo (archivo externo)    
     strcpy(textures[1].filename, "textures/floor_tiles.png");    
         
-    // Textura 2: Techo (archivo externo)  
+    // Textura 2: Techo (archivo externo)    
     strcpy(textures[2].filename, "textures/ceiling_solid.png");    
         
-    // Escribir headers de texturas (solo nombres de archivo)  
+    // Escribir headers de texturas (solo filenames)    
     for (int i = 0; i < 3; i++) {    
         fwrite(&textures[i], sizeof(TEXTURE_ENTRY_V2), 1, f);    
         printf("Textura %d: %s\n", i, textures[i].filename);    
-    }  
-      
-    // NO escribir datos de píxeles - se cargan desde archivos externos
-        // ========================================    
+    }
+      // ========================================    
     // VÉRTICES COMPARTIDOS (12 vértices total)    
     // ========================================    
         
@@ -188,11 +184,11 @@ int main() {
     vertices[10].x = 500.0f;  vertices[10].y = 200.0f;    
     vertices[11].x = 300.0f;  vertices[11].y = 200.0f;    
         
-    fwrite(vertices, sizeof(VERTEX), 12, f);      
-    printf("Vértices escritos: %d\n", header.num_vertices);  
+    fwrite(vertices, sizeof(VERTEX), 12, f);    
+    printf("Vértices escritos: %d\n", header.num_vertices);    
         
     // ========================================    
-    // SECTORES (3 sectores) CON ÍNDICES INTERCALADOS  
+    // SECTORES (3 sectores)    
     // ========================================    
         
     DMAP_SECTOR_V2 sectors[3];    
@@ -257,25 +253,25 @@ int main() {
     sectors[2].num_vertices = 4;    
     sectors[2].light_level = 180;    
         
-    // Escribir sectores CON índices intercalados  
-    for (int i = 0; i < 3; i++) {  
-        // Escribir el sector  
-        fwrite(&sectors[i], sizeof(DMAP_SECTOR_V2), 1, f);  
-          
-        // INMEDIATAMENTE escribir sus índices de vértices  
-        if (i == 0) {  
-            uint32_t indices[4] = {0, 1, 2, 3};  
-            fwrite(indices, sizeof(uint32_t), 4, f);  
-        } else if (i == 1) {  
-            uint32_t indices[4] = {4, 5, 6, 7};  
-            fwrite(indices, sizeof(uint32_t), 4, f);  
-        } else if (i == 2) {  
-            uint32_t indices[4] = {8, 9, 10, 11};  
-            fwrite(indices, sizeof(uint32_t), 4, f);  
-        }  
-    }  
+    // Escribir sectores e índices intercalados    
+    for (int i = 0; i < 3; i++) {    
+        // Escribir estructura del sector    
+        fwrite(&sectors[i], sizeof(DMAP_SECTOR_V2), 1, f);    
+            
+        // Escribir índices de vértices inmediatamente después    
+        if (i == 0) {    
+            uint32_t indices[4] = {0, 1, 2, 3};    
+            fwrite(indices, sizeof(uint32_t), 4, f);    
+        } else if (i == 1) {    
+            uint32_t indices[4] = {4, 5, 6, 7};    
+            fwrite(indices, sizeof(uint32_t), 4, f);    
+        } else if (i == 2) {    
+            uint32_t indices[4] = {8, 9, 10, 11};    
+            fwrite(indices, sizeof(uint32_t), 4, f);    
+        }    
+    }    
     printf("Sectores v2 escritos: %d\n", header.num_sectors);
-       // ========================================    
+        // ========================================    
     // PAREDES (12 paredes total)    
     // ========================================    
         
@@ -376,36 +372,39 @@ int main() {
     fwrite(things, sizeof(DMAP_THING), 2, f);    
     printf("Things escritos: %d\n", header.num_things);    
         
-   // ========================================    
-// BSP NODES (1 nodo raíz simplificado)    
-// ========================================    
-    
-BSP_NODE root_node;    
-memset(&root_node, 0, sizeof(BSP_NODE));  // Inicializar todo a 0  
-    
-root_node.partition_x = 200.0f;    
-root_node.partition_y = 0.0f;    
-root_node.partition_dx = 0.0f;    
-root_node.partition_dy = 200.0f;    
-root_node.front_child = -1; // Subsector 0 (habitación)    
-root_node.back_child = -2;  // Subsector 1 (pasillo + rampa)    
-    
-root_node.front_bbox_top = 200.0f;    
-root_node.front_bbox_bottom = 0.0f;    
-root_node.front_bbox_left = 0.0f;    
-root_node.front_bbox_right = 200.0f;    
-    
-root_node.back_bbox_top = 200.0f;    
-root_node.back_bbox_bottom = 0.0f;    
-root_node.back_bbox_left = 200.0f;    
-root_node.back_bbox_right = 500.0f;    
-  
-// Debug: Verificar valores antes de escribir  
-fprintf(stderr, "BSP Node: front_child=%d back_child=%d\n",   
-        root_node.front_child, root_node.back_child);  
-    
-fwrite(&root_node, sizeof(BSP_NODE), 1, f);    
-printf("BSP nodes escritos: %d\n", header.num_bsp_nodes); 
+    // ========================================    
+    // BSP NODES (1 nodo raíz - CORREGIDO)    
+    // ========================================    
+        
+    BSP_NODE root_node;    
+    root_node.partition_x = 200.0f;    
+    root_node.partition_y = 0.0f;    
+    root_node.partition_dx = 0.0f;    
+    root_node.partition_dy = 200.0f;    
+    root_node.front_child = -1; // Subsector 0 (habitación) - ÍNDICE NEGATIVO    
+    root_node.back_child = -2;  // Subsector 1 (pasillo + rampa) - ÍNDICE NEGATIVO    
+        
+    root_node.front_bbox_top = 200.0f;    
+    root_node.front_bbox_bottom = 0.0f;    
+    root_node.front_bbox_left = 0.0f;    
+    root_node.front_bbox_right = 200.0f;    
+        
+    root_node.back_bbox_top = 200.0f;    
+    root_node.back_bbox_bottom = 0.0f;    
+    root_node.back_bbox_left = 200.0f;    
+    root_node.back_bbox_right = 500.0f;    
+        
+    fwrite(&root_node, sizeof(BSP_NODE), 1, f);    
+    printf("BSP nodes escritos: %d\n", header.num_bsp_nodes);   
+    // AGREGAR ESTE DEBUG:  
+printf("DEBUG WRITE: BSP Node 0 - front_child=%d back_child=%d\n",  
+       root_node.front_child, root_node.back_child);  
+fflush(stdout);
+fwrite(&root_node, sizeof(BSP_NODE), 1, f);  
+printf("BSP node escrito: front_child=%d back_child=%d (size=%zu)\n",   
+       root_node.front_child, root_node.back_child, sizeof(BSP_NODE));  
+printf("DEBUG: Valores antes de escribir: front=%d back=%d\n",  
+       root_node.front_child, root_node.back_child); 
         
     // ========================================    
     // SUBSECTORS (2 subsectores)    
@@ -474,12 +473,7 @@ printf("BSP nodes escritos: %d\n", header.num_bsp_nodes);
     printf("- Sector 0: Ascensor dinámico (altura inicial 0)\n");    
     printf("- Sector 2: Rampa con pendiente floor_slope_x=0.5\n\n");    
     printf("Posiciona la cámara en (100, 100, 75) para empezar\n");    
-    printf("en la habitación principal\n");  
-    fwrite(&root_node, sizeof(BSP_NODE), 1, f);  
-fprintf(stderr, "DMAP WRITE: BSP Node escrito - front_child=%d back_child=%d\n",   
-        root_node.front_child, root_node.back_child);  
-fflush(stderr);  
-printf("BSP nodes escritos: %d\n", header.num_bsp_nodes);  
+    printf("en la habitación principal\n");    
         
     return 0;    
 }
