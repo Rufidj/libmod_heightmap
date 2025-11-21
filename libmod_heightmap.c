@@ -3741,520 +3741,494 @@ static void render_wall_column(int screen_x, float distance, float wall_height,
     }  
 }
 
-int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {    
-    int64_t hm_id = params[0];    
-    int64_t render_width = params[1];    
-    int64_t render_height = params[2];    
+int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {      
+    int64_t hm_id = params[0];      
+    int64_t render_width = params[1];      
+    int64_t render_height = params[2];      
+          
+    float fov = 0.7f;  // FOV en radianes (~40 grados)      
+          
+    // ========================================    
+    // VALIDACIÓN Y BÚSQUEDA DE HEIGHTMAP    
+    // ========================================    
         
-    float fov = 0.7f;  // FOV en radianes (~40 grados)    
+    HEIGHTMAP *hm = NULL;      
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {      
+        if (heightmaps[i].id == hm_id) {      
+            hm = &heightmaps[i];      
+            break;      
+        }      
+    }      
+          
+    if (!hm || hm->type != MAP_TYPE_SECTOR) {      
+        fprintf(stderr, "Error: Heightmap inválido o no es tipo SECTOR\n");    
+        return 0;      
+    }      
         
-    // ========================================  
-    // VALIDACIÓN Y BÚSQUEDA DE HEIGHTMAP  
-    // ========================================  
-      
-    HEIGHTMAP *hm = NULL;    
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {    
-        if (heightmaps[i].id == hm_id) {    
-            hm = &heightmaps[i];    
-            break;    
-        }    
-    }    
-        
-    if (!hm || hm->type != MAP_TYPE_SECTOR) {    
-        fprintf(stderr, "Error: Heightmap inválido o no es tipo SECTOR\n");  
+    if (!hm->sectors || hm->num_sectors == 0) {    
+        fprintf(stderr, "Error: No hay sectores v3 cargados\n");    
         return 0;    
-    }    
-      
-    if (!hm->sectors || hm->num_sectors == 0) {  
-        fprintf(stderr, "Error: No hay sectores v3 cargados\n");  
-        return 0;  
-    }  
+    }      
+          
+    // ========================================    
+    // CREAR/REDIMENSIONAR BUFFER DE RENDERIZADO    
+    // ========================================    
+          
+    static GRAPH *cpu_render_buffer = NULL;      
+    static int64_t last_width = 0;      
+    static int64_t last_height = 0;      
+          
+    if (!cpu_render_buffer || last_width != render_width || last_height != render_height) {      
+        if (cpu_render_buffer) {      
+            bitmap_destroy(cpu_render_buffer);      
+        }      
+        cpu_render_buffer = bitmap_new_syslib(render_width, render_height);      
+        if (!cpu_render_buffer) {      
+            fprintf(stderr, "Error: No se pudo crear buffer de renderizado\n");    
+            return 0;      
+        }      
+        last_width = render_width;      
+        last_height = render_height;      
+    }      
+          
+    // ========================================    
+    // CREAR CLIP BUFFER COLUMNAR (VPE-STYLE)    
+    // ========================================    
         
-    // ========================================  
-    // CREAR/REDIMENSIONAR BUFFER DE RENDERIZADO  
-    // ========================================  
+    typedef struct {    
+        int top;     // Límite superior de píxel visible    
+        int bottom;  // Límite inferior de píxel visible    
+    } COLUMN_CLIP;    
         
-    static GRAPH *cpu_render_buffer = NULL;    
-    static int64_t last_width = 0;    
-    static int64_t last_height = 0;    
+    static COLUMN_CLIP *clip_buffer = NULL;    
+    static int clip_buffer_width = 0;    
         
-    if (!cpu_render_buffer || last_width != render_width || last_height != render_height) {    
-        if (cpu_render_buffer) {    
-            bitmap_destroy(cpu_render_buffer);    
+    if (clip_buffer_width != render_width) {    
+        if (clip_buffer) {    
+            free(clip_buffer);    
+            clip_buffer = NULL;  
         }    
-        cpu_render_buffer = bitmap_new_syslib(render_width, render_height);    
-        if (!cpu_render_buffer) {    
-            fprintf(stderr, "Error: No se pudo crear buffer de renderizado\n");  
+        clip_buffer = (COLUMN_CLIP*)malloc(sizeof(COLUMN_CLIP) * render_width);    
+        if (!clip_buffer) {    
+            fprintf(stderr, "Error: No se pudo crear clip buffer\n");    
             return 0;    
         }    
-        last_width = render_width;    
-        last_height = render_height;    
+        clip_buffer_width = render_width;    
     }    
         
-    // ========================================  
-    // CREAR CLIP BUFFER COLUMNAR (VPE-STYLE)  
-    // ========================================  
-      
-    typedef struct {  
-        int top;     // Límite superior de píxel visible  
-        int bottom;  // Límite inferior de píxel visible  
-    } COLUMN_CLIP;  
-      
-    static COLUMN_CLIP *clip_buffer = NULL;  
-    static int clip_buffer_width = 0;  
-      
-    if (clip_buffer_width != render_width) {  
-        if (clip_buffer) {  
-            free(clip_buffer);  
-        }  
-        clip_buffer = (COLUMN_CLIP*)malloc(sizeof(COLUMN_CLIP) * render_width);  
-        if (!clip_buffer) {  
-            fprintf(stderr, "Error: No se pudo crear clip buffer\n");  
-            return 0;  
-        }  
-        clip_buffer_width = render_width;  
-    }  
-      
-    // Inicializar clip buffer (toda la columna visible)  
-    for (int x = 0; x < render_width; x++) {  
-        clip_buffer[x].top = 0;  
-        clip_buffer[x].bottom = render_height - 1;  
-    }  
-        
-    // ========================================  
-    // LIMPIAR BUFFER CON COLOR DE CIELO  
-    // ========================================  
-        
-    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, 255);    
-    gr_clear_as(cpu_render_buffer, sky_color);    
-        
-    // ========================================  
-    // CARGAR TEXTURAS  
-    // ========================================  
-        
-    GRAPH *wall_texture = NULL;    
-    GRAPH *floor_texture = NULL;    
-    GRAPH *ceiling_texture = NULL;    
-        
-    if (hm->num_textures > 0 && hm->textures) {    
-        if (hm->textures[0].graph_id > 0) {    
-            wall_texture = bitmap_get(0, hm->textures[0].graph_id);    
-        }    
-        if (hm->num_textures > 1 && hm->textures[1].graph_id > 0) {    
-            floor_texture = bitmap_get(0, hm->textures[1].graph_id);    
-        }    
-        if (hm->num_textures > 2 && hm->textures[2].graph_id > 0) {    
-            ceiling_texture = bitmap_get(0, hm->textures[2].graph_id);    
-        }    
+    // Inicializar clip buffer (toda la columna visible)    
+    for (int x = 0; x < render_width; x++) {    
+        clip_buffer[x].top = 0;    
+        clip_buffer[x].bottom = render_height - 1;    
     }    
-      
-    // ========================================  
-    // PRECALCULAR VALORES DE CÁMARA (CRÍTICO)  
-    // ========================================  
-      
-    float cos_cam = cosf(camera.angle);    
-    float sin_cam = sinf(camera.angle);    
-    float projection_scale = (render_width / 2.0f) / tanf(fov / 2.0f);  
-      
-    int half_height = render_height / 2;  
-    int half_width = render_width / 2;  
-      
-    fprintf(stderr, "DEBUG: Iniciando renderizado VPE-style - %d sectores, %d paredes\n",  
+        
+    // ========================================    
+    // LIMPIAR BUFFER CON COLOR DE CIELO    
+    // ========================================    
+          
+    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, 255);      
+    gr_clear_as(cpu_render_buffer, sky_color);      
+          
+    // ========================================    
+    // CARGAR TEXTURAS    
+    // ========================================    
+          
+    GRAPH *wall_texture = NULL;      
+    GRAPH *floor_texture = NULL;      
+    GRAPH *ceiling_texture = NULL;      
+          
+    if (hm->num_textures > 0 && hm->textures) {      
+        if (hm->textures[0].graph_id > 0) {      
+            wall_texture = bitmap_get(0, hm->textures[0].graph_id);      
+        }      
+        if (hm->num_textures > 1 && hm->textures[1].graph_id > 0) {      
+            floor_texture = bitmap_get(0, hm->textures[1].graph_id);      
+        }      
+        if (hm->num_textures > 2 && hm->textures[2].graph_id > 0) {      
+            ceiling_texture = bitmap_get(0, hm->textures[2].graph_id);      
+        }      
+    }      
+        
+    // ========================================    
+    // PRECALCULAR VALORES DE CÁMARA    
+    // ========================================    
+        
+    float projection_scale = (render_width / 2.0f) / tanf(fov / 2.0f);    
+    int half_height = render_height / 2;    
+    int half_width = render_width / 2;    
+        
+    fprintf(stderr, "DEBUG: Iniciando renderizado RAYCASTING columnar - %d sectores, %d paredes\n",    
             hm->num_sectors, hm->num_walls);
-
-             // ========================================  
-    // RENDERIZADO COLUMNAR DE PAREDES (VPE-STYLE)  
-    // ========================================  
-      
-    int walls_rendered = 0;  
-      
-    // Iterar sobre todos los sectores y sus paredes  
-    for (int s = 0; s < hm->num_sectors; s++) {  
-        SECTOR_V3 *sector = &hm->sectors[s];  
+             // ========================================    
+    // RENDERIZADO COLUMNAR DE PAREDES (RAYCASTING PURO)    
+    // ========================================    
+        
+    int walls_rendered = 0;    
+        
+    // Iterar sobre cada columna de pantalla  
+    for (int x = 0; x < render_width; x++) {  
+        // Calcular ángulo del rayo para esta columna  
+        float column_angle = camera.angle - fov * 0.5f + (x / (float)render_width) * fov;  
+        float ray_dir_x = cosf(column_angle);  
+        float ray_dir_y = sinf(column_angle);  
           
-        // CRÍTICO: Verificar que el sector tiene vértices válidos  
-        if (sector->num_vertices < 2 || !sector->vertices) {  
-            continue;  
+        // Variables para tracking de intersección más cercana  
+        float closest_distance = max_render_distance;  
+        SECTOR_V3 *hit_sector = NULL;  
+        int hit_wall_index = -1;  
+        float hit_wall_u = 0.0f;  // Posición en la pared (0-1)  
+          
+        // Raycast contra todas las paredes de todos los sectores  
+        for (int s = 0; s < hm->num_sectors; s++) {  
+            SECTOR_V3 *sector = &hm->sectors[s];  
+              
+            if (sector->num_vertices < 2 || !sector->vertices) continue;  
+              
+            // Iterar sobre cada pared del sector  
+            for (uint32_t i = 0; i < sector->num_vertices; i++) {  
+                uint32_t next_i = (i + 1) % sector->num_vertices;  
+                VERTEX *v1 = &sector->vertices[i];  
+                VERTEX *v2 = &sector->vertices[next_i];  
+                  
+                // Calcular intersección rayo-línea usando álgebra lineal  
+                // Rayo: P = camera.pos + t * ray_dir  
+                // Línea: Q = v1 + u * (v2 - v1)  
+                // Resolver: camera.pos + t * ray_dir = v1 + u * (v2 - v1)  
+                  
+                float wall_dx = v2->x - v1->x;  
+                float wall_dy = v2->y - v1->y;  
+                  
+                float cam_to_v1_x = v1->x - camera.x;  
+                float cam_to_v1_y = v1->y - camera.y;  
+                  
+                // Determinante para verificar si hay intersección  
+                float denom = ray_dir_x * wall_dy - ray_dir_y * wall_dx;  
+                  
+                if (fabsf(denom) < 0.0001f) continue;  // Rayo paralelo a la pared  
+                  
+                float t = (cam_to_v1_x * wall_dy - cam_to_v1_y * wall_dx) / denom;  
+                float u = (cam_to_v1_x * ray_dir_y - cam_to_v1_y * ray_dir_x) / denom;  
+                  
+                // Verificar que la intersección está en el segmento de pared (0 <= u <= 1)  
+                // y delante de la cámara (t > 0)  
+                if (t > 0.1f && t < closest_distance && u >= 0.0f && u <= 1.0f) {  
+                    closest_distance = t;  
+                    hit_sector = sector;  
+                    hit_wall_index = i;  
+                    hit_wall_u = u;  
+                }  
+            }  
         }  
           
-        // Renderizar cada pared del sector  
-        for (uint32_t i = 0; i < sector->num_vertices; i++) {  
-            uint32_t next_i = (i + 1) % sector->num_vertices;  
+        // Si encontramos una pared, renderizarla  
+        if (hit_sector) {  
+            COLUMN_CLIP *clip = &clip_buffer[x];  
               
-            // Obtener vértices embebidos (no indexados)  
-            VERTEX *v1 = &sector->vertices[i];  
-            VERTEX *v2 = &sector->vertices[next_i];  
+            // Calcular altura de la pared en pantalla  
+            float wall_top_screen = half_height -   
+                                   ((hit_sector->ceiling_height - camera.z) / closest_distance) * projection_scale;  
+            float wall_bottom_screen = half_height -   
+                                      ((hit_sector->floor_height - camera.z) / closest_distance) * projection_scale;  
               
-            float x1 = v1->x;  
-            float y1 = v1->y;  
-            float x2 = v2->x;  
-            float y2 = v2->y;  
-              
-            // Transformar a espacio de cámara  
-            float dx1 = x1 - camera.x;  
-            float dy1 = y1 - camera.y;  
-            float dx2 = x2 - camera.x;  
-            float dy2 = y2 - camera.y;  
-              
-            // Rotar al espacio de vista (usando cos_cam y sin_cam precalculados)  
-            float cam_x1 = dx1 * cos_cam - dy1 * sin_cam;  
-            float cam_z1 = dx1 * sin_cam + dy1 * cos_cam;  
-            float cam_x2 = dx2 * cos_cam - dy2 * sin_cam;  
-            float cam_z2 = dx2 * sin_cam + dy2 * cos_cam;  
-              
-            // Clipping contra near plane con interpolación  
-            float near_plane = 0.1f;  
-              
-            // Si ambos puntos están detrás, descartar  
-            if (cam_z1 < near_plane && cam_z2 < near_plane) {  
-                continue;  
-            }  
-              
-            // Clipear vértices contra near plane  
-            if (cam_z1 < near_plane) {  
-                float t = (near_plane - cam_z1) / (cam_z2 - cam_z1);  
-                cam_x1 = cam_x1 + t * (cam_x2 - cam_x1);  
-                cam_z1 = near_plane;  
-            }  
-            if (cam_z2 < near_plane) {  
-                float t = (near_plane - cam_z2) / (cam_z1 - cam_z2);  
-                cam_x2 = cam_x2 + t * (cam_x1 - cam_x2);  
-                cam_z2 = near_plane;  
-            }  
-              
-            // Proyectar a coordenadas de pantalla  
-            int screen_x1 = (int)(half_width + (cam_x1 / cam_z1) * projection_scale);  
-            int screen_x2 = (int)(half_width + (cam_x2 / cam_z2) * projection_scale);  
-              
-            // Verificar que el segmento esté dentro de la pantalla  
-            if (screen_x1 < 0 && screen_x2 < 0) continue;  
-            if (screen_x1 >= render_width && screen_x2 >= render_width) continue;  
-              
-            // Asegurar que x1 < x2  
-            if (screen_x1 > screen_x2) {  
-                int temp_x = screen_x1;  
-                screen_x1 = screen_x2;  
-                screen_x2 = temp_x;  
-                  
-                float temp_z = cam_z1;  
-                cam_z1 = cam_z2;  
-                cam_z2 = temp_z;  
-            }  
+            int wall_top = (int)wall_top_screen;  
+            int wall_bottom = (int)wall_bottom_screen;  
               
             // Clamp a límites de pantalla  
-            if (screen_x1 < 0) screen_x1 = 0;  
-            if (screen_x2 >= render_width) screen_x2 = render_width - 1;  
+            if (wall_top < 0) wall_top = 0;  
+            if (wall_bottom >= render_height) wall_bottom = render_height - 1;  
               
-            // Obtener textura de pared  
-            GRAPH *current_wall_texture = NULL;  
-            if (wall_texture && wall_texture->width > 0 && wall_texture->height > 0) {  
-                current_wall_texture = wall_texture;  
-            }  
+            // Actualizar clip buffer (CORREGIDO: reducir área visible)  
+            if (wall_top > clip->top) clip->top = wall_top;  
+            if (wall_bottom < clip->bottom) clip->bottom = wall_bottom;  
               
-            // Renderizar columnas del segmento  
-            for (int x = screen_x1; x <= screen_x2; x++) {  
-                if (x < 0 || x >= render_width) continue;  
+            // Renderizar píxeles de la pared  
+            for (int y = wall_top; y < wall_bottom; y++) {  
+                if (y < 0 || y >= render_height) continue;  
                   
-                COLUMN_CLIP *clip = &clip_buffer[x];  
+                uint32_t color;  
                   
-                // Interpolación lineal de profundidad  
-                float t = (screen_x2 != screen_x1) ?   
-                         (float)(x - screen_x1) / (float)(screen_x2 - screen_x1) : 0.0f;  
-                float depth = cam_z1 + t * (cam_z2 - cam_z1);  
-                  
-                if (depth < near_plane) continue;  
-                  
-                // Calcular altura de pared en pantalla  
-                float wall_top_screen = half_height -   
-                                       ((sector->ceiling_height - camera.z) / depth) * projection_scale;  
-                float wall_bottom_screen = half_height -   
-                                          ((sector->floor_height - camera.z) / depth) * projection_scale;  
-                  
-                int wall_top = (int)wall_top_screen;  
-                int wall_bottom = (int)wall_bottom_screen;  
-                  
-                // Clamp a límites de pantalla  
-                if (wall_top < 0) wall_top = 0;  
-                if (wall_bottom >= render_height) wall_bottom = render_height - 1;  
-                  
-                // Actualizar clip buffer  
-                if (wall_top < clip->top) clip->top = wall_top;  
-                if (wall_bottom > clip->bottom) clip->bottom = wall_bottom;  
-                  
-                // Renderizar píxeles de la pared  
-                for (int y = wall_top; y < wall_bottom; y++) {  
-                    if (y < 0 || y >= render_height) continue;  
+                if (wall_texture && wall_texture->width > 0 && wall_texture->height > 0) {  
+                    // Calcular coordenadas de textura  
+                    float u = hit_wall_u;  
+                    float v = (float)(y - wall_top) / (float)(wall_bottom - wall_top);  
                       
-                    uint32_t color;  
+                    int tex_x = (int)(u * wall_texture->width) % wall_texture->width;  
+                    int tex_y = (int)(v * wall_texture->height) % wall_texture->height;  
                       
-                    if (current_wall_texture) {  
-                        // Calcular coordenadas de textura  
-                        float wall_length = sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));  
-                        float u = (t * wall_length) / 64.0f;  
-                        u = u - floorf(u);  
-                          
-                        float v = (float)(y - wall_top) / (float)(wall_bottom - wall_top);  
-                          
-                        int tex_x = (int)(u * current_wall_texture->width) % current_wall_texture->width;  
-                        int tex_y = (int)(v * current_wall_texture->height) % current_wall_texture->height;  
-                          
-                        if (tex_x < 0) tex_x = 0;  
-                        if (tex_x >= current_wall_texture->width) tex_x = current_wall_texture->width - 1;  
-                        if (tex_y < 0) tex_y = 0;  
-                        if (tex_y >= current_wall_texture->height) tex_y = current_wall_texture->height - 1;  
-                          
-                        color = gr_get_pixel(current_wall_texture, tex_x, tex_y);  
-                          
-                        // Aplicar fog  
-                        uint8_t r, g, b, a;  
-                        SDL_GetRGBA(color, gPixelFormat, &r, &g, &b, &a);  
-                          
-                        float fog = 1.0f - (depth / max_render_distance);  
-                        if (fog < 0.3f) fog = 0.3f;  
-                        if (fog > 1.0f) fog = 1.0f;  
-                          
-                        r = (uint8_t)(r * fog);  
-                        g = (uint8_t)(g * fog);  
-                        b = (uint8_t)(b * fog);  
-                          
-                        color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
-                    } else {  
-                        // Color sólido si no hay textura  
-                        color = SDL_MapRGBA(gPixelFormat, 150, 120, 100, 255);  
-                    }  
+                    if (tex_x < 0) tex_x = 0;  
+                    if (tex_x >= wall_texture->width) tex_x = wall_texture->width - 1;  
+                    if (tex_y < 0) tex_y = 0;  
+                    if (tex_y >= wall_texture->height) tex_y = wall_texture->height - 1;  
                       
-                    gr_put_pixel(cpu_render_buffer, x, y, color);  
-                    walls_rendered++;  
+                    color = gr_get_pixel(wall_texture, tex_x, tex_y);  
+                      
+                    // Aplicar fog  
+                    uint8_t r, g, b, a;  
+                    SDL_GetRGBA(color, gPixelFormat, &r, &g, &b, &a);  
+                      
+                    float fog = 1.0f - (closest_distance / max_render_distance);  
+                    if (fog < 0.3f) fog = 0.3f;  
+                    if (fog > 1.0f) fog = 1.0f;  
+                      
+                    r = (uint8_t)(r * fog);  
+                    g = (uint8_t)(g * fog);  
+                    b = (uint8_t)(b * fog);  
+                      
+                    color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
+                } else {  
+                    // Color sólido si no hay textura  
+                    color = SDL_MapRGBA(gPixelFormat, 150, 120, 100, 255);  
                 }  
+                  
+                gr_put_pixel(cpu_render_buffer, x, y, color);  
+                walls_rendered++;  
             }  
         }  
     }  
       
     fprintf(stderr, "DEBUG: Renderizado de paredes completado - %d píxeles\n", walls_rendered);
-
-      // ========================================  
-    // RENDERIZADO DE SUELOS Y TECHOS (VPE-STYLE)  
-    // ========================================  
       
-    int floor_pixels_rendered = 0;  
-    int ceiling_pixels_rendered = 0;  
-      
-    // Renderizar suelos y techos para columnas no completamente cubiertas  
-    for (int x = 0; x < render_width; x++) {  
-        COLUMN_CLIP *clip = &clip_buffer[x];  
-          
-        // Si hay espacio visible en la parte superior (techo)  
-        if (clip->top > 0) {  
-            // Calcular ángulo del rayo para esta columna  
-            float column_angle = camera.angle - fov * 0.5f + (x / (float)render_width) * fov;  
-            float ray_dir_x = cosf(column_angle);  
-            float ray_dir_y = sinf(column_angle);  
-              
-            // Renderizar techo para cada fila visible  
-            for (int y = 0; y < clip->top; y++) {  
-                // Calcular pitch del rayo para esta fila  
-                float screen_y_normalized = (y / (float)render_height) - 0.5f;  
-                float vertical_fov = fov * 0.75f;  
-                float tan_half_vfov = tanf(vertical_fov * 0.5f);  
-                float ray_pitch_offset = atanf(screen_y_normalized * 2.0f * tan_half_vfov);  
-                float ray_pitch = camera.pitch + ray_pitch_offset;  
-                float sin_pitch = sinf(ray_pitch);  
-                  
-                if (fabsf(sin_pitch) > 0.001f) {  
-                    // Iterar sobre sectores para encontrar intersección con techo  
-                    for (int s = 0; s < hm->num_sectors; s++) {  
-                        SECTOR_V3 *sector = &hm->sectors[s];  
+// ========================================    
+    // RENDERIZADO DE SUELOS Y TECHOS (VPE-STYLE)    
+    // ========================================    
+        
+    int floor_pixels_rendered = 0;    
+    int ceiling_pixels_rendered = 0;    
+        
+    // Renderizar suelos y techos para columnas no completamente cubiertas    
+    for (int x = 0; x < render_width; x++) {    
+        COLUMN_CLIP *clip = &clip_buffer[x];    
+            
+        // Si hay espacio visible en la parte superior (techo)    
+        if (clip->top > 0) {    
+            // Calcular ángulo del rayo para esta columna (IGUAL que paredes)  
+            float column_angle = camera.angle - fov * 0.5f + (x / (float)render_width) * fov;    
+            float ray_dir_x = cosf(column_angle);    
+            float ray_dir_y = sinf(column_angle);    
+                
+            // Renderizar techo para cada fila visible    
+            for (int y = 0; y < clip->top; y++) {    
+                // Calcular pitch del rayo para esta fila    
+                float screen_y_normalized = (y / (float)render_height) - 0.5f;    
+                float vertical_fov = fov;  // CORREGIDO: era fov * 0.75f  
+                float tan_half_vfov = tanf(vertical_fov * 0.5f);    
+                float ray_pitch_offset = atanf(screen_y_normalized * 2.0f * tan_half_vfov);    
+                float ray_pitch = camera.pitch + ray_pitch_offset;    
+                float sin_pitch = sinf(ray_pitch);    
+                    
+                if (fabsf(sin_pitch) > 0.0001f) {  // CORREGIDO: era 0.001f  
+                    // Iterar sobre sectores para encontrar intersección con techo    
+                    for (int s = 0; s < hm->num_sectors; s++) {    
+                        SECTOR_V3 *sector = &hm->sectors[s];    
+                            
+                        // CRÍTICO: Verificar que el sector tiene vértices válidos    
+                        if (!sector->vertices || sector->num_vertices < 3) {    
+                            continue;    
+                        }    
+                            
+                        // CORRECCIÓN: Usar ceiling_height directamente (no hay slopes en techos)  
+                        float ceiling_height = sector->ceiling_height;    
+                        float height_diff = camera.z - ceiling_height;    
+                        float distance_to_ceiling = height_diff / sin_pitch;    
+                            
+                        if (distance_to_ceiling > 0.0f && distance_to_ceiling < max_render_distance) {    
+                            // Calcular punto de intersección en el mundo    
+                            float world_x = camera.x + ray_dir_x * distance_to_ceiling;    
+                            float world_y = camera.y + ray_dir_y * distance_to_ceiling;    
+                                
+                            // Verificar si el punto está dentro del sector (point-in-polygon)    
+                            int inside = 0;    
+                            for (uint32_t v = 0; v < sector->num_vertices; v++) {    
+                                uint32_t next_v = (v + 1) % sector->num_vertices;    
+                                VERTEX *v1 = &sector->vertices[v];    
+                                VERTEX *v2 = &sector->vertices[next_v];    
+                                float v1_x = v1->x;    
+                                float v1_y = v1->y;    
+                                float v2_x = v2->x;    
+                                float v2_y = v2->y;    
+                                    
+                                if (((v1_y > world_y) != (v2_y > world_y)) &&    
+                                    (world_x < (v2_x - v1_x) * (world_y - v1_y) / (v2_y - v1_y) + v1_x)) {    
+                                    inside = !inside;    
+                                }    
+                            }    
+                                
+                            if (inside && ceiling_texture && ceiling_texture->width > 0 && ceiling_texture->height > 0) {    
+                                // Samplear textura de techo    
+                                float tex_u = fmodf(world_x / 100.0f, 1.0f);    
+                                float tex_v = fmodf(world_y / 100.0f, 1.0f);    
+                                if (tex_u < 0.0f) tex_u += 1.0f;    
+                                if (tex_v < 0.0f) tex_v += 1.0f;    
+                                    
+                                int tex_x = (int)(tex_u * (ceiling_texture->width - 1));    
+                                int tex_y = (int)(tex_v * (ceiling_texture->height - 1));    
+                                    
+                                // Verificar bounds de textura    
+                                if (tex_x >= 0 && tex_x < ceiling_texture->width &&    
+                                    tex_y >= 0 && tex_y < ceiling_texture->height) {    
+                                        
+                                    uint32_t pixel = gr_get_pixel(ceiling_texture, tex_x, tex_y);    
+                                        
+                                    uint8_t r, g, b, a;    
+                                    SDL_GetRGBA(pixel, gPixelFormat, &r, &g, &b, &a);    
+                                        
+                                    // Aplicar fog    
+                                    float fog = 1.0f - (distance_to_ceiling / max_render_distance);    
+                                    fog = fmaxf(0.3f, fminf(1.0f, fog));    
+                                        
+                                    r = (uint8_t)(r * fog);    
+                                    g = (uint8_t)(g * fog);    
+                                    b = (uint8_t)(b * fog);    
+                                        
+                                    uint32_t final_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);    
+                                        
+                                    // Verificar bounds del buffer antes de escribir    
+                                    if (x >= 0 && x < render_width && y >= 0 && y < render_height) {    
+                                        gr_put_pixel(cpu_render_buffer, x, y, final_color);    
+                                        ceiling_pixels_rendered++;    
+                                    }    
+                                        
+                                    break; // Encontramos intersección, salir del loop de sectores    
+                                }    
+                            }    
+                        }    
+                    }    
+                }    
+            }    
+        }
+            
+         // Si hay espacio visible en la parte inferior (suelo)    
+        if (clip->bottom < render_height) {    
+            // Calcular ángulo del rayo para esta columna (IGUAL que paredes)  
+            float column_angle = camera.angle - fov * 0.5f + (x / (float)render_width) * fov;    
+            float ray_dir_x = cosf(column_angle);    
+            float ray_dir_y = sinf(column_angle);    
+                
+            // Renderizar suelo para cada fila visible    
+            for (int y = clip->bottom; y < render_height; y++) {    
+                // Calcular pitch del rayo para esta fila    
+                float screen_y_normalized = (y / (float)render_height) - 0.5f;    
+                float vertical_fov = fov;  // CORREGIDO: era fov * 0.75f  
+                float tan_half_vfov = tanf(vertical_fov * 0.5f);    
+                float ray_pitch_offset = atanf(screen_y_normalized * 2.0f * tan_half_vfov);    
+                float ray_pitch = camera.pitch + ray_pitch_offset;    
+                float sin_pitch = sinf(ray_pitch);    
+                    
+                if (fabsf(sin_pitch) > 0.0001f) {  // CORREGIDO: era 0.001f  
+                    // Iterar sobre sectores para encontrar intersección con suelo    
+                    for (int s = 0; s < hm->num_sectors; s++) {    
+                        SECTOR_V3 *sector = &hm->sectors[s];    
+                            
+                        // CRÍTICO: Verificar que el sector tiene vértices válidos    
+                        if (!sector->vertices || sector->num_vertices < 3) {    
+                            continue;    
+                        }    
+                            
+                        // CAMBIO CLAVE: Calcular altura del suelo considerando pendientes  
+                        // Primero necesitamos calcular world_x y world_y para este píxel  
                           
-                        // CRÍTICO: Verificar que el sector tiene vértices válidos  
-                        if (!sector->vertices || sector->num_vertices < 3) {  
-                            continue;  
-                        }  
-                          
-                        float ceiling_height = sector->ceiling_height;  
-                        float height_diff = camera.z - ceiling_height;  
-                        float distance_to_ceiling = height_diff / sin_pitch;  
-                          
-                        if (distance_to_ceiling > 0.0f && distance_to_ceiling < max_render_distance) {  
-                            // Calcular punto de intersección en el mundo  
-                            float world_x = camera.x + ray_dir_x * distance_to_ceiling;  
-                            float world_y = camera.y + ray_dir_y * distance_to_ceiling;  
+                        // Usar altura base para calcular distancia inicial  
+                        float base_floor_height = sector->floor_height;  
+                        float height_diff = camera.z - base_floor_height;    
+                        float distance_to_floor = height_diff / sin_pitch;    
+                            
+                        if (distance_to_floor > 0.0f && distance_to_floor < max_render_distance) {    
+                            // Calcular punto de intersección en el mundo    
+                            float world_x = camera.x + ray_dir_x * distance_to_floor;    
+                            float world_y = camera.y + ray_dir_y * distance_to_floor;    
                               
-                            // Verificar si el punto está dentro del sector (point-in-polygon)  
-                            int inside = 0;  
-                            for (uint32_t v = 0; v < sector->num_vertices; v++) {  
-                                uint32_t next_v = (v + 1) % sector->num_vertices;  
-                                VERTEX *v1 = &sector->vertices[v];  
-                                VERTEX *v2 = &sector->vertices[next_v];  
-                                float v1_x = v1->x;  
-                                float v1_y = v1->y;  
-                                float v2_x = v2->x;  
-                                float v2_y = v2->y;  
-                                  
-                                if (((v1_y > world_y) != (v2_y > world_y)) &&  
-                                    (world_x < (v2_x - v1_x) * (world_y - v1_y) / (v2_y - v1_y) + v1_x)) {  
-                                    inside = !inside;  
-                                }  
-                            }  
+                            // NUEVO: Calcular altura real del suelo en este punto (con pendientes)  
+                            float floor_height = floor_height_at_point(sector, world_x, world_y);  
                               
-                            if (inside && ceiling_texture && ceiling_texture->width > 0 && ceiling_texture->height > 0) {  
-                                // Samplear textura de techo  
-                                float tex_u = fmodf(world_x / 100.0f, 1.0f);  
-                                float tex_v = fmodf(world_y / 100.0f, 1.0f);  
-                                if (tex_u < 0.0f) tex_u += 1.0f;  
-                                if (tex_v < 0.0f) tex_v += 1.0f;  
-                                  
-                                int tex_x = (int)(tex_u * (ceiling_texture->width - 1));  
-                                int tex_y = (int)(tex_v * (ceiling_texture->height - 1));  
-                                  
-                                // Verificar bounds de textura  
-                                if (tex_x >= 0 && tex_x < ceiling_texture->width &&  
-                                    tex_y >= 0 && tex_y < ceiling_texture->height) {  
-                                      
-                                    uint32_t pixel = gr_get_pixel(ceiling_texture, tex_x, tex_y);  
-                                      
-                                    uint8_t r, g, b, a;  
-                                    SDL_GetRGBA(pixel, gPixelFormat, &r, &g, &b, &a);  
-                                      
-                                    // Aplicar fog  
-                                    float fog = 1.0f - (distance_to_ceiling / max_render_distance);  
-                                    fog = fmaxf(0.3f, fminf(1.0f, fog));  
-                                      
-                                    r = (uint8_t)(r * fog);  
-                                    g = (uint8_t)(g * fog);  
-                                    b = (uint8_t)(b * fog);  
-                                      
-                                    uint32_t final_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
-                                      
-                                    // Verificar bounds del buffer antes de escribir  
-                                    if (x >= 0 && x < render_width && y >= 0 && y < render_height) {  
-                                        gr_put_pixel(cpu_render_buffer, x, y, final_color);  
-                                        ceiling_pixels_rendered++;  
-                                    }  
-                                      
-                                    break; // Encontramos intersección, salir del loop de sectores  
-                                }  
-                            }  
-                        }  
-                    }  
-                }  
-            }  
-        }  
-          
-        // Si hay espacio visible en la parte inferior (suelo)  
-        if (clip->bottom < render_height) {  
-            // Calcular ángulo del rayo para esta columna  
-            float column_angle = camera.angle - fov * 0.5f + (x / (float)render_width) * fov;  
-            float ray_dir_x = cosf(column_angle);  
-            float ray_dir_y = sinf(column_angle);  
-              
-            // Renderizar suelo para cada fila visible  
-            for (int y = clip->bottom; y < render_height; y++) {  
-                // Calcular pitch del rayo para esta fila  
-                float screen_y_normalized = (y / (float)render_height) - 0.5f;  
-                float vertical_fov = fov * 0.75f;  
-                float tan_half_vfov = tanf(vertical_fov * 0.5f);  
-                float ray_pitch_offset = atanf(screen_y_normalized * 2.0f * tan_half_vfov);  
-                float ray_pitch = camera.pitch + ray_pitch_offset;  
-                float sin_pitch = sinf(ray_pitch);  
-                  
-                if (fabsf(sin_pitch) > 0.001f) {  
-                    // Iterar sobre sectores para encontrar intersección con suelo  
-                    for (int s = 0; s < hm->num_sectors; s++) {  
-                        SECTOR_V3 *sector = &hm->sectors[s];  
-                          
-                        // CRÍTICO: Verificar que el sector tiene vértices válidos  
-                        if (!sector->vertices || sector->num_vertices < 3) {  
-                            continue;  
-                        }  
-                          
-                        float floor_height = sector->floor_height;  
-                        float height_diff = camera.z - floor_height;  
-                        float distance_to_floor = height_diff / sin_pitch;  
-                          
-                        if (distance_to_floor > 0.0f && distance_to_floor < max_render_distance) {  
-                            // Calcular punto de intersección en el mundo  
-                            float world_x = camera.x + ray_dir_x * distance_to_floor;  
-                            float world_y = camera.y + ray_dir_y * distance_to_floor;  
+                            // Recalcular distancia con la altura correcta  
+                            height_diff = camera.z - floor_height;  
+                            distance_to_floor = height_diff / sin_pitch;  
                               
-                            // Verificar si el punto está dentro del sector (point-in-polygon)  
-                            int inside = 0;  
-                            for (uint32_t v = 0; v < sector->num_vertices; v++) {  
-                                uint32_t next_v = (v + 1) % sector->num_vertices;  
-                                VERTEX *v1 = &sector->vertices[v];  
-                                VERTEX *v2 = &sector->vertices[next_v];  
-                                float v1_x = v1->x;  
-                                float v1_y = v1->y;  
-                                float v2_x = v2->x;  
-                                float v2_y = v2->y;  
-                                  
-                                if (((v1_y > world_y) != (v2_y > world_y)) &&  
-                                    (world_x < (v2_x - v1_x) * (world_y - v1_y) / (v2_y - v1_y) + v1_x)) {  
-                                    inside = !inside;  
-                                }  
-                            }  
-                              
-                            if (inside && floor_texture && floor_texture->width > 0 && floor_texture->height > 0) {  
-                                // Samplear textura de suelo  
-                                float tex_u = fmodf(world_x / 100.0f, 1.0f);  
-                                float tex_v = fmodf(world_y / 100.0f, 1.0f);  
-                                if (tex_u < 0.0f) tex_u += 1.0f;  
-                                if (tex_v < 0.0f) tex_v += 1.0f;  
-                                  
-                                int tex_x = (int)(tex_u * (floor_texture->width - 1));  
-                                int tex_y = (int)(tex_v * (floor_texture->height - 1));  
-                                  
-                                // Verificar bounds de textura  
-                                if (tex_x >= 0 && tex_x < floor_texture->width &&  
-                                    tex_y >= 0 && tex_y < floor_texture->height) {  
-                                      
-                                    uint32_t pixel = gr_get_pixel(floor_texture, tex_x, tex_y);  
-                                      
-                                    uint8_t r, g, b, a;  
-                                    SDL_GetRGBA(pixel, gPixelFormat, &r, &g, &b, &a);  
-                                      
-                                    // Aplicar fog  
-                                    float fog = 1.0f - (distance_to_floor / max_render_distance);  
-                                    fog = fmaxf(0.3f, fminf(1.0f, fog));  
-                                      
-                                    r = (uint8_t)(r * fog);  
-                                    g = (uint8_t)(g * fog);  
-                                    b = (uint8_t)(b * fog);  
-                                      
-                                    uint32_t final_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
-                                      
-                                    // Verificar bounds del buffer antes de escribir  
-                                    if (x >= 0 && x < render_width && y >= 0 && y < render_height) {  
-                                        gr_put_pixel(cpu_render_buffer, x, y, final_color);  
-                                        floor_pixels_rendered++;  
-                                    }  
-                                      
-                                    break; // Encontramos intersección, salir del loop de sectores  
-                                }  
-                            }  
-                        }  
-                    }  
-                }  
-            }  
-        }  
-    }  
-      
-    fprintf(stderr, "DEBUG: Renderizado completado - %d paredes, %d píxeles suelo, %d píxeles techo\n",  
-            walls_rendered, floor_pixels_rendered, ceiling_pixels_rendered);  
-      
-    // ========================================  
-    // RENDERIZADO DE BILLBOARDS Y RETORNO  
-    // ========================================  
-      
-    // Renderizar billboards sobre el buffer de sectores  
-    // CRÍTICO: Llamar con UN SOLO parámetro  
-    //render_billboards_to_buffer(cpu_render_buffer);  
-      
-    // Liberar clip buffer  
-    free(clip_buffer);  
-      
-    // Retornar el graph_id del buffer renderizado  
-    return cpu_render_buffer->code;  
+                            // Recalcular posición mundial con distancia corregida  
+                            world_x = camera.x + ray_dir_x * distance_to_floor;  
+                            world_y = camera.y + ray_dir_y * distance_to_floor;  
+                                
+                            // Verificar si el punto está dentro del sector (point-in-polygon)    
+                            int inside = 0;    
+                            for (uint32_t v = 0; v < sector->num_vertices; v++) {    
+                                uint32_t next_v = (v + 1) % sector->num_vertices;    
+                                VERTEX *v1 = &sector->vertices[v];    
+                                VERTEX *v2 = &sector->vertices[next_v];    
+                                float v1_x = v1->x;    
+                                float v1_y = v1->y;    
+                                float v2_x = v2->x;    
+                                float v2_y = v2->y;    
+                                    
+                                if (((v1_y > world_y) != (v2_y > world_y)) &&    
+                                    (world_x < (v2_x - v1_x) * (world_y - v1_y) / (v2_y - v1_y) + v1_x)) {    
+                                    inside = !inside;    
+                                }    
+                            }    
+                                
+                            if (inside && floor_texture && floor_texture->width > 0 && floor_texture->height > 0) {    
+                                // Samplear textura de suelo    
+                                float tex_u = fmodf(world_x / 100.0f, 1.0f);    
+                                float tex_v = fmodf(world_y / 100.0f, 1.0f);    
+                                if (tex_u < 0.0f) tex_u += 1.0f;    
+                                if (tex_v < 0.0f) tex_v += 1.0f;    
+                                    
+                                int tex_x = (int)(tex_u * (floor_texture->width - 1));    
+                                int tex_y = (int)(tex_v * (floor_texture->height - 1));    
+                                    
+                                // Verificar bounds de textura    
+                                if (tex_x >= 0 && tex_x < floor_texture->width &&    
+                                    tex_y >= 0 && tex_y < floor_texture->height) {    
+                                        
+                                    uint32_t pixel = gr_get_pixel(floor_texture, tex_x, tex_y);    
+                                        
+                                    uint8_t r, g, b, a;    
+                                    SDL_GetRGBA(pixel, gPixelFormat, &r, &g, &b, &a);    
+                                        
+                                    // Aplicar fog    
+                                    float fog = 1.0f - (distance_to_floor / max_render_distance);    
+                                    fog = fmaxf(0.3f, fminf(1.0f, fog));    
+                                        
+                                    r = (uint8_t)(r * fog);    
+                                    g = (uint8_t)(g * fog);    
+                                    b = (uint8_t)(b * fog);    
+                                        
+                                    uint32_t final_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);    
+                                        
+                                    // Verificar bounds del buffer antes de escribir    
+                                    if (x >= 0 && x < render_width && y >= 0 && y < render_height) {    
+                                        gr_put_pixel(cpu_render_buffer, x, y, final_color);    
+                                        floor_pixels_rendered++;    
+                                    }    
+                                        
+                                    break; // Encontramos intersección, salir del loop de sectores    
+                                }    
+                            }    
+                        }    
+                    }    
+                }    
+            }    
+        }    
+    }    
+        
+    fprintf(stderr, "DEBUG: Renderizado completado - %d paredes, %d píxeles suelo, %d píxeles techo\n",    
+            walls_rendered, floor_pixels_rendered, ceiling_pixels_rendered);
+        
+    // ========================================    
+    // RENDERIZADO DE BILLBOARDS Y RETORNO    
+    // ========================================    
+        
+    // Renderizar billboards sobre el buffer de sectores    
+    // CRÍTICO: Llamar con UN SOLO parámetro    
+    //render_billboards_to_buffer(cpu_render_buffer);    
+        
+    // NO liberar clip_buffer aquí - es static y se reutiliza entre frames  
+    // Solo se libera cuando cambia render_width (ver líneas anteriores en Parte 1)  
+        
+    // Retornar el graph_id del buffer renderizado    
+    return cpu_render_buffer->code;    
 }
+
+
 //---------------------------------------------------------------------------------------//
 //                          FIN MAPAS POR SECTORES                                       //
 //---------------------------------------------------------------------------------------//
@@ -4430,35 +4404,35 @@ int check_wall_collision(float x, float y, HEIGHTMAP *hm) {
 }
 
 /* Encontrar el sector que contiene un punto (x, y) */  
-int get_sector_at_position(HEIGHTMAP *hm, float x, float y) {  
-    if (!hm || hm->type != MAP_TYPE_SECTOR) return -1;  
+int get_sector_at_position(HEIGHTMAP *hm, float x, float y) {    
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return -1;    
       
-    for (int i = 0; i < hm->num_sectors; i++) {  
-        SECTOR_V3 *sector = &hm->sectors[i];  
-          
-        // Verificar si el punto está dentro del polígono del sector  
-        // Usando algoritmo de ray casting (point-in-polygon)  
-        int inside = 0;  
-          
-        for (uint32_t v = 0; v < sector->num_vertices; v++) {  
-            uint32_t next_v = (v + 1) % sector->num_vertices;  
-              
-            // Acceso DIRECTO a vértices embebidos (no indexados)  
-            VERTEX *v1 = &sector->vertices[v];  
-            VERTEX *v2 = &sector->vertices[next_v];  
-              
-            if (((v1->y > y) != (v2->y > y)) &&  
-                (x < (v2->x - v1->x) * (y - v1->y) / (v2->y - v1->y) + v1->x)) {  
-                inside = !inside;  
-            }  
-        }  
-          
-        if (inside) {  
-            return i; // Retornar índice del sector  
-        }  
-    }  
-      
-    return -1; // No se encontró sector  
+    // Añadir pequeño offset para evitar problemas con bordes exactos  
+    float epsilon = 0.01f;  
+    x += epsilon;  
+    y += epsilon;  
+        
+    for (int i = 0; i < hm->num_sectors; i++) {    
+        SECTOR_V3 *sector = &hm->sectors[i];    
+        int inside = 0;    
+            
+        for (uint32_t v = 0; v < sector->num_vertices; v++) {    
+            uint32_t next_v = (v + 1) % sector->num_vertices;    
+            VERTEX *v1 = &sector->vertices[v];    
+            VERTEX *v2 = &sector->vertices[next_v];    
+                
+            if (((v1->y > y) != (v2->y > y)) &&    
+                (x < (v2->x - v1->x) * (y - v1->y) / (v2->y - v1->y) + v1->x)) {    
+                inside = !inside;    
+            }    
+        }    
+            
+        if (inside) {    
+            return i;    
+        }    
+    }    
+        
+    return -1;    
 }
 
 /* Activar ascensor (cambiar estado de movimiento) */  
