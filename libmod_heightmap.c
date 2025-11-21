@@ -282,21 +282,20 @@ void __bgdexport(libmod_heightmap, module_finalize)()
                 heightmaps[i].texturemap = NULL;        
             }        
         }  
-        else if (heightmaps[i].type == MAP_TYPE_TILE)  
-{  
+        else if (heightmaps[i].type == MAP_TYPE_TILE) {  
     // Liberar grid de tiles  
     if (heightmaps[i].tile_grid) {  
         free(heightmaps[i].tile_grid);  
         heightmaps[i].tile_grid = NULL;  
     }  
       
-    // Liberar things  
-    if (heightmaps[i].things) {  
-        free(heightmaps[i].things);  
-        heightmaps[i].things = NULL;  
+    // Liberar thin walls  
+    if (heightmaps[i].thin_walls) {  
+        free(heightmaps[i].thin_walls);  
+        heightmaps[i].thin_walls = NULL;  
     }  
       
-    // Liberar texturas (destruir GRAPHs cargados)  
+    // Liberar texturas  
     if (heightmaps[i].textures) {  
         for (int j = 0; j < heightmaps[i].num_textures; j++) {  
             if (heightmaps[i].textures[j].graph_id > 0) {  
@@ -3359,96 +3358,208 @@ int64_t libmod_heightmap_get_map_type(INSTANCE *my, int64_t *params) {
 
 ///    MAPAS POR SECTORES    ///
 
-int64_t libmod_heightmap_load_dmap(INSTANCE *my, int64_t *params) {  
-    const char *filename = string_get(params[0]);  
-    FILE *file = fopen(filename, "rb");  
-    char cwd[1024];  
-if (getcwd(cwd, sizeof(cwd)) != NULL) {  
-    fprintf(stderr, "DEBUG: Directorio de trabajo actual: %s\n", cwd);  
-}  
-    if (!file) {  
-        fprintf(stderr, "Error: No se pudo abrir archivo .dmap: %s\n", filename);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
-      
-    // Leer header  
-    DMAP_HEADER header;  
-    if (fread(&header, sizeof(DMAP_HEADER), 1, file) != 1) {  
-        fprintf(stderr, "Error: No se pudo leer header DMAP\n");  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
-      
+int64_t libmod_heightmap_load_dmap(INSTANCE *my, int64_t *params) {    
+    const char *filename = string_get(params[0]);    
+    FILE *file = fopen(filename, "rb");    
+        
+    if (!file) {    
+        fprintf(stderr, "Error: No se pudo abrir archivo .dmap: %s\n", filename);    
+        string_discard(params[0]);    
+        return 0;    
+    }    
+        
+    // ========================================    
+    // LEER Y VALIDAR HEADER MULTI-NIVEL  
+    // ========================================    
+        
+    DMAP_HEADER header;    
+    if (fread(&header, sizeof(DMAP_HEADER), 1, file) != 1) {    
+        fprintf(stderr, "Error: No se pudo leer header\n");    
+        fclose(file);    
+        string_discard(params[0]);    
+        return 0;    
+    }    
+        
     // Validar magic  
-    if (memcmp(header.magic, "DMAP", 4) != 0) {  
-        fprintf(stderr, "Error: Archivo no es DMAP válido\n");  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
-      
-    // Buscar slot libre  
-    HEIGHTMAP *map = NULL;  
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        if (heightmaps[i].id == 0) {  
-            map = &heightmaps[i];  
-            map->id = next_heightmap_id++;  
-            break;  
-        }  
-    }  
-      
-    if (!map) {  
-        fprintf(stderr, "Error: No hay slots disponibles\n");  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
-      
-    // Configurar como mapa tile-based  
-    map->type = MAP_TYPE_TILE;  
+    if (memcmp(header.magic, "DMAP", 4) != 0) {    
+        fprintf(stderr, "Error: Archivo no es DMAP válido (magic=%.4s)\n", header.magic);    
+        fclose(file);    
+        string_discard(params[0]);    
+        return 0;    
+    }    
+        
+    fprintf(stderr, "DEBUG: Cargando DMAP - %ux%ux%u tiles, %u texturas, %u thin_walls\n",    
+            header.grid_width, header.grid_height, header.num_levels,  
+            header.num_textures, header.num_thin_walls);    
+        
+    // ========================================    
+    // BUSCAR SLOT LIBRE    
+    // ========================================    
+        
+    HEIGHTMAP *map = NULL;    
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {    
+        if (heightmaps[i].id == 0) {    
+            map = &heightmaps[i];    
+            map->id = next_heightmap_id++;    
+            break;    
+        }    
+    }    
+        
+    if (!map) {    
+        fprintf(stderr, "Error: No hay slots disponibles para mapas\n");    
+        fclose(file);    
+        string_discard(params[0]);    
+        return 0;    
+    }    
+        
+    // Inicializar como mapa tile multi-nivel  
+    map->type = MAP_TYPE_TILE;    
     map->grid_width = header.grid_width;  
     map->grid_height = header.grid_height;  
+    map->num_levels = header.num_levels;  
     map->tile_size = header.tile_size;  
+    map->num_textures = header.num_textures;    
+    map->num_thin_walls = header.num_thin_walls;  
+    map->num_things = header.num_things;    
+        
+    // Inicializar punteros a NULL    
+    map->tile_grid = NULL;  
+    map->thin_walls = NULL;  
+    map->things = NULL;    
+    map->textures = NULL;    
+        
+    // ========================================    
+    // LEER TEXTURAS    
+    // ========================================    
+        
+    map->textures = malloc(sizeof(TEXTURE_ENTRY) * header.num_textures);    
+    if (!map->textures) {    
+        fprintf(stderr, "Error: No se pudo asignar memoria para texturas\n");    
+        fclose(file);    
+        string_discard(params[0]);    
+        return 0;    
+    }    
+        
+    for (uint32_t i = 0; i < header.num_textures; i++) {    
+        if (fread(&map->textures[i], sizeof(TEXTURE_ENTRY), 1, file) != 1) {    
+            fprintf(stderr, "Error: No se pudo leer textura %u\n", i);    
+            free(map->textures);    
+            fclose(file);    
+            string_discard(params[0]);    
+            return 0;    
+        }    
+            
+        map->textures[i].graph_id = gr_load_img(map->textures[i].filename);    
+            
+        if (map->textures[i].graph_id == 0) {    
+            fprintf(stderr, "Advertencia: No se pudo cargar textura: %s\n",    
+                    map->textures[i].filename);    
+        } else {    
+            fprintf(stderr, "Textura %u: %s -> graph_id=%d\n",    
+                    i, map->textures[i].filename, map->textures[i].graph_id);    
+        }    
+    }    
+        
+    // ========================================    
+    // LEER GRID 3D DE TILES  
+    // ========================================    
       
-    // Cargar texturas  
-    map->num_textures = header.num_textures;  
-    map->textures = malloc(sizeof(TEXTURE_ENTRY) * header.num_textures);  
-    fread(map->textures, sizeof(TEXTURE_ENTRY), header.num_textures, file);  
-    // Después de leer las texturas del archivo  
-fprintf(stderr, "DEBUG LOADER: Texturas cargadas:\n");  
-for (uint32_t i = 0; i < header.num_textures; i++) {  
-    fprintf(stderr, "  Textura %u: filename='%s' graph_id=%d\n",  
-            i, map->textures[i].filename, map->textures[i].graph_id);  
-      
-    if (map->textures[i].graph_id == 0) {  
-        fprintf(stderr, "    ERROR: No se pudo cargar la textura\n");  
-    }  
-} 
-    // Cargar grid de tiles  
-    uint32_t total_cells = header.grid_width * header.grid_height;  
+    uint32_t total_cells = header.grid_width * header.grid_height * header.num_levels;  
     map->tile_grid = malloc(sizeof(TILE_CELL) * total_cells);  
-    fread(map->tile_grid, sizeof(TILE_CELL), total_cells, file);  
-    fprintf(stderr, "DEBUG LOADER: Verificando tiles cargados:\n");  
-    for (int i = 0; i < 5; i++) {  
-    TILE_CELL *cell = &map->tile_grid[16 * map->grid_width + 16 + i];  
-    fprintf(stderr, "  Tile centro+%d: wall=%d floor=%d ceiling=%d floor_h=%.1f ceil_h=%.1f\n",  
-            i, cell->wall_texture_id, cell->floor_texture_id,  
-            cell->ceiling_texture_id, cell->floor_height, cell->ceiling_height);  
-} 
-    // Cargar things  
-    map->num_things = header.num_things;  
-    map->things = malloc(sizeof(THING) * header.num_things);  
-    fread(map->things, sizeof(THING), header.num_things, file);  
       
-    fclose(file);  
-    string_discard(params[0]);  
+    if (!map->tile_grid) {  
+        fprintf(stderr, "Error: No se pudo asignar memoria para tile_grid\n");  
+        free(map->textures);  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
       
-    printf("Mapa DMAP cargado: %ux%u tiles\n",   
-           header.grid_width, header.grid_height);  
+    if (fread(map->tile_grid, sizeof(TILE_CELL), total_cells, file) != total_cells) {  
+        fprintf(stderr, "Error: No se pudieron leer tiles\n");  
+        free(map->tile_grid);  
+        free(map->textures);  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
       
-    return map->id;  
+    fprintf(stderr, "DEBUG: Grid 3D cargado: %u tiles totales\n", total_cells);  
+      
+    // ========================================    
+    // LEER THIN WALLS  
+    // ========================================    
+      
+    if (header.num_thin_walls > 0) {  
+        map->thin_walls = malloc(sizeof(THIN_WALL) * header.num_thin_walls);  
+          
+        if (!map->thin_walls) {  
+            fprintf(stderr, "Error: No se pudo asignar memoria para thin_walls\n");  
+            free(map->tile_grid);  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        if (fread(map->thin_walls, sizeof(THIN_WALL), header.num_thin_walls, file) != header.num_thin_walls) {  
+            fprintf(stderr, "Error: No se pudieron leer thin_walls\n");  
+            free(map->thin_walls);  
+            free(map->tile_grid);  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        fprintf(stderr, "DEBUG: Thin walls cargadas: %u\n", header.num_thin_walls);  
+    }  
+      
+    // ========================================    
+    // LEER THINGS  
+    // ========================================    
+      
+    if (header.num_things > 0) {  
+        map->things = malloc(sizeof(THING) * header.num_things);  
+          
+        if (!map->things) {  
+            fprintf(stderr, "Error: No se pudo asignar memoria para things\n");  
+            if (map->thin_walls) free(map->thin_walls);  
+            free(map->tile_grid);  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        if (fread(map->things, sizeof(THING), header.num_things, file) != header.num_things) {  
+            fprintf(stderr, "Error: No se pudieron leer things\n");  
+            free(map->things);  
+            if (map->thin_walls) free(map->thin_walls);  
+            free(map->tile_grid);  
+            free(map->textures);  
+            fclose(file);  
+            string_discard(params[0]);  
+            return 0;  
+        }  
+          
+        fprintf(stderr, "DEBUG: Things cargadas: %u\n", header.num_things);  
+    }  
+      
+    // ========================================    
+    // CIERRE Y MENSAJE DE ÉXITO    
+    // ========================================    
+        
+    fclose(file);    
+    string_discard(params[0]);    
+        
+    printf("Mapa DMAP multi-nivel cargado exitosamente:\n");    
+    printf("  - Grid: %ux%ux%u tiles\n", header.grid_width, header.grid_height, header.num_levels);  
+    printf("  - %u texturas\n", header.num_textures);    
+    printf("  - %u thin walls\n", header.num_thin_walls);  
+    printf("  - %u things\n", header.num_things);    
+        
+    return map->id;    
 }
 
 
@@ -3506,7 +3617,10 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
           
     float fov = 0.66f;  // FOV típico de raycasting  
           
-    // Validar y buscar heightmap  
+    // ========================================  
+    // VALIDACIÓN Y BÚSQUEDA DE HEIGHTMAP  
+    // ========================================  
+      
     HEIGHTMAP *hm = NULL;      
     for (int i = 0; i < MAX_HEIGHTMAPS; i++) {      
         if (heightmaps[i].id == hm_id) {      
@@ -3519,13 +3633,16 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
         fprintf(stderr, "Error: Heightmap inválido o no es tipo TILE\n");    
         return 0;      
     }      
-        
-    if (!hm->tile_grid || hm->grid_width == 0 || hm->grid_height == 0) {    
-        fprintf(stderr, "Error: No hay grid de tiles cargado\n");    
-        return 0;    
-    }  
       
-    // Crear/redimensionar buffer de renderizado  
+    if (!hm->tile_grid || hm->grid_width == 0 || hm->grid_height == 0) {  
+        fprintf(stderr, "Error: Grid de tiles no inicializado\n");  
+        return 0;  
+    }  
+          
+    // ========================================  
+    // CREAR/REDIMENSIONAR BUFFER DE RENDERIZADO  
+    // ========================================  
+          
     static GRAPH *cpu_render_buffer = NULL;      
     static int64_t last_width = 0;      
     static int64_t last_height = 0;      
@@ -3543,13 +3660,17 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
         last_height = render_height;      
     }      
           
-    // Limpiar buffer con color de cielo  
-    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, 135, 206, 235, 255);      
-    gr_clear_as(cpu_render_buffer, sky_color);  
-      
-    int half_height = render_height / 2;  
-    float max_render_distance = 2000.0f;
-       // Cargar texturas del mapa  
+    // ========================================  
+    // LIMPIAR BUFFER CON COLOR DE CIELO  
+    // ========================================  
+          
+    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, 255);      
+    gr_clear_as(cpu_render_buffer, sky_color);      
+          
+    // ========================================  
+    // CARGAR TEXTURAS  
+    // ========================================  
+          
     GRAPH *wall_texture = NULL;      
     GRAPH *floor_texture = NULL;      
     GRAPH *ceiling_texture = NULL;      
@@ -3564,59 +3685,63 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
         if (hm->num_textures > 2 && hm->textures[2].graph_id > 0) {      
             ceiling_texture = bitmap_get(0, hm->textures[2].graph_id);      
         }      
-    }
-    fprintf(stderr, "DEBUG RENDER: Texturas cargadas:\n");  
-fprintf(stderr, "  wall_texture: %p (graph_id=%d)\n",   
-        wall_texture, hm->textures[0].graph_id);  
-if (hm->num_textures > 1) {  
-    fprintf(stderr, "  floor_texture: %p (graph_id=%d)\n",  
-            floor_texture, hm->textures[1].graph_id);  
-}  
-if (hm->num_textures > 2) {  
-    fprintf(stderr, "  ceiling_texture: %p (graph_id=%d)\n",  
-            ceiling_texture, hm->textures[2].graph_id);  
-}
-     // Iterar cada columna de pantalla (raycasting columnar)  
+    }      
+        
+    // ========================================  
+    // PRECALCULAR VALORES DE CÁMARA  
+    // ========================================  
+        
+    float cos_cam = cosf(camera.angle);      
+    float sin_cam = sinf(camera.angle);      
+    float projection_scale = (render_width / 2.0f) / tanf(fov / 2.0f);    
+        
+    int half_height = render_height / 2;    
+    int half_width = render_width / 2;
+        // ========================================  
+    // RENDERIZADO DE PAREDES CON DDA  
+    // ========================================  
+      
     for (int x = 0; x < render_width; x++) {  
-        // Calcular dirección del rayo para esta columna  
-        float camera_x = 2 * x / (float)render_width - 1;  // -1 a 1  
-        float ray_dir_x = cosf(camera.angle) + camera_x * sinf(camera.angle) * fov;  
-        float ray_dir_y = sinf(camera.angle) - camera_x * cosf(camera.angle) * fov;  
+        // Calcular ángulo del rayo para esta columna  
+        float camera_x = 2.0f * x / (float)render_width - 1.0f;  
+        float ray_dir_x = cos_cam + camera.plane_x * camera_x;  
+        float ray_dir_y = sin_cam + camera.plane_y * camera_x;  
           
-        // Posición inicial en el grid (tile donde está la cámara)  
+        // Posición actual en el grid  
         int map_x = (int)(camera.x / hm->tile_size);  
         int map_y = (int)(camera.y / hm->tile_size);  
           
-        // DDA: calcular distancias delta  
+        // Distancia desde un lado del tile al siguiente  
         float delta_dist_x = (ray_dir_x == 0) ? 1e30f : fabsf(1.0f / ray_dir_x);  
         float delta_dist_y = (ray_dir_y == 0) ? 1e30f : fabsf(1.0f / ray_dir_y);  
           
-        // Determinar dirección de paso y distancia inicial  
+        // Dirección de paso y distancia inicial al siguiente lado  
         int step_x, step_y;  
         float side_dist_x, side_dist_y;  
           
+        // Calcular step y side_dist inicial  
         if (ray_dir_x < 0) {  
             step_x = -1;  
-            side_dist_x = (camera.x / hm->tile_size - map_x) * delta_dist_x;  
+            side_dist_x = ((camera.x / hm->tile_size) - map_x) * delta_dist_x;  
         } else {  
             step_x = 1;  
-            side_dist_x = (map_x + 1.0f - camera.x / hm->tile_size) * delta_dist_x;  
+            side_dist_x = (map_x + 1.0f - (camera.x / hm->tile_size)) * delta_dist_x;  
         }  
           
         if (ray_dir_y < 0) {  
             step_y = -1;  
-            side_dist_y = (camera.y / hm->tile_size - map_y) * delta_dist_y;  
+            side_dist_y = ((camera.y / hm->tile_size) - map_y) * delta_dist_y;  
         } else {  
             step_y = 1;  
-            side_dist_y = (map_y + 1.0f - camera.y / hm->tile_size) * delta_dist_y;  
+            side_dist_y = (map_y + 1.0f - (camera.y / hm->tile_size)) * delta_dist_y;  
         }  
           
-        // DDA loop: avanzar hasta encontrar pared  
+        // Realizar DDA  
         int hit = 0;  
-        int side = 0;  // 0 = lado X, 1 = lado Y  
+        int side; // 0 = lado X, 1 = lado Y  
           
-        while (!hit) {  
-            // Avanzar al siguiente tile  
+        while (hit == 0) {  
+            // Saltar al siguiente tile  
             if (side_dist_x < side_dist_y) {  
                 side_dist_x += delta_dist_x;  
                 map_x += step_x;  
@@ -3627,101 +3752,109 @@ if (hm->num_textures > 2) {
                 side = 1;  
             }  
               
-            // Verificar límites del mapa  
+            // Verificar límites del grid  
             if (map_x < 0 || map_x >= hm->grid_width ||   
                 map_y < 0 || map_y >= hm->grid_height) {  
-                break;  // Fuera del mapa  
+                break;  
             }  
-              
-            // Obtener celda actual  
-            TILE_CELL *cell = &hm->tile_grid[map_y * hm->grid_width + map_x];  
               
             // Verificar si hay pared  
+            TILE_CELL *cell = &hm->tile_grid[map_y * hm->grid_width + map_x];  
             if (cell->wall_texture_id > 0) {  
                 hit = 1;  
-                  
-                // Calcular distancia perpendicular (evita efecto fish-eye)  
-                float perp_wall_dist;  
-                if (side == 0) {  
-                    perp_wall_dist = (map_x - camera.x / hm->tile_size + (1 - step_x) / 2) / ray_dir_x;  
-                } else {  
-                    perp_wall_dist = (map_y - camera.y / hm->tile_size + (1 - step_y) / 2) / ray_dir_y;  
-                }  
-                  
-                // Convertir a unidades del mundo  
-                perp_wall_dist *= hm->tile_size;  
-                  
-                // Calcular altura de la pared en pantalla  
-                float wall_height = cell->ceiling_height - cell->floor_height;  
-                int line_height = (int)(wall_height / perp_wall_dist * 300.0f);  
-                  
-                // Calcular píxeles de inicio y fin  
-                int draw_start = half_height - line_height / 2;  
-                int draw_end = half_height + line_height / 2;  
-                  
-                // Aplicar pitch de cámara  
-                draw_start += (int)(camera.pitch * 40.0f);  
-                draw_end += (int)(camera.pitch * 40.0f);  
-                  
-                // Clamp a límites de pantalla  
-                if (draw_start < 0) draw_start = 0;  
-                if (draw_end >= render_height) draw_end = render_height - 1;  
-                  
-                // Calcular coordenada de textura U  
-                float wall_x;  
-                if (side == 0) {  
-                    wall_x = camera.y / hm->tile_size + perp_wall_dist * ray_dir_y / hm->tile_size;  
-                } else {  
-                    wall_x = camera.x / hm->tile_size + perp_wall_dist * ray_dir_x / hm->tile_size;  
-                }  
-                wall_x -= floorf(wall_x);  // Parte fraccionaria  
-                  
-                // Renderizar columna de pared  
-                for (int y = draw_start; y <= draw_end; y++) {  
-                    uint32_t color;  
-                      
-                    if (wall_texture && wall_texture->width > 0) {  
-                        // Calcular coordenadas de textura  
-                        int tex_x = (int)(wall_x * wall_texture->width);  
-                        float v = (float)(y - draw_start) / (float)(draw_end - draw_start);  
-                        int tex_y = (int)(v * wall_texture->height);  
-                          
-                        // Clamp  
-                        if (tex_x < 0) tex_x = 0;  
-                        if (tex_x >= wall_texture->width) tex_x = wall_texture->width - 1;  
-                        if (tex_y < 0) tex_y = 0;  
-                        if (tex_y >= wall_texture->height) tex_y = wall_texture->height - 1;  
-                          
-                        color = gr_get_pixel(wall_texture, tex_x, tex_y);  
-                          
-                        // Aplicar fog  
-                        uint8_t r, g, b, a;  
-                        SDL_GetRGBA(color, gPixelFormat, &r, &g, &b, &a);  
-                          
-                        float fog = 1.0f - (perp_wall_dist / max_render_distance);  
-                        if (fog < 0.3f) fog = 0.3f;  
-                        if (fog > 1.0f) fog = 1.0f;  
-                          
-                        // Oscurecer lados Y para dar sensación de profundidad  
-                        if (side == 1) fog *= 0.8f;  
-                          
-                        r = (uint8_t)(r * fog);  
-                        g = (uint8_t)(g * fog);  
-                        b = (uint8_t)(b * fog);  
-                          
-                        color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
-                    } else {  
-                        // Color sólido si no hay textura  
-                        color = SDL_MapRGBA(gPixelFormat, 150, 120, 100, 255);  
-                    }  
-                      
-                    gr_put_pixel(cpu_render_buffer, x, y, color);  
-                }  
             }  
         }  
+          
+        // Si no se encontró pared, continuar con siguiente columna  
+        if (!hit) continue;  
+          
+        // Calcular distancia perpendicular (evita fish-eye)  
+        float perp_wall_dist;  
+        if (side == 0) {  
+            perp_wall_dist = (map_x - camera.x / hm->tile_size + (1 - step_x) / 2) / ray_dir_x;  
+        } else {  
+            perp_wall_dist = (map_y - camera.y / hm->tile_size + (1 - step_y) / 2) / ray_dir_y;  
+        }  
+          
+        // Obtener celda con pared  
+        TILE_CELL *cell = &hm->tile_grid[map_y * hm->grid_width + map_x];  
+          
+        // Calcular altura de pared en pantalla  
+        float wall_top_y = half_height - ((cell->ceiling_height - camera.z) / perp_wall_dist) * projection_scale;  
+        float wall_bottom_y = half_height - ((cell->floor_height - camera.z) / perp_wall_dist) * projection_scale;  
+          
+        int y_start = (int)wall_top_y;  
+        int y_end = (int)wall_bottom_y;  
+          
+        // Clamping  
+        if (y_start < 0) y_start = 0;  
+        if (y_end >= render_height) y_end = render_height - 1;  
+          
+        // Calcular coordenada de textura X  
+        float wall_x;  
+        if (side == 0) {  
+            wall_x = camera.y + perp_wall_dist * ray_dir_y;  
+        } else {  
+            wall_x = camera.x + perp_wall_dist * ray_dir_x;  
+        }  
+        wall_x -= floorf(wall_x);  
+          
+        // Obtener textura de pared  
+        GRAPH *wall_tex = NULL;  
+        if (cell->wall_texture_id > 0 && cell->wall_texture_id <= hm->num_textures) {  
+            int tex_idx = cell->wall_texture_id - 1;  
+            if (hm->textures[tex_idx].graph_id > 0) {  
+                wall_tex = bitmap_get(0, hm->textures[tex_idx].graph_id);  
+            }  
+        }  
+          
+        // Renderizar columna de pared  
+        for (int y = y_start; y <= y_end; y++) {  
+            uint32_t color;  
+              
+            if (wall_tex && wall_tex->width > 0 && wall_tex->height > 0) {  
+                // Calcular coordenadas de textura  
+                int tex_x = (int)(wall_x * wall_tex->width);  
+                if (side == 0 && ray_dir_x > 0) tex_x = wall_tex->width - tex_x - 1;  
+                if (side == 1 && ray_dir_y < 0) tex_x = wall_tex->width - tex_x - 1;  
+                  
+                float v = (float)(y - y_start) / (float)(y_end - y_start);  
+                int tex_y = (int)(v * wall_tex->height);  
+                  
+                // Clamp texture coordinates  
+                if (tex_x < 0) tex_x = 0;  
+                if (tex_x >= wall_tex->width) tex_x = wall_tex->width - 1;  
+                if (tex_y < 0) tex_y = 0;  
+                if (tex_y >= wall_tex->height) tex_y = wall_tex->height - 1;  
+                  
+                color = gr_get_pixel(wall_tex, tex_x, tex_y);  
+                  
+                // Aplicar fog  
+                uint8_t r, g, b, a;  
+                SDL_GetRGBA(color, gPixelFormat, &r, &g, &b, &a);  
+                  
+                float fog = 1.0f - (perp_wall_dist * hm->tile_size / max_render_distance);  
+                if (fog < 0.3f) fog = 0.3f;  
+                if (fog > 1.0f) fog = 1.0f;  
+                  
+                // Oscurecer lados Y para dar profundidad  
+                if (side == 1) fog *= 0.8f;  
+                  
+                r = (uint8_t)(r * fog);  
+                g = (uint8_t)(g * fog);  
+                b = (uint8_t)(b * fog);  
+                  
+                color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
+            } else {  
+                // Color sólido si no hay textura  
+                color = SDL_MapRGBA(gPixelFormat, 150, 120, 100, 255);  
+            }  
+              
+            gr_put_pixel(cpu_render_buffer, x, y, color);  
+        }  
     }
-       // ========================================  
-    // RENDERIZADO DE SUELOS  
+        // ========================================  
+    // RENDERIZADO DE SUELOS CON INTERPOLACIÓN  
     // ========================================  
       
     for (int y = half_height; y < render_height; y++) {  
@@ -3735,53 +3868,96 @@ if (hm->num_textures > 2) {
           
         for (int x = 0; x < render_width; x++) {  
             // Calcular ángulo del rayo para esta columna  
-            float camera_x = 2 * x / (float)render_width - 1;  
-            float ray_dir_x = cosf(camera.angle) + camera_x * sinf(camera.angle) * fov;  
-            float ray_dir_y = sinf(camera.angle) - camera_x * cosf(camera.angle) * fov;  
+            float camera_x = 2.0f * x / (float)render_width - 1.0f;  
+            float ray_dir_x = cos_cam + camera.plane_x * camera_x;  
+            float ray_dir_y = sin_cam + camera.plane_y * camera_x;  
               
-            // Calcular posición en el mundo donde el rayo toca el suelo  
+            // Calcular punto de intersección en el mundo  
             float floor_x = camera.x + ray_dir_x * row_distance;  
             float floor_y = camera.y + ray_dir_y * row_distance;  
               
             // Convertir a coordenadas de tile  
-            int tile_x = (int)(floor_x / hm->tile_size);  
-            int tile_y = (int)(floor_y / hm->tile_size);  
+            float tile_x_f = floor_x / hm->tile_size;  
+            float tile_y_f = floor_y / hm->tile_size;  
               
-            // Verificar límites  
-            if (tile_x >= 0 && tile_x < hm->grid_width &&   
-                tile_y >= 0 && tile_y < hm->grid_height) {  
+            // Obtener tiles vecinos para interpolación bilineal  
+            int tile_x0 = (int)floorf(tile_x_f);  
+            int tile_y0 = (int)floorf(tile_y_f);  
+            int tile_x1 = tile_x0 + 1;  
+            int tile_y1 = tile_y0 + 1;  
+              
+            // Verificar límites del grid  
+            if (tile_x0 < 0 || tile_x1 >= hm->grid_width ||   
+                tile_y0 < 0 || tile_y1 >= hm->grid_height) {  
+                continue;  
+            }  
+              
+            // Calcular factores de interpolación  
+            float fx = tile_x_f - tile_x0;  
+            float fy = tile_y_f - tile_y0;  
+              
+            // Obtener alturas de los 4 tiles vecinos  
+            float h00 = hm->tile_grid[tile_y0 * hm->grid_width + tile_x0].floor_height;  
+            float h10 = hm->tile_grid[tile_y0 * hm->grid_width + tile_x1].floor_height;  
+            float h01 = hm->tile_grid[tile_y1 * hm->grid_width + tile_x0].floor_height;  
+            float h11 = hm->tile_grid[tile_y1 * hm->grid_width + tile_x1].floor_height;  
+              
+            // Interpolación bilineal para rampas suaves  
+            float h0 = h00 * (1.0f - fx) + h10 * fx;  
+            float h1 = h01 * (1.0f - fx) + h11 * fx;  
+            float interpolated_floor_height = h0 * (1.0f - fy) + h1 * fy;  
+              
+            // CRÍTICO: Solo renderizar si el suelo está por debajo de la cámara  
+            if (interpolated_floor_height >= camera.z) {  
+                continue;  
+            }  
+              
+            // Obtener textura de suelo del tile central  
+            TILE_CELL *cell = &hm->tile_grid[tile_y0 * hm->grid_width + tile_x0];  
+              
+            if (cell->floor_texture_id > 0 && cell->floor_texture_id <= hm->num_textures) {  
+                GRAPH *floor_texture = bitmap_get(0, hm->textures[cell->floor_texture_id - 1].graph_id);  
                   
-                TILE_CELL *cell = &hm->tile_grid[tile_y * hm->grid_width + tile_x];  
-                  
-                // Renderizar suelo  
-                if (cell->floor_texture_id > 0 && floor_texture && floor_texture->width > 0) {  
+                if (floor_texture && floor_texture->width > 0 && floor_texture->height > 0) {  
                     // Calcular coordenadas de textura  
-                    int tex_x = ((int)floor_x) % floor_texture->width;  
-                    int tex_y = ((int)floor_y) % floor_texture->height;  
+                    float tex_u = fmodf(floor_x / hm->tile_size, 1.0f);  
+                    float tex_v = fmodf(floor_y / hm->tile_size, 1.0f);  
+                    if (tex_u < 0.0f) tex_u += 1.0f;  
+                    if (tex_v < 0.0f) tex_v += 1.0f;  
                       
-                    if (tex_x < 0) tex_x += floor_texture->width;  
-                    if (tex_y < 0) tex_y += floor_texture->height;  
+                    int tex_x = (int)(tex_u * (floor_texture->width - 1));  
+                    int tex_y = (int)(tex_v * (floor_texture->height - 1));  
                       
-                    uint32_t color = gr_get_pixel(floor_texture, tex_x, tex_y);  
-                      
-                    // Aplicar fog  
-                    float fog = 1.0f - (row_distance / max_render_distance);  
-                    if (fog < 0.3f) fog = 0.3f;  
-                      
-                    uint8_t r, g, b, a;  
-                    SDL_GetRGBA(color, gPixelFormat, &r, &g, &b, &a);  
-                    r = (uint8_t)(r * fog);  
-                    g = (uint8_t)(g * fog);  
-                    b = (uint8_t)(b * fog);  
-                      
-                    color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
-                    gr_put_pixel(cpu_render_buffer, x, y, color);  
+                    // Verificar bounds de textura  
+                    if (tex_x >= 0 && tex_x < floor_texture->width &&  
+                        tex_y >= 0 && tex_y < floor_texture->height) {  
+                          
+                        uint32_t color = gr_get_pixel(floor_texture, tex_x, tex_y);  
+                          
+                        // Aplicar fog basado en distancia  
+                        float fog = 1.0f - (row_distance / max_render_distance);  
+                        if (fog < 0.3f) fog = 0.3f;  
+                        if (fog > 1.0f) fog = 1.0f;  
+                          
+                        uint8_t r, g, b, a;  
+                        SDL_GetRGBA(color, gPixelFormat, &r, &g, &b, &a);  
+                        r = (uint8_t)(r * fog);  
+                        g = (uint8_t)(g * fog);  
+                        b = (uint8_t)(b * fog);  
+                          
+                        color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
+                        gr_put_pixel(cpu_render_buffer, x, y, color);  
+                    }  
                 }  
+            } else {  
+                // Color sólido si no hay textura  
+                uint32_t color = SDL_MapRGBA(gPixelFormat, 80, 80, 80, 255);  
+                gr_put_pixel(cpu_render_buffer, x, y, color);  
             }  
         }  
     }
-     // ========================================  
-    // RENDERIZADO DE TECHOS  
+        // ========================================  
+    // RENDERIZADO DE TECHOS CON INTERPOLACIÓN  
     // ========================================  
       
     for (int y = 0; y < half_height; y++) {  
@@ -3795,32 +3971,73 @@ if (hm->num_textures > 2) {
           
         for (int x = 0; x < render_width; x++) {  
             // Calcular ángulo del rayo para esta columna  
-            float camera_x = 2 * x / (float)render_width - 1;  
-            float ray_dir_x = cosf(camera.angle) + camera_x * sinf(camera.angle) * fov;  
-            float ray_dir_y = sinf(camera.angle) - camera_x * cosf(camera.angle) * fov;  
+            float camera_x = 2.0f * x / (float)render_width - 1.0f;  
+            float ray_dir_x = cos_cam + camera.plane_x * camera_x;  
+            float ray_dir_y = sin_cam + camera.plane_y * camera_x;  
               
-            // Calcular posición en el mundo donde el rayo toca el techo  
-            float ceiling_x = camera.x + ray_dir_x * row_distance;  
-            float ceiling_y = camera.y + ray_dir_y * row_distance;  
+            // Calcular punto de intersección en el mundo  
+            float floor_x = camera.x + ray_dir_x * row_distance;  
+            float floor_y = camera.y + ray_dir_y * row_distance;  
               
             // Convertir a coordenadas de tile  
-            int tile_x = (int)(ceiling_x / hm->tile_size);  
-            int tile_y = (int)(ceiling_y / hm->tile_size);  
+            int tile_x = (int)(floor_x / hm->tile_size);  
+            int tile_y = (int)(floor_y / hm->tile_size);  
               
-            // Verificar límites  
-            if (tile_x >= 0 && tile_x < hm->grid_width &&   
-                tile_y >= 0 && tile_y < hm->grid_height) {  
+            // Verificar límites del grid  
+            if (tile_x < 0 || tile_x >= hm->grid_width - 1 ||   
+                tile_y < 0 || tile_y >= hm->grid_height - 1) {  
+                continue;  
+            }  
+              
+            // Obtener los 4 tiles vecinos para interpolación bilineal  
+            int tile_x0 = tile_x;  
+            int tile_x1 = tile_x + 1;  
+            int tile_y0 = tile_y;  
+            int tile_y1 = tile_y + 1;  
+              
+            // Calcular posición fraccional dentro del tile  
+            float tile_x_f = floor_x / hm->tile_size;  
+            float tile_y_f = floor_y / hm->tile_size;  
+            float fx = tile_x_f - tile_x0;  
+            float fy = tile_y_f - tile_y0;  
+              
+            // Obtener alturas de techo de los 4 tiles  
+            float h00 = hm->tile_grid[tile_y0 * hm->grid_width + tile_x0].ceiling_height;  
+            float h10 = hm->tile_grid[tile_y0 * hm->grid_width + tile_x1].ceiling_height;  
+            float h01 = hm->tile_grid[tile_y1 * hm->grid_width + tile_x0].ceiling_height;  
+            float h11 = hm->tile_grid[tile_y1 * hm->grid_width + tile_x1].ceiling_height;  
+              
+            // Interpolación bilineal para techos inclinados  
+            float h0 = h00 * (1.0f - fx) + h10 * fx;  
+            float h1 = h01 * (1.0f - fx) + h11 * fx;  
+            float interpolated_ceiling_height = h0 * (1.0f - fy) + h1 * fy;  
+              
+            // Solo renderizar si el techo está por encima de la cámara  
+            if (interpolated_ceiling_height <= camera.z) {  
+                continue;  
+            }  
+              
+            // Obtener textura de techo del tile central  
+            TILE_CELL *cell = &hm->tile_grid[tile_y * hm->grid_width + tile_x];  
+              
+            if (cell->ceiling_texture_id > 0 && cell->ceiling_texture_id <= hm->num_textures) {  
+                GRAPH *ceiling_texture = NULL;  
+                if (hm->textures[cell->ceiling_texture_id - 1].graph_id > 0) {  
+                    ceiling_texture = bitmap_get(0, hm->textures[cell->ceiling_texture_id - 1].graph_id);  
+                }  
                   
-                TILE_CELL *cell = &hm->tile_grid[tile_y * hm->grid_width + tile_x];  
-                  
-                // Renderizar techo  
-                if (cell->ceiling_texture_id > 0 && ceiling_texture && ceiling_texture->width > 0) {  
+                if (ceiling_texture && ceiling_texture->width > 0 && ceiling_texture->height > 0) {  
                     // Calcular coordenadas de textura  
-                    int tex_x = ((int)ceiling_x) % ceiling_texture->width;  
-                    int tex_y = ((int)ceiling_y) % ceiling_texture->height;  
+                    int tex_x = ((int)(floor_x) % (int)hm->tile_size) * ceiling_texture->width / (int)hm->tile_size;  
+                    int tex_y = ((int)(floor_y) % (int)hm->tile_size) * ceiling_texture->height / (int)hm->tile_size;  
                       
+                    // Wrap negativo  
                     if (tex_x < 0) tex_x += ceiling_texture->width;  
                     if (tex_y < 0) tex_y += ceiling_texture->height;  
+                      
+                    // Clamp a límites de textura  
+                    tex_x = tex_x % ceiling_texture->width;  
+                    tex_y = tex_y % ceiling_texture->height;  
                       
                     uint32_t color = gr_get_pixel(ceiling_texture, tex_x, tex_y);  
                       
@@ -3836,14 +4053,24 @@ if (hm->num_textures > 2) {
                       
                     color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
                     gr_put_pixel(cpu_render_buffer, x, y, color);  
+                } else {  
+                    // Color sólido si no hay textura  
+                    uint32_t color = SDL_MapRGBA(gPixelFormat, 100, 100, 100, 255);  
+                    gr_put_pixel(cpu_render_buffer, x, y, color);  
                 }  
             }  
         }  
     }  
       
-    // Retornar el graph_id del buffer renderizado  
+    // ========================================  
+    // RETORNO DEL BUFFER RENDERIZADO  
+    // ========================================  
+      
     return cpu_render_buffer->code;  
 }
+        
+    
+    
 //---------------------------------------------------------------------------------------//
 //                          FIN MAPAS POR SECTORES                                       //
 //---------------------------------------------------------------------------------------//
