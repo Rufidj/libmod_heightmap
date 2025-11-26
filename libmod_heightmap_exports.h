@@ -87,23 +87,11 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC( "HEIGHTMAP_UNREGISTER_BILLBOARD", "I", TYPE_INT, libmod_heightmap_unregister_billboard),    
     FUNC("HEIGHTMAP_SET_BILLBOARD_FOV", "I", TYPE_INT, libmod_heightmap_set_billboard_fov),  
     
-    // Mapas por sectores
-    FUNC("HEIGHTMAP_LOAD_DMAP", "S", TYPE_INT, libmod_heightmap_load_dmap),  
-    FUNC("HEIGHTMAP_GET_MAP_TYPE", "I", TYPE_INT, libmod_heightmap_get_map_type),  
-    FUNC("HEIGHTMAP_SECTOR_MOVE_FORWARD", "I", TYPE_INT, libmod_heightmap_sector_move_forward),  
-    FUNC("HEIGHTMAP_SECTOR_MOVE_BACKWARD", "I", TYPE_INT, libmod_heightmap_sector_move_backward),  
-    FUNC("HEIGHTMAP_SECTOR_STRAFE_LEFT", "I", TYPE_INT, libmod_heightmap_sector_strafe_left),  
-    FUNC("HEIGHTMAP_SECTOR_STRAFE_RIGHT", "I", TYPE_INT, libmod_heightmap_sector_strafe_right),
-    FUNC("HEIGHTMAP_RENDER_SECTOR_CPU", "III", TYPE_INT, libmod_heightmap_render_sector_cpu),
-    // NUEVO: Funciones DMAP v2  
-    FUNC("HEIGHTMAP_ACTIVATE_ELEVATOR", "II", TYPE_INT, libmod_heightmap_activate_elevator),  
-    FUNC("HEIGHTMAP_SET_SECTOR_TARGET_HEIGHT", "IIFF", TYPE_INT, libmod_heightmap_set_sector_target_height),  
-    FUNC("HEIGHTMAP_CHECK_WALL_COLLISION", "IFF", TYPE_INT, libmod_heightmap_check_wall_collision),  
-    FUNC("HEIGHTMAP_GET_SECTOR_AT_POSITION", "IFF", TYPE_INT, libmod_heightmap_get_sector_at_position),  
-    FUNC("HEIGHTMAP_ACTIVATE_WALL_ACTION", "II", TYPE_INT, libmod_heightmap_activate_wall_action),  
-    FUNC("HEIGHTMAP_UPDATE_DYNAMIC_SECTORS", "IF", TYPE_INT, libmod_heightmap_update_dynamic_sectors),  
-    FUNC("HEIGHTMAP_GET_FLOOR_HEIGHT_AT_POINT", "IIFF", TYPE_INT, libmod_heightmap_get_floor_height_at_point),
-    FUNC(0, 0, 0, 0)};  
+// Mapas DMAP (tile-based)  
+FUNC("HEIGHTMAP_LOAD_WLD", "SI", TYPE_INT, libmod_heightmap_load_wld),  
+FUNC("HEIGHTMAP_GET_MAP_TYPE", "I", TYPE_INT, libmod_heightmap_get_map_type),  
+FUNC("HEIGHTMAP_RENDER_WLD_CPU", "III", TYPE_INT, libmod_heightmap_render_wld_cpu),
+FUNC(0, 0, 0, 0)};  
   
 #endif  
   
