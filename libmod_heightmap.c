@@ -10,6 +10,7 @@
 #include "libbggfx.h"  
 #include <GL/glew.h>
 #include <inttypes.h>  
+#include "tex_format.h"
 //#include "libbggfx.h"  
 //#include "libmod_gfx.h"
 
@@ -172,6 +173,7 @@ static float billboard_render_fov = 1.5f;  // FOV independiente para billboards
 
 // Declaración por si no está en el header
 void gr_alpha_put_pixel(GRAPH *dest, int x, int y, uint32_t color, uint8_t alpha);
+GRAPH *get_tex_image(int index);
 
 HEIGHTMAP heightmaps[MAX_HEIGHTMAPS];
 CAMERA_3D camera = {0, 0, 0, 0, 0, DEFAULT_FOV, DEFAULT_NEAR, DEFAULT_FAR};
@@ -204,9 +206,13 @@ static float convert_screen_to_world_coordinate(int heightmap_id, float screen_c
 static void collect_visible_billboards_from_array(VOXEL_BILLBOARD *billboard_array, int array_size,   
                                                   BILLBOARD_RENDER_DATA *visible_billboards,   
                                                   int *visible_count, float terrain_fov);
-static int line_line_intersection(float x1, float y1, float x2, float y2,  
-                                  float x3, float y3, float x4, float y4,  
-                                  float *hit_x, float *hit_y); 
+static int point_in_region(HEIGHTMAP *hm, int region_id, float px, float py);  
+static void render_column(HEIGHTMAP *hm, int screen_x, int render_width, int render_height,  
+                         float cos_cam, float sin_cam, float projection_scale,   
+                         int half_height, GRAPH *render_buffer, float *depth_buffer); 
+static float ray_wall_intersection(float ray_x, float ray_y, float ray_dx, float ray_dy,  
+                                  float wall_x1, float wall_y1, float wall_x2, float wall_y2);
+
 
 static void cleanup_gpu_resources(void) {  
     // Limpiar shader de BennuGD2  
@@ -239,106 +245,106 @@ void libmod_heightmap_destroy_render_buffer() {
     }  
 }
 
-void __bgdexport(libmod_heightmap, module_initialize)()        
-{        
-    memset(heightmaps, 0, sizeof(heightmaps));        
-    memset(static_billboards, 0, sizeof(static_billboards));        
-    memset(dynamic_billboards, 0, sizeof(dynamic_billboards));        
-    static_billboard_count = 0;        
-    next_heightmap_id = 1;        
-          
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {        
-        heightmaps[i].id = 0;        
-        heightmaps[i].type = MAP_TYPE_HEIGHTMAP;      
-        heightmaps[i].heightmap = NULL;        
-        heightmaps[i].texturemap = NULL;        
-        heightmaps[i].height_cache = NULL;        
-        heightmaps[i].cache_valid = 0;        
-          
-        // FALTAN: inicializar campos WLD  
-        heightmaps[i].wld_points = NULL;  
-        heightmaps[i].wld_regions = NULL;  
-        heightmaps[i].wld_walls = NULL;  
-        heightmaps[i].textures = NULL;  
-        heightmaps[i].num_wld_points = 0;  
-        heightmaps[i].num_wld_regions = 0;  
-        heightmaps[i].num_wld_walls = 0;  
-        heightmaps[i].num_textures = 0;  
-    }        
+void __bgdexport(libmod_heightmap, module_initialize)()          
+{          
+    memset(heightmaps, 0, sizeof(heightmaps));          
+    memset(static_billboards, 0, sizeof(static_billboards));          
+    memset(dynamic_billboards, 0, sizeof(dynamic_billboards));          
+    static_billboard_count = 0;          
+    next_heightmap_id = 1;          
+            
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {          
+        heightmaps[i].id = 0;          
+        heightmaps[i].type = MAP_TYPE_HEIGHTMAP;        
+        heightmaps[i].heightmap = NULL;          
+        heightmaps[i].texturemap = NULL;          
+        heightmaps[i].height_cache = NULL;          
+        heightmaps[i].cache_valid = 0;          
+            
+        // Inicializar campos DMP2 (sector-based)    
+        heightmaps[i].sector_points = NULL;    
+        heightmaps[i].sector_regions = NULL;    
+        heightmaps[i].sector_walls = NULL;    
+        heightmaps[i].textures = NULL;    
+        heightmaps[i].num_sector_points = 0;    
+        heightmaps[i].num_sector_regions = 0;    
+        heightmaps[i].num_sector_walls = 0;    
+        heightmaps[i].num_textures = 0;    
+    }          
 }
 
-void __bgdexport(libmod_heightmap, module_finalize)()            
-{            
-    // Liberar recursos asociados a cada heightmap            
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++)            
-    {            
-        if (heightmaps[i].type == MAP_TYPE_HEIGHTMAP)            
-        {            
-            // Liberar el cache de altura si existe            
-            if (heightmaps[i].height_cache)            
+void __bgdexport(libmod_heightmap, module_finalize)()              
+{              
+    // Liberar recursos asociados a cada heightmap              
+    for (int i = 0; i < MAX_HEIGHTMAPS; i++)              
+    {              
+        if (heightmaps[i].type == MAP_TYPE_HEIGHTMAP)              
+        {              
+            // Liberar el cache de altura si existe              
+            if (heightmaps[i].height_cache)              
+            {              
+                free(heightmaps[i].height_cache);              
+                heightmaps[i].height_cache = NULL;              
+            }            
+    
+            // Destruir el GRAPH del heightmap principal              
+            if (heightmaps[i].heightmap)      
+            {      
+                bitmap_destroy(heightmaps[i].heightmap);              
+                heightmaps[i].heightmap = NULL;              
+            }            
+    
+            // Destruir el GRAPH del texturemap si existe            
+            if (heightmaps[i].texturemap)            
             {            
-                free(heightmaps[i].height_cache);            
-                heightmaps[i].height_cache = NULL;            
-            }          
-  
-            // Destruir el GRAPH del heightmap principal            
-            if (heightmaps[i].heightmap)    
-            {    
-                bitmap_destroy(heightmaps[i].heightmap);            
-                heightmaps[i].heightmap = NULL;            
-            }          
-  
-            // Destruir el GRAPH del texturemap si existe          
-            if (heightmaps[i].texturemap)          
-            {          
-                bitmap_destroy(heightmaps[i].texturemap);          
-                heightmaps[i].texturemap = NULL;          
-            }          
-        }    
-        else if (heightmaps[i].type == MAP_TYPE_SECTOR) {    
-            // Liberar datos WLD    
-            if (heightmaps[i].wld_points) {    
-                free(heightmaps[i].wld_points);    
-                heightmaps[i].wld_points = NULL;    
-            }    
-                
-            if (heightmaps[i].wld_regions) {    
-                free(heightmaps[i].wld_regions);    
-                heightmaps[i].wld_regions = NULL;    
-            }    
-                
-            if (heightmaps[i].wld_walls) {    
-                free(heightmaps[i].wld_walls);    
-                heightmaps[i].wld_walls = NULL;    
-            }    
-                
-            // Liberar texturas WLD    
-            if (heightmaps[i].textures) {    
-                for (int j = 0; j < heightmaps[i].num_textures; j++) {    
-                    if (heightmaps[i].textures[j].graph_id > 0) {    
-                        bitmap_destroy(bitmap_get(0, heightmaps[i].textures[j].graph_id));    
-                    }    
-                }    
-                free(heightmaps[i].textures);    
-                heightmaps[i].textures = NULL;    
-            }    
-        }    
-    }  // <-- CERRAR BUCLE AQUÍ  
-            
-    // Limpiar recursos GPU (UNA SOLA VEZ)    
-    cleanup_gpu_resources();        
-            
-    // Liberar el render_buffer global una sola vez            
-    libmod_heightmap_destroy_render_buffer();            
-            
-    // Liberar el fog_table global si existe            
-    if (fog_table) {            
-        free(fog_table);            
-        fog_table = NULL;            
-    }          
+                bitmap_destroy(heightmaps[i].texturemap);            
+                heightmaps[i].texturemap = NULL;            
+            }            
+        }      
+        else if (heightmaps[i].type == MAP_TYPE_SECTOR) {      
+            // Liberar datos DMP2 (sector-based)      
+            if (heightmaps[i].sector_points) {      
+                free(heightmaps[i].sector_points);      
+                heightmaps[i].sector_points = NULL;      
+            }      
+                  
+            if (heightmaps[i].sector_regions) {      
+                free(heightmaps[i].sector_regions);      
+                heightmaps[i].sector_regions = NULL;      
+            }      
+                  
+            if (heightmaps[i].sector_walls) {      
+                free(heightmaps[i].sector_walls);      
+                heightmaps[i].sector_walls = NULL;      
+            }      
+                  
+            // Liberar texturas DMP2      
+            if (heightmaps[i].textures) {      
+                for (int j = 0; j < heightmaps[i].num_textures; j++) {      
+                    if (heightmaps[i].textures[j].graph_id > 0) {      
+                        bitmap_destroy(bitmap_get(0, heightmaps[i].textures[j].graph_id));      
+                    }      
+                }      
+                free(heightmaps[i].textures);      
+                heightmaps[i].textures = NULL;      
+            }      
+        }      
+    }  // <-- CERRAR BUCLE AQUÍ    
               
-    // Limpiar la estructura global heightmaps            
-    memset(heightmaps, 0, sizeof(heightmaps));            
+    // Limpiar recursos GPU (UNA SOLA VEZ)      
+    cleanup_gpu_resources();          
+              
+    // Liberar el render_buffer global una sola vez              
+    libmod_heightmap_destroy_render_buffer();              
+              
+    // Liberar el fog_table global si existe              
+    if (fog_table) {              
+        free(fog_table);              
+        fog_table = NULL;              
+    }            
+                
+    // Limpiar la estructura global heightmaps              
+    memset(heightmaps, 0, sizeof(heightmaps));              
 }
 
 int64_t libmod_heightmap_set_light(INSTANCE *my, int64_t *params)
@@ -403,10 +409,14 @@ int64_t libmod_heightmap_load(INSTANCE *my, int64_t *params)
     heightmaps[slot].cache_valid = 0;  
       
     // Inicializar campos WLD a NULL (aunque no se usen en heightmaps)  
-    heightmaps[slot].wld_points = NULL;  
-    heightmaps[slot].wld_regions = NULL;  
-    heightmaps[slot].wld_walls = NULL;  
+    heightmaps[slot].sector_points = NULL;  
+    heightmaps[slot].sector_regions = NULL;  
+    heightmaps[slot].sector_walls = NULL;
     heightmaps[slot].textures = NULL;  
+    heightmaps[slot].num_sector_points = 0;  
+    heightmaps[slot].num_sector_regions = 0;  
+    heightmaps[slot].num_sector_walls = 0;  
+    heightmaps[slot].num_textures = 0;
     
     build_height_cache(&heightmaps[slot]);  
   
@@ -3376,102 +3386,79 @@ int64_t libmod_heightmap_get_map_type(INSTANCE *my, int64_t *params) {
 
 ///    MAPAS POR SECTORES    ///
 
-int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params) {  
+// Declaraciones forward para funciones de validación  
+static int validate_fpg_32(int64_t fpg_id);  
+static int verify_texture_in_fpg(int64_t fpg_id, int16_t texture_index);
+
+// Función robusta de validación de FPG 32 bits  
+static int validate_fpg_32(int64_t fpg_id) {  
+    if (fpg_id <= 0) {  
+        printf("ERROR: FPG ID inválido (%" PRId64 ")\n", fpg_id);  
+        return 0;  
+    }  
+      
+    // Validar que el FPG existe en la librería  
+    if (!grlib_get(fpg_id)) {  
+        printf("ERROR: FPG ID %" PRId64 " no encontrado en librería\n", fpg_id);  
+        return 0;  
+    }  
+      
+    printf("DEBUG: FPG ID %" PRId64 " validado correctamente\n", fpg_id);  
+    return 1;  
+}  
+  
+// Verificación específica de textura en FPG  
+static int verify_texture_in_fpg(int64_t fpg_id, int16_t texture_index) {  
+    if (fpg_id <= 0) return 0;  
+      
+    GRAPH *test_graph = bitmap_get(fpg_id, texture_index);  
+    if (!test_graph) {  
+        printf("ERROR: Textura índice %d no existe en FPG\n", texture_index);  
+        return 0;  
+    }  
+      
+    printf("DEBUG: Textura %d verificada: %dx%d pixels\n",   
+           texture_index, test_graph->width, test_graph->height);  
+    return 1;  
+}
+
+int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {  
     const char *filename = string_get(params[0]);  
-    int64_t fpg_id = params[1];  // Segundo parámetro: ID del FPG  
+    int64_t tex_mode = params[1];  // 1 = usar TEX, 0 = colores sólidos  
     FILE *file = fopen(filename, "rb");  
       
     if (!file) {  
-        fprintf(stderr, "Error: No se pudo abrir archivo WLD: %s\n", filename);  
+        fprintf(stderr, "Error: No se pudo abrir archivo DMP2: %s\n", filename);  
         string_discard(params[0]);  
         return 0;  
     }  
       
-    // Validación FPG corregida: permitir fpg_id = 0 para colores sólidos  
-    if (fpg_id < 0) {  
-        fprintf(stderr, "Error: FPG inválido para WLD (ID negativo)\n");  
+    // Validar modo de texturas (solo TEX o sólidos)  
+    if (tex_mode < 0 || tex_mode > 1) {  
+        fprintf(stderr, "Error: Modo de texturas inválido para DMP2 (use 0 o 1)\n");  
         fclose(file);  
         string_discard(params[0]);  
         return 0;  
     }  
       
-    // Si fpg_id es 0, usaremos colores sólidos  
-    if (fpg_id == 0) {  
-        printf("DEBUG: Cargando WLD con colores sólidos (sin FPG)\n");  
-    } else {  
-        // Validar FPG solo si se proporciona  
-        if (!grlib_get(fpg_id)) {  
-            fprintf(stderr, "Error: FPG inválido para WLD\n");  
-            fclose(file);  
-            string_discard(params[0]);  
-            return 0;  
-        }  
-    }  
-      
-    // ========================================  
-    // DEBUG: Información del archivo  
-    // ========================================  
-      
-    fseek(file, 0, SEEK_END);  
-    long file_size = ftell(file);  
-    fseek(file, 0, SEEK_SET);  
-      
-    printf("DEBUG: Abriendo archivo WLD: %s\n", filename);  
-    printf("DEBUG: Tamaño del archivo: %ld bytes\n", file_size);  
-    fflush(stdout);  
-      
-    // ========================================  
-    // LEER Y VALIDAR FIRMA WLD  
-    // ========================================  
-      
-    char signature[7];  
-    if (fread(signature, 7, 1, file) != 1) {  
-        fprintf(stderr, "Error: No se pudo leer firma WLD\n");  
+    // Leer y validar header  
+    DMP2_HEADER header;  
+    if (fread(&header, sizeof(DMP2_HEADER), 1, file) != 1) {  
+        fprintf(stderr, "Error: No se pudo leer header DMP2\n");  
         fclose(file);  
         string_discard(params[0]);  
         return 0;  
     }  
       
-    printf("DEBUG: Firma leída: ");  
-    for (int i = 0; i < 7; i++) {  
-        printf("\\x%02x", (unsigned char)signature[i]);  
-    }  
-    printf("\n");  
-      
-    if (memcmp(signature, "wld\x1a\x0d\x0a\x01", 7) != 0) {  
-        fprintf(stderr, "Error: Archivo no es WLD válido (firma incorrecta)\n");  
+    // Validar magic number  
+    if (memcmp(header.magic, "DMP2", 4) != 0) {  
+        fprintf(stderr, "Error: Archivo no es DMP2 válido\n");  
         fclose(file);  
         string_discard(params[0]);  
         return 0;  
     }  
       
-    printf("DEBUG: Firma WLD válida encontrada\n");  
-    fflush(stdout);  
-      
-    // ========================================  
-    // LEER HEADER WLD  
-    // ========================================  
-      
-    struct WLD_Header header;  
-    if (fread(&header, sizeof(struct WLD_Header), 1, file) != 1) {  
-        fprintf(stderr, "Error: No se pudo leer header WLD\n");  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
-      
-    printf("DEBUG: Header WLD leído:\n");  
-    printf("  - NumPoints: %d\n", header.NumPoints);  
-    printf("  - NumRegions: %d\n", header.NumRegions);  
-    printf("  - NumWalls: %d\n", header.NumWalls);  
-    printf("  - NumThings: %d\n", header.NumThings);  
-    printf("  - NumTextures: %d\n", header.NumTextures);  
-    fflush(stdout);  
-      
-    // ========================================  
-    // BUSCAR SLOT LIBRE EN HEIGHTMAPS  
-    // ========================================  
-      
+    // Buscar slot libre  
     HEIGHTMAP *map = NULL;  
     for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
         if (heightmaps[i].id == 0) {  
@@ -3482,154 +3469,187 @@ int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params) {
     }  
       
     if (!map) {  
-        fprintf(stderr, "Error: No hay slots disponibles para mapas WLD\n");  
+        fprintf(stderr, "Error: No hay slots disponibles para mapas DMP2\n");  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    // Leer puntos  
+    DMP2_POINT *dmp2_points = malloc(sizeof(DMP2_POINT) * header.num_points);  
+    if (!dmp2_points) {  
+        fprintf(stderr, "Error: No se pudo asignar memoria para puntos DMP2\n");  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    if (fread(dmp2_points, sizeof(DMP2_POINT), header.num_points, file) != header.num_points) {  
+        fprintf(stderr, "Error: No se pudieron leer puntos DMP2\n");  
+        free(dmp2_points);  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    // Leer regiones  
+    DMP2_REGION *dmp2_regions = malloc(sizeof(DMP2_REGION) * header.num_regions);  
+    if (!dmp2_regions) {  
+        fprintf(stderr, "Error: No se pudo asignar memoria para regiones DMP2\n");  
+        free(dmp2_points);  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    if (fread(dmp2_regions, sizeof(DMP2_REGION), header.num_regions, file) != header.num_regions) {  
+        fprintf(stderr, "Error: No se pudieron leer regiones DMP2\n");  
+        free(dmp2_points);  
+        free(dmp2_regions);  
         fclose(file);  
         string_discard(params[0]);  
         return 0;  
     }  
       
     // ========================================  
-    // LEER PUNTOS WLD  
+    // LEER PAREDES DMP2 CON VERIFICACIÓN  
     // ========================================  
       
-    printf("DEBUG: Leyendo %d puntos WLD\n", header.NumPoints);  
+    printf("DEBUG: Leyendo %d paredes DMP2\n", header.num_walls);  
     fflush(stdout);  
       
-    map->wld_points = malloc(sizeof(struct WLD_Point) * header.NumPoints);  
-    if (!map->wld_points) {  
-        fprintf(stderr, "Error: No se pudo asignar memoria para puntos WLD\n");  
+    // Verificar que hay suficientes bytes para las paredes  
+    long current_pos = ftell(file);  
+    fseek(file, 0, SEEK_END);  
+    long remaining_bytes = ftell(file) - current_pos;  
+    fseek(file, current_pos, SEEK_SET);  
+      
+    long expected_wall_bytes = header.num_walls * sizeof(DMP2_WALL);  
+    printf("DEBUG: Bytes restantes: %ld, bytes esperados para paredes: %ld\n",   
+           remaining_bytes, expected_wall_bytes);  
+      
+    if (remaining_bytes < expected_wall_bytes) {  
+        fprintf(stderr, "Error: Archivo DMP2 truncado. Faltan %ld bytes para paredes\n",   
+                expected_wall_bytes - remaining_bytes);  
+        free(dmp2_points);  
+        free(dmp2_regions);  
         fclose(file);  
         string_discard(params[0]);  
         return 0;  
     }  
       
-    size_t points_read = fread(map->wld_points, sizeof(struct WLD_Point), header.NumPoints, file);  
-    if (points_read != header.NumPoints) {  
-        fprintf(stderr, "Error: No se pudieron leer puntos WLD (leídos %zu de %d)\n",   
-                points_read, header.NumPoints);  
-        free(map->wld_points);  
+    DMP2_WALL *dmp2_walls = malloc(sizeof(DMP2_WALL) * header.num_walls);  
+    if (!dmp2_walls) {  
+        fprintf(stderr, "Error: No se pudo asignar memoria para paredes DMP2\n");  
+        free(dmp2_points);  
+        free(dmp2_regions);  
         fclose(file);  
         string_discard(params[0]);  
         return 0;  
     }  
       
-    printf("DEBUG: Puntos WLD leídos correctamente: %zu\n", points_read);  
-    if (points_read > 0) {  
-        printf("DEBUG: Primer punto: (%d, %d, tipo=%d, link=%d)\n",  
-               map->wld_points[0].x, map->wld_points[0].y,   
-               map->wld_points[0].Type, map->wld_points[0].link);  
-    }  
-    fflush(stdout);  
-      
-    // ========================================  
-    // LEER REGIONES WLD  
-    // ========================================  
-      
-    printf("DEBUG: Leyendo %d regiones WLD\n", header.NumRegions);  
-    fflush(stdout);  
-      
-    map->wld_regions = malloc(sizeof(struct WLD_Region) * header.NumRegions);  
-    if (!map->wld_regions) {  
-        fprintf(stderr, "Error: No se pudo asignar memoria para regiones WLD\n");  
-        free(map->wld_points);  
+    size_t walls_read = fread(dmp2_walls, sizeof(DMP2_WALL), header.num_walls, file);  
+    if (walls_read != header.num_walls) {  
+        fprintf(stderr, "Error: No se pudieron leer paredes DMP2 (leídas %zu de %d)\n",   
+                walls_read, header.num_walls);  
+        free(dmp2_points);  
+        free(dmp2_regions);  
+        free(dmp2_walls);  
         fclose(file);  
         string_discard(params[0]);  
         return 0;  
     }  
       
-    size_t regions_read = fread(map->wld_regions, sizeof(struct WLD_Region), header.NumRegions, file);  
-    if (regions_read != header.NumRegions) {  
-        fprintf(stderr, "Error: No se pudieron leer regiones WLD (leídas %zu de %d)\n",   
-                regions_read, header.NumRegions);  
-        free(map->wld_points);  
-        free(map->wld_regions);  
+    printf("DEBUG: Paredes DMP2 leídas correctamente: %zu\n", walls_read);  
+      
+    // Convertir a estructuras internas  
+    map->sector_points = malloc(sizeof(struct SECTOR_Point) * header.num_points);  
+    map->sector_regions = malloc(sizeof(struct SECTOR_Region) * header.num_regions);  
+    map->sector_walls = malloc(sizeof(struct SECTOR_Wall) * header.num_walls);  
+      
+    if (!map->sector_points || !map->sector_regions || !map->sector_walls) {  
+        fprintf(stderr, "Error: No se pudo asignar memoria para estructuras internas\n");  
+        free(dmp2_points);  
+        free(dmp2_regions);  
+        free(dmp2_walls);  
+        if (map->sector_points) free(map->sector_points);  
+        if (map->sector_regions) free(map->sector_regions);  
+        if (map->sector_walls) free(map->sector_walls);  
         fclose(file);  
         string_discard(params[0]);  
         return 0;  
     }  
       
-    printf("DEBUG: Regiones WLD leídas correctamente: %zu\n", regions_read);  
-    fflush(stdout);  
-      
-    // ========================================  
-    // LEER PAREDES WLD  
-    // ========================================  
-      
-    printf("DEBUG: Leyendo %d paredes WLD\n", header.NumWalls);  
-    fflush(stdout);  
-      
-    map->wld_walls = malloc(sizeof(struct WLD_Wall) * header.NumWalls);  
-    if (!map->wld_walls) {  
-        fprintf(stderr, "Error: No se pudo asignar memoria para paredes WLD\n");  
-        free(map->wld_points);  
-        free(map->wld_regions);  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
+    // Copiar puntos  
+    for (uint32_t i = 0; i < header.num_points; i++) {  
+        map->sector_points[i].x = dmp2_points[i].x;  
+        map->sector_points[i].y = dmp2_points[i].y;  
+        map->sector_points[i].Type = dmp2_points[i].Type;
+        map->sector_points[i].link = dmp2_points[i].link;  
     }  
       
-    size_t walls_read = fread(map->wld_walls, sizeof(struct WLD_Wall), header.NumWalls, file);  
-    if (walls_read != header.NumWalls) {  
-        fprintf(stderr, "Error: No se pudieron leer paredes WLD (leídas %zu de %d)\n",   
-                walls_read, header.NumWalls);  
-        free(map->wld_points);  
-        free(map->wld_regions);  
-        free(map->wld_walls);  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
+    // Copiar regiones  
+    for (uint32_t i = 0; i < header.num_regions; i++) {  
+        map->sector_regions[i].floor_height = dmp2_regions[i].floor_height;  
+        map->sector_regions[i].ceiling_height = dmp2_regions[i].ceiling_height;  
+        map->sector_regions[i].floor_texture = dmp2_regions[i].floor_texture;  
+        map->sector_regions[i].ceiling_texture = dmp2_regions[i].ceiling_texture;  
+        map->sector_regions[i].light_level = dmp2_regions[i].light_level;  
+        map->sector_regions[i].flags = dmp2_regions[i].flags;  
     }  
       
-    printf("DEBUG: Paredes WLD leídas correctamente: %zu\n", walls_read);  
-    fflush(stdout);  
-      
-    // ========================================  
-    // SALTAR THINGS (no implementado aún)  
-    // ========================================  
-      
-    if (header.NumThings > 0) {  
-        printf("DEBUG: Saltando %d Things (no implementados)\n", header.NumThings);  
-        fseek(file, sizeof(struct WLD_Thing) * header.NumThings, SEEK_CUR);  
+    // Copiar paredes  
+    for (uint32_t i = 0; i < header.num_walls; i++) {  
+        map->sector_walls[i].point1 = dmp2_walls[i].point1;  
+        map->sector_walls[i].point2 = dmp2_walls[i].point2;  
+        map->sector_walls[i].region1 = dmp2_walls[i].region1;  
+        map->sector_walls[i].region2 = dmp2_walls[i].region2;  
+        map->sector_walls[i].texture = dmp2_walls[i].texture;  
+        map->sector_walls[i].flags = dmp2_walls[i].flags;  
+        map->sector_walls[i].x_offset = dmp2_walls[i].x_offset;  
+        map->sector_walls[i].y_offset = dmp2_walls[i].y_offset;  
     }  
       
-    // ========================================  
-    // LEER TEXTURAS WLD  
-    // ========================================  
+    // Configurar contadores  
+    map->num_sector_points = header.num_points;  
+    map->num_sector_regions = header.num_regions;  
+    map->num_sector_walls = header.num_walls;  
       
-    if (header.NumTextures > 0) {  
-        printf("DEBUG: Leyendo %d texturas WLD\n", header.NumTextures);  
-        fflush(stdout);  
-          
-        map->textures = malloc(sizeof(WLD_TEXTURE_ENTRY) * header.NumTextures);  
+    // Cargar texturas desde TEX si es necesario  
+    if (header.num_textures > 0) {  
+        map->textures = malloc(sizeof(SECTOR_TEXTURE_ENTRY) * header.num_textures);  
         if (!map->textures) {  
-            fprintf(stderr, "Error: No se pudo asignar memoria para texturas WLD\n");  
-            free(map->wld_points);  
-            free(map->wld_regions);  
-            free(map->wld_walls);  
+            fprintf(stderr, "Error: No se pudo asignar memoria para texturas\n");  
+            free(dmp2_points);  
+            free(dmp2_regions);  
+            free(dmp2_walls);  
+            free(map->sector_points);  
+            free(map->sector_regions);  
+            free(map->sector_walls);  
             fclose(file);  
             string_discard(params[0]);  
             return 0;  
         }  
           
-        map->num_textures = header.NumTextures;  
+        map->num_textures = header.num_textures;  
           
-        // Leer y cargar cada textura desde FPG (si hay FPG)  
-        for (int i = 0; i < header.NumTextures; i++) {  
+        // Leer índices de texturas desde DMP2  
+        for (int i = 0; i < header.num_textures; i++) {  
             int16_t texture_index;  
             if (fread(&texture_index, sizeof(int16_t), 1, file) != 1) {  
                 map->textures[i].graph_id = 0;  
                 continue;  
             }  
               
-            if (fpg_id > 0) {  
-                // Cargar textura usando la API de BennuGD2  
-                GRAPH *texture_graph = bitmap_get(fpg_id, texture_index);  
-                map->textures[i].graph_id = texture_graph ? texture_graph->code : 0;  
+            if (tex_mode == 1) {  
+                // Usar sistema TEX  
+                GRAPH *tex_graph = get_tex_image(texture_index);  
+                map->textures[i].graph_id = tex_graph ? tex_graph->code : 0;  
                   
-                printf("DEBUG: Textura %d: índice FPG=%d -> graph_id=%d\n",   
+                printf("DEBUG: Textura %d: índice TEX=%d -> graph_id=%d\n",   
                        i, texture_index, map->textures[i].graph_id);  
             } else {  
-                // Sin FPG, usar graph_id = 0 para colores sólidos  
+                // tex_mode == 0: usar colores sólidos  
                 map->textures[i].graph_id = 0;  
                 printf("DEBUG: Textura %d: usando color sólido (índice=%d)\n",   
                        i, texture_index);  
@@ -3640,16 +3660,13 @@ int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params) {
         map->textures = NULL;  
     }  
       
-    // ========================================  
-    // CONFIGURAR MAPA WLD  
-    // ========================================  
+    // Liberar memoria temporal  
+    free(dmp2_points);  
+    free(dmp2_regions);  
+    free(dmp2_walls);  
       
+    // Configurar mapa  
     map->type = MAP_TYPE_SECTOR;  
-    map->num_wld_points = header.NumPoints;  
-    map->num_wld_regions = header.NumRegions;  
-    map->num_wld_walls = header.NumWalls;  
-      
-    // Inicializar punteros heightmap a NULL  
     map->heightmap = NULL;  
     map->texturemap = NULL;  
     map->height_cache = NULL;  
@@ -3658,17 +3675,30 @@ int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params) {
     fclose(file);  
     string_discard(params[0]);  
       
-    printf("DEBUG: Mapa WLD cargado exitosamente:\n");  
-    printf("  - Puntos: %d\n", map->num_wld_points);  
-    printf("  - Regiones: %d\n", map->num_wld_regions);  
-    printf("  - Paredes: %d\n", map->num_wld_walls);  
-    printf("  - Texturas: %d\n", map->num_textures);  
-    fflush(stdout);  
-      
+    printf("DEBUG: Mapa DMP2 cargado exitosamente\n");  
     return map->id;  
 }
 
-int64_t libmod_heightmap_render_wld_cpu(INSTANCE *my, int64_t *params) {  
+static int line_line_intersection(float x1, float y1, float x2, float y2,  
+                                 float x3, float y3, float x4, float y4,  
+                                 float *hit_x, float *hit_y) {  
+    float denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);  
+    if (fabs(denom) < 0.0001f) return 0;  
+      
+    float t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;  
+    float u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;  
+      
+    if (t >= 0.0f && t <= 1.0f && u >= 0.0f && u <= 1.0f) {  
+        *hit_x = x1 + t * (x2 - x1);  
+        *hit_y = y1 + t * (y2 - y1);  
+        return 1;  
+    }  
+      
+    return 0;  
+}
+
+
+int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {  
     int64_t hm_id = params[0];  
     int64_t render_width = params[1];  
     int64_t render_height = params[2];  
@@ -3686,12 +3716,12 @@ int64_t libmod_heightmap_render_wld_cpu(INSTANCE *my, int64_t *params) {
     }  
       
     if (!hm || hm->type != MAP_TYPE_SECTOR) {  
-        fprintf(stderr, "Error: Mapa inválido o no es tipo SECTOR (WLD)\n");  
+        fprintf(stderr, "Error: Mapa inválido o no es tipo SECTOR (DMP2)\n");  
         return 0;  
     }  
       
-    if (!hm->wld_points || !hm->wld_regions || !hm->wld_walls) {  
-        fprintf(stderr, "Error: Datos WLD no inicializados\n");  
+    if (!hm->sector_points || !hm->sector_regions || !hm->sector_walls) {  
+        fprintf(stderr, "Error: Datos DMP2 no inicializados\n");  
         return 0;  
     }  
       
@@ -3699,16 +3729,16 @@ int64_t libmod_heightmap_render_wld_cpu(INSTANCE *my, int64_t *params) {
     // CREAR BUFFER DE RENDERIZADO  
     // ========================================  
       
-    static GRAPH *wld_render_buffer = NULL;  
+    static GRAPH *sector_render_buffer = NULL;  
     static int64_t last_width = 0;  
     static int64_t last_height = 0;  
       
-    if (!wld_render_buffer || last_width != render_width || last_height != render_height) {  
-        if (wld_render_buffer) {  
-            bitmap_destroy(wld_render_buffer);  
+    if (!sector_render_buffer || last_width != render_width || last_height != render_height) {  
+        if (sector_render_buffer) {  
+            bitmap_destroy(sector_render_buffer);  
         }  
-        wld_render_buffer = bitmap_new_syslib(render_width, render_height);  
-        if (!wld_render_buffer) {  
+        sector_render_buffer = bitmap_new_syslib(render_width, render_height);  
+        if (!sector_render_buffer) {  
             fprintf(stderr, "Error: No se pudo crear buffer de renderizado\n");  
             return 0;  
         }  
@@ -3744,7 +3774,7 @@ int64_t libmod_heightmap_render_wld_cpu(INSTANCE *my, int64_t *params) {
     // ========================================  
       
     uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, 255);  
-    gr_clear_as(wld_render_buffer, sky_color);  
+    gr_clear_as(sector_render_buffer, sky_color);  
       
     // ========================================  
     // PRECALCULAR VALORES DE CÁMARA  
@@ -3757,11 +3787,11 @@ int64_t libmod_heightmap_render_wld_cpu(INSTANCE *my, int64_t *params) {
     int half_height = render_height / 2;  
       
     // ========================================  
-    // DEBUG: MOSTRAR INFORMACIÓN WLD  
+    // DEBUG: MOSTRAR INFORMACIÓN DMP2  
     // ========================================  
       
-    printf("DEBUG: Renderizando WLD - Puntos: %d, Regiones: %d, Paredes: %d\n",   
-           40, 2, 28); // Valores fijos del generador  
+    printf("DEBUG: Renderizando DMP2 - Puntos: %d, Regiones: %d, Paredes: %d\n",   
+           hm->num_sector_points, hm->num_sector_regions, hm->num_sector_walls);  
       
     // ========================================  
     // RENDERIZADO POR COLUMNAS CON RAYCASTING  
@@ -3787,12 +3817,12 @@ int64_t libmod_heightmap_render_wld_cpu(INSTANCE *my, int64_t *params) {
         float hit_x = 0, hit_y = 0;  
           
         // Probar intersección con todas las paredes  
-        for (int wall_idx = 0; wall_idx < 28; wall_idx++) { // Valor fijo del generador  
-            struct WLD_Wall *wall = &hm->wld_walls[wall_idx];  
+        for (int wall_idx = 0; wall_idx < hm->num_sector_walls; wall_idx++) {  
+            struct SECTOR_Wall *wall = &hm->sector_walls[wall_idx];  
               
             // Obtener puntos de la pared  
-            struct WLD_Point *p1 = &hm->wld_points[wall->point1];  
-            struct WLD_Point *p2 = &hm->wld_points[wall->point2];  
+            struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
+            struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
               
             // Verificar intersección línea-línea  
             float current_hit_x, current_hit_y;  
@@ -3821,8 +3851,8 @@ int64_t libmod_heightmap_render_wld_cpu(INSTANCE *my, int64_t *params) {
         // ========================================  
           
         if (closest_wall_idx >= 0) {  
-            struct WLD_Wall *wall = &hm->wld_walls[closest_wall_idx];  
-            struct WLD_Region *region = &hm->wld_regions[wall->region1];  
+            struct SECTOR_Wall *wall = &hm->sector_walls[closest_wall_idx];  
+            struct SECTOR_Region *region = &hm->sector_regions[wall->region1];  
               
             // Calcular altura proyectada de la pared  
             float wall_top_y = half_height - ((region->ceiling_height - camera.z) / closest_distance) * projection_scale;  
@@ -3854,13 +3884,14 @@ int64_t libmod_heightmap_render_wld_cpu(INSTANCE *my, int64_t *params) {
                 int depth_index = y * render_width + screen_x;  
                   
                 if (closest_distance < depth_buffer[depth_index]) {  
-                    gr_put_pixel(wld_render_buffer, screen_x, y, wall_color);  
+                    gr_put_pixel(sector_render_buffer, screen_x, y, wall_color);  
                     depth_buffer[depth_index] = closest_distance;  
                 }  
             }  
         }  
-    }
-        // ========================================  
+    }  
+      
+    // ========================================  
     // RENDERIZADO DE SUELO Y TECHO  
     // ========================================  
       
@@ -3898,72 +3929,143 @@ int64_t libmod_heightmap_render_wld_cpu(INSTANCE *my, int64_t *params) {
                 (uint8_t)(80 * fog),  
                 (uint8_t)(80 * fog), 255);  
               
-            gr_put_pixel(wld_render_buffer, screen_x, screen_y, floor_color);  
+            gr_put_pixel(sector_render_buffer, screen_x, screen_y, floor_color);  
             depth_buffer[depth_index] = row_distance;  
         }  
     }  
       
-    // Renderizar techo (similar pero hacia arriba)  
-    for (int screen_y = 0; screen_y < half_height; screen_y++) {  
-        float row_distance = (camera.z * 300.0f) / (float)(half_height - screen_y);  
+    // ========================================  
+    // ACTUALIZAR BUFFER GLOBAL Y RETORNAR  
+    // ========================================  
+      
+    render_buffer = sector_render_buffer;  
+    return render_buffer ? render_buffer->code : 0;  
+}
+
+  
+// Helper: Point in region test  
+static int point_in_region(HEIGHTMAP *hm, int region_id, float px, float py) {  
+    int crossings = 0;  
+      
+    for (int i = 0; i < hm->num_sector_walls; i++) {  
+        struct SECTOR_Wall *wall = &hm->sector_walls[i];  
           
-        if (fabsf(cosf(camera.pitch)) > 0.001f) {  
-            row_distance /= cosf(camera.pitch);  
-        }  
+        if (wall->region1 != region_id) continue;  
           
-        for (int screen_x = 0; screen_x < render_width; screen_x++) {  
-            float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;  
-            float ray_dir_x = cos_cam + camera.plane_x * camera_x;  
-            float ray_dir_y = sin_cam + camera.plane_y * camera_x;  
-              
-            float floor_x = camera.x + ray_dir_x * row_distance;  
-            float floor_y = camera.y + ray_dir_y * row_distance;  
-              
-            int depth_index = screen_y * render_width + screen_x;  
-            if (row_distance >= depth_buffer[depth_index]) {  
-                continue;  
+        struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
+        struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
+          
+        if ((p1->y <= py && py < p2->y) || (p2->y <= py && py < p1->y)) {  
+            float xinters = (py - p1->y) / (p2->y - p1->y) * (p2->x - p1->x) + p1->x;  
+            if (px < xinters) {  
+                crossings++;  
             }  
-              
-            float fog = 1.0f - (row_distance / max_render_distance);  
-            if (fog < 0.3f) fog = 0.3f;  
-              
-            uint32_t ceiling_color = SDL_MapRGBA(gPixelFormat,  
-                (uint8_t)(100 * fog),  
-                (uint8_t)(100 * fog),  
-                (uint8_t)(120 * fog), 255);  
-              
-            gr_put_pixel(wld_render_buffer, screen_x, screen_y, ceiling_color);  
-            depth_buffer[depth_index] = row_distance;  
         }  
     }  
       
-    return wld_render_buffer->code;  
-}  
+    return (crossings % 2) == 1;  
+}
   
-// ========================================  
-// FUNCIÓN AUXILIAR DE INTERSECCIÓN LÍNEA-LÍNEA  
-// ========================================  
-  
-// Implementación de la función (al final del archivo o antes de su uso)  
-static int line_line_intersection(float x1, float y1, float x2, float y2,  
-                                  float x3, float y3, float x4, float y4,  
-                                  float *hit_x, float *hit_y) {  
-    float denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);  
+// Helper: Render single column  
+static void render_column(HEIGHTMAP *hm, int screen_x, int render_width, int render_height,  
+                         float cos_cam, float sin_cam, float projection_scale,   
+                         int half_height, GRAPH *render_buffer, float *depth_buffer) {  
+    // Calcular dirección del rayo para esta columna  
+    float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;  
+    float ray_dir_x = cos_cam + camera.plane_x * camera_x;  
+    float ray_dir_y = sin_cam + camera.plane_y * camera_x;  
       
-    if (fabs(denom) < 0.0001f) {  
-        return 0; // Líneas paralelas  
+    // Normalizar dirección del rayo  
+    float ray_length = sqrtf(ray_dir_x * ray_dir_x + ray_dir_y * ray_dir_y);  
+    ray_dir_x /= ray_length;  
+    ray_dir_y /= ray_length;  
+      
+    // Encontrar región actual de la cámara  
+    int current_region = 0;  
+    for (int i = 0; i < hm->num_sector_regions; i++) {  
+        if (point_in_region(hm, i, camera.x, camera.y)) {  
+            current_region = i;  
+            break;  
+        }  
     }  
       
-    float t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;  
-    float u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;  
+    // Renderizar paredes visibles desde esta región  
+    for (int i = 0; i < hm->num_sector_walls; i++) {  
+        struct SECTOR_Wall *wall = &hm->sector_walls[i];  
+          
+        if (wall->region1 != current_region) continue;  
+          
+        struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
+        struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
+          
+        // Verificar intersección línea-línea  
+        float current_hit_x, current_hit_y;  
+        if (line_line_intersection(camera.x, camera.y,  
+                                  camera.x + ray_dir_x * 1000.0f,  
+                                  camera.y + ray_dir_y * 1000.0f,  
+                                  p1->x, p1->y, p2->x, p2->y,  
+                                  &current_hit_x, &current_hit_y)) {  
+              
+            // Calcular distancia a punto de impacto  
+            float dist_x = current_hit_x - camera.x;  
+            float dist_y = current_hit_y - camera.y;  
+            float distance = sqrtf(dist_x * dist_x + dist_y * dist_y);  
+              
+            if (distance < 999999.0f && distance > 0.1f) {  
+                int next_region = wall->region2;  
+                int wall_texture = wall->texture;  
+                  
+                struct SECTOR_Region *reg = &hm->sector_regions[current_region];  
+                float wall_height_floor = reg->floor_height;  
+                float wall_height_ceil = reg->ceiling_height;  
+                  
+                // Calcular altura proyectada y renderizar  
+                float wall_top_y = half_height - ((reg->ceiling_height - camera.z) / distance) * projection_scale;  
+                float wall_bottom_y = half_height - ((reg->floor_height - camera.z) / distance) * projection_scale;  
+                  
+                // Aplicar pitch de cámara  
+                wall_top_y += camera.pitch * 40.0f;  
+                wall_bottom_y += camera.pitch * 40.0f;  
+                  
+                int y_start = (int)wall_top_y;  
+                int y_end = (int)wall_bottom_y;  
+                  
+                // Clamping  
+                if (y_start < 0) y_start = 0;  
+                if (y_end >= render_height) y_end = render_height - 1;  
+                  
+                // Renderizar columna de pared  
+                for (int y = y_start; y <= y_end; y++) {  
+                    int depth_index = y * render_width + screen_x;  
+                      
+                    if (distance < depth_buffer[depth_index]) {  
+                        uint32_t wall_color = SDL_MapRGBA(gPixelFormat, 120, 100, 80, 255);  
+                        gr_put_pixel(render_buffer, screen_x, y, wall_color);  
+                        depth_buffer[depth_index] = distance;  
+                    }  
+                }  
+            }  
+        }  
+    }  
+}
+  
+// Helper: Ray-wall intersection  
+static float ray_wall_intersection(float ray_x, float ray_y, float ray_dx, float ray_dy,  
+                                  float wall_x1, float wall_y1, float wall_x2, float wall_y2) {  
+    float wall_dx = wall_x2 - wall_x1;  
+    float wall_dy = wall_y2 - wall_y1;  
       
-    if (t >= 0.0f && t <= 1.0f && u >= 0.0f && u <= 1.0f) {  
-        *hit_x = x1 + t * (x2 - x1);  
-        *hit_y = y1 + t * (y2 - y1);  
-        return 1;  
+    float denom = ray_dx * wall_dy - ray_dy * wall_dx;  
+    if (fabsf(denom) < 0.0001f) return -1.0f;  
+      
+    float t = ((wall_x1 - ray_x) * wall_dy - (wall_y1 - ray_y) * wall_dx) / denom;  
+    float s = ((wall_x1 - ray_x) * ray_dy - (wall_y1 - ray_y) * ray_dx) / denom;  
+      
+    if (t > 0.0001f && s >= 0.0f && s <= 1.0f) {  
+        return t;  
     }  
       
-    return 0;  
+    return -1.0f;  
 }
 //---------------------------------------------------------------------------------------//
 //                          FIN MAPAS POR SECTORES                                       //
@@ -3996,5 +4098,144 @@ static int line_line_intersection(float x1, float y1, float x2, float y2,
                render_data->graph, NULL, 255, 255, 255, proj.alpha, 0, NULL);  
     }  
 }
+
+static TEX_IMAGE tex_images[1000]; // índices 1-999  
+  
+int64_t load_tex_file(INSTANCE *my, int64_t *params) {  
+    const char *filename = string_get(params[0]);  
+      
+    if (!filename) {  
+        printf("Error: string_get() retornó NULL\n");  
+        return 0;  
+    }  
+      
+    printf("DEBUG: Intentando cargar TEX: %s\n", filename);  
+      
+    FILE *file = fopen(filename, "rb");  
+    if (!file) {  
+        printf("Error: No se pudo abrir archivo TEX: %s\n", filename);  
+        printf("Verifica que el archivo exista y tenga permisos de lectura\n");  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    // Verificar tamaño del archivo  
+    fseek(file, 0, SEEK_END);  
+    long file_size = ftell(file);  
+    fseek(file, 0, SEEK_SET);  
+      
+    printf("DEBUG: Archivo TEX abierto (tamaño: %ld bytes)\n", file_size);  
+      
+    if (file_size < sizeof(TEX_HEADER)) {  
+        printf("Error: Archivo TEX demasiado pequeño (%ld bytes)\n", file_size);  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    TEX_HEADER header;  
+    if (fread(&header, sizeof(TEX_HEADER), 1, file) != 1) {  
+        printf("Error: No se pudo leer header TEX\n");  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    // Verificar magic number con depuración  
+    printf("DEBUG: Magic leído: ");  
+    for (int i = 0; i < 4; i++) {  
+        printf("\\x%02x", (unsigned char)header.magic[i]);  
+    }  
+    printf("\n");  
+      
+    if (memcmp(header.magic, "TEX\0", 4) != 0) {  
+        printf("Error: Magic number incorrecto\n");  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    printf("DEBUG: TEX válido - versión %d, %d imágenes\n",   
+           header.version, header.num_images);  
+      
+    // Limpiar imágenes anteriores  
+    for (int i = 1; i < 1000; i++) {  
+        if (tex_images[i].loaded) {  
+            bitmap_destroy(tex_images[i].graph);  
+            tex_images[i].loaded = 0;  
+        }  
+    }  
+      
+    // Cargar cada imagen  
+    for (int i = 0; i < header.num_images; i++) {  
+        TEX_ENTRY entry;  
+        if (fread(&entry, sizeof(TEX_ENTRY), 1, file) != 1) {  
+            printf("Error: No se pudo leer entry %d\n", i);  
+            break;  
+        }  
+          
+        printf("DEBUG: Imagen %d - índice: %d, tamaño: %dx%d\n",   
+               i, entry.index, entry.width, entry.height);  
+          
+        if (entry.index < 1 || entry.index > 999) continue;  
+          
+        // Crear GRAPH  
+        GRAPH *graph = bitmap_new_syslib(entry.width, entry.height);  
+        if (!graph) continue;  
+          
+        // Leer datos a buffer temporal  
+        size_t data_size = entry.width * entry.height * 4;  
+        uint8_t *temp_data = malloc(data_size);  
+        if (!temp_data) {  
+            bitmap_destroy(graph);  
+            continue;  
+        }  
+          
+        if (fread(temp_data, 1, data_size, file) == data_size) {  
+            // Convertir datos RGBA al formato de BennuGD2  
+            for (int y = 0; y < entry.height; y++) {  
+                for (int x = 0; x < entry.width; x++) {  
+                    int pixel_index = (y * entry.width + x) * 4;  
+                    uint8_t r = temp_data[pixel_index];  
+                    uint8_t g = temp_data[pixel_index + 1];  
+                    uint8_t b = temp_data[pixel_index + 2];  
+                    uint8_t a = temp_data[pixel_index + 3];  
+                      
+                    uint32_t color = SDL_MapRGBA(gPixelFormat, r, g, b, a);  
+                    gr_put_pixel(graph, x, y, color);  
+                }  
+            }  
+              
+            tex_images[entry.index].graph = graph;  
+            tex_images[entry.index].loaded = 1;  
+            printf("DEBUG: Textura %d cargada correctamente\n", entry.index);  
+        } else {  
+            printf("Error: No se pudieron leer datos de imagen %d\n", i);  
+            bitmap_destroy(graph);  
+        }  
+          
+        free(temp_data);  
+    }  
+      
+    fclose(file);  
+    printf("DEBUG: Archivo TEX cargado exitosamente\n");  
+    string_discard(params[0]);  
+    return 1;  
+}
+GRAPH *get_tex_image(int index) {  
+    if (index < 1 || index > 999) return NULL;  
+    if (!tex_images[index].loaded) return NULL;  
+    return tex_images[index].graph;  
+}  
+  
+void cleanup_tex_images() {  
+    for (int i = 1; i < 1000; i++) {  
+        if (tex_images[i].loaded) {  
+            bitmap_destroy(tex_images[i].graph);  
+            tex_images[i].loaded = 0;  
+        }  
+    }  
+}
+
 
 #include "libmod_heightmap_exports.h"

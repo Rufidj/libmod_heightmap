@@ -88,9 +88,11 @@ DLSYSFUNCS __bgdexport(libmod_heightmap, functions_exports)[] = {
     FUNC("HEIGHTMAP_SET_BILLBOARD_FOV", "I", TYPE_INT, libmod_heightmap_set_billboard_fov),  
     
 // Mapas DMAP (tile-based)  
-FUNC("HEIGHTMAP_LOAD_WLD", "SI", TYPE_INT, libmod_heightmap_load_wld),  
+FUNC("HEIGHTMAP_LOAD_DMP2", "SI", TYPE_INT, libmod_heightmap_load_dmp2),  
 FUNC("HEIGHTMAP_GET_MAP_TYPE", "I", TYPE_INT, libmod_heightmap_get_map_type),  
-FUNC("HEIGHTMAP_RENDER_WLD_CPU", "III", TYPE_INT, libmod_heightmap_render_wld_cpu),
+FUNC("HEIGHTMAP_RENDER_SECTOR_CPU", "III", TYPE_INT, libmod_heightmap_render_sector_cpu),
+FUNC("LOAD_TEX_FILE", "S", TYPE_INT, load_tex_file),  
+FUNC("GET_TEX_IMAGE", "I", TYPE_INT, get_tex_image),
 FUNC(0, 0, 0, 0)};  
   
 #endif  
