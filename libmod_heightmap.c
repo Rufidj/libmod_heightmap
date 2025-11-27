@@ -11,8 +11,9 @@
 #include <GL/glew.h>
 #include <inttypes.h>  
 #include "tex_format.h"
-//#include "libbggfx.h"  
-//#include "libmod_gfx.h"
+
+#define max(a,b) ((a) > (b) ? (a) : (b))  
+#define min(a,b) ((a) < (b) ? (a) : (b))  
 
 // Si aún tienes problemas, puedes definir manualmente los offsets:  
 #ifndef CTYPE  
@@ -212,6 +213,22 @@ static void render_column(HEIGHTMAP *hm, int screen_x, int render_width, int ren
                          int half_height, GRAPH *render_buffer, float *depth_buffer); 
 static float ray_wall_intersection(float ray_x, float ray_y, float ray_dx, float ray_dy,  
                                   float wall_x1, float wall_y1, float wall_x2, float wall_y2);
+static void render_sector_recursive(HEIGHTMAP *hm, int region_id,   
+                                   GRAPH *render_buffer, float *depth_buffer,  
+                                   COLUMN_CLIP *column_clips,   
+                                   int render_width, int render_height);  
+static void render_wall_vpe(HEIGHTMAP *hm, int wall_idx, int screen_x,  
+                           float hit_x, float hit_y, float distance,  
+                           GRAPH *render_buffer, float *depth_buffer,  
+                           COLUMN_CLIP *column_clips,   
+                           int render_width, int render_height);  
+static void render_floor_ceiling_vpe(HEIGHTMAP *hm, int region_id,  
+                                    GRAPH *render_buffer, float *depth_buffer,  
+                                    COLUMN_CLIP *column_clips,  
+                                    int render_width, int render_height);  
+static void update_portal_clips(HEIGHTMAP *hm, struct SECTOR_Wall *portal_wall,  
+                               COLUMN_CLIP *column_clips,   
+                               int render_width, int render_height);
 
 
 static void cleanup_gpu_resources(void) {  
@@ -3737,83 +3754,71 @@ static int line_line_intersection(float x1, float y1, float x2, float y2,
 }
 
 
+// Función principal VPE  
 int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {  
     int64_t hm_id = params[0];  
-    int64_t render_width = params[1];  
-    int64_t render_height = params[2];  
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return 0;  
       
-    // ========================================  
-    // VALIDACIÓN Y BÚSQUEDA DE HEIGHTMAP  
-    // ========================================  
+    int render_width = current_render_width;  
+    int render_height = current_render_height;  
       
-    HEIGHTMAP *hm = NULL;  
-    for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
-        if (heightmaps[i].id == hm_id) {  
-            hm = &heightmaps[i];  
-            break;  
-        }  
-    }  
+    // Crear buffer de renderizado  
+    GRAPH *sector_render_buffer = bitmap_new_syslib(render_width, render_height);  
+    if (!sector_render_buffer) return 0;  
       
-    if (!hm || hm->type != MAP_TYPE_SECTOR) {  
+    // Inicializar depth buffer  
+    float *depth_buffer = malloc(render_width * render_height * sizeof(float));  
+    if (!depth_buffer) {  
+        bitmap_destroy(sector_render_buffer);  
         return 0;  
     }  
       
-    if (!hm->sector_points || !hm->sector_regions || !hm->sector_walls) {  
-        return 0;  
+    // Inicializar column clipping  
+    COLUMN_CLIP *column_clips = malloc(render_width * sizeof(COLUMN_CLIP));  
+    for (int x = 0; x < render_width; x++) {  
+        column_clips[x].top = 0;  
+        column_clips[x].bottom = render_height - 1;  
     }  
       
-    if (hm->num_sector_walls <= 0 || hm->num_sector_points <= 0 || hm->num_sector_regions <= 0) {  
-        return 0;  
-    }  
-      
-    // ========================================  
-    // CREAR BUFFER DE RENDERIZADO  
-    // ========================================  
-      
-    static GRAPH *sector_render_buffer = NULL;  
-    if (!sector_render_buffer) {  
-        sector_render_buffer = bitmap_new_syslib(render_width, render_height);  
-        if (!sector_render_buffer) return 0;  
-    }  
-      
-    // Limpiar con cielo  
-    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, 135, 206, 235, 255);  
-    gr_clear_as(sector_render_buffer, sky_color);  
-      
-    // ========================================  
-    // PRECALCULAR VALORES DE CÁMARA  
-    // ========================================  
-      
-    float cos_cam = cosf(camera.angle);  
-    float sin_cam = sinf(camera.angle);  
-    float fov = 0.8f;  
-    int half_height = render_height / 2;  
-      
-    // ========================================  
-    // INICIALIZAR DEPTH BUFFER  
-    // ========================================  
-      
-    static float *depth_buffer = NULL;  
-    static int depth_buffer_size = 0;  
-      
-    if (!depth_buffer || depth_buffer_size != render_width * render_height) {  
-        if (depth_buffer) free(depth_buffer);  
-        depth_buffer = malloc(render_width * render_height * sizeof(float));  
-        depth_buffer_size = render_width * render_height;  
-        if (!depth_buffer) return 0;  
-    }  
-      
+    // Limpiar depth buffer  
     for (int i = 0; i < render_width * render_height; i++) {  
         depth_buffer[i] = 999999.0f;  
     }  
       
-    // ========================================  
-    // RENDERIZADO POR COLUMNAS (PAREDES)  
-    // ========================================  
+    // Encontrar región actual  
+    int current_region = 0;  
+    for (int i = 0; i < hm->num_sector_regions; i++) {  
+        if (point_in_region(hm, i, camera.x, camera.y)) {  
+            current_region = i;  
+            break;  
+        }  
+    }  
       
+    // Renderizar  
+    render_sector_recursive(hm, current_region, sector_render_buffer,   
+                           depth_buffer, column_clips, render_width, render_height);  
+      
+    // Limpiar  
+    render_buffer = sector_render_buffer;  
+    free(depth_buffer);  
+    free(column_clips);  
+      
+    return render_buffer ? render_buffer->code : 0;  
+}  
+  
+// Función recursiva corregida  
+static void render_sector_recursive(HEIGHTMAP *hm, int region_id,   
+                                   GRAPH *render_buffer, float *depth_buffer,  
+                                   COLUMN_CLIP *column_clips,   
+                                   int render_width, int render_height) {  
     for (int screen_x = 0; screen_x < render_width; screen_x++) {  
+        if (column_clips[screen_x].top > column_clips[screen_x].bottom) {  
+            continue;  
+        }  
+          
         float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;  
-        float angle_offset = (camera_x * fov) / 2.0f;  
+        float angle_offset = (camera_x * camera.fov) / 2.0f;  
         float ray_angle = camera.angle + angle_offset;  
         float ray_dir_x = cosf(ray_angle);  
         float ray_dir_y = sinf(ray_angle);  
@@ -3824,21 +3829,20 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
           
         for (int wall_idx = 0; wall_idx < hm->num_sector_walls; wall_idx++) {  
             struct SECTOR_Wall *wall = &hm->sector_walls[wall_idx];  
+            if (wall->region1 != region_id) continue;  
+              
             struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
             struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
               
-            float current_hit_x, current_hit_y;  
-            if (line_line_intersection(camera.x, camera.y,  
-                                      camera.x + ray_dir_x * 1000.0f,  
-                                      camera.y + ray_dir_y * 1000.0f,  
-                                      p1->x, p1->y, p2->x, p2->y,  
-                                      &current_hit_x, &current_hit_y)) {  
+            float distance = ray_wall_intersection(camera.x, camera.y,  
+                                                  ray_dir_x, ray_dir_y,  
+                                                  p1->x, p1->y, p2->x, p2->y);  
+              
+            if (distance > 0.1f) {  
+                float current_hit_x = camera.x + ray_dir_x * distance;  
+                float current_hit_y = camera.y + ray_dir_y * distance;  
                   
-                float dist_x = current_hit_x - camera.x;  
-                float dist_y = current_hit_y - camera.y;  
-                float distance = sqrtf(dist_x * dist_x + dist_y * dist_y);  
-                  
-                if (distance < closest_distance && distance > 0.1f) {  
+                if (distance < closest_distance) {  
                     closest_distance = distance;  
                     closest_wall_idx = wall_idx;  
                     hit_x = current_hit_x;  
@@ -3847,137 +3851,157 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
             }  
         }  
           
-        // ========================================  
-        // RENDERIZAR PARED ENCONTRADA  
-        // ========================================  
-          
         if (closest_wall_idx >= 0) {  
-            struct SECTOR_Wall *wall = &hm->sector_walls[closest_wall_idx];  
-            struct SECTOR_Region *region = &hm->sector_regions[wall->region1];  
-              
-            // Calcular altura proyectada  
-            float wall_top_y = half_height - ((region->ceiling_height - camera.z) / closest_distance) * 300.0f;  
-            float wall_bottom_y = half_height - ((region->floor_height - camera.z) / closest_distance) * 300.0f;  
-              
-            // CORRECCIÓN: Pitch integrado en proyección (sin desplazamiento)  
-            float pitch_factor = camera.pitch * 0.5f;  
-            wall_top_y -= pitch_factor * 300.0f;  
-            wall_bottom_y -= pitch_factor * 300.0f;  
-              
-            int y_start = (int)wall_top_y;  
-            int y_end = (int)wall_bottom_y;  
-              
-            if (y_start < 0) y_start = 0;  
-            if (y_end >= render_height) y_end = render_height - 1;  
-              
-            GRAPH *wall_texture = NULL;  
-            if (wall->texture > 0 && wall->texture <= 999) {  
-                wall_texture = get_tex_image(wall->texture);  
-            }  
-              
-            float u_coord = 0.0f;  
-            if (wall_texture && wall->point1 >= 0 && wall->point2 >= 0 &&  
-                wall->point1 < hm->num_sector_points && wall->point2 < hm->num_sector_points) {  
-                  
-                struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
-                struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
-                  
-                float wall_length = sqrtf((p2->x - p1->x) * (p2->x - p1->x) + (p2->y - p1->y) * (p2->y - p1->y));  
-                if (wall_length > 0.001f) {  
-                    float hit_distance_along_wall = sqrtf((hit_x - p1->x) * (hit_x - p1->x) + (hit_y - p1->y) * (hit_y - p1->y));  
-                    u_coord = hit_distance_along_wall / wall_length;  
-                    u_coord = (u_coord < 0.0f) ? 0.0f : (u_coord > 1.0f) ? 1.0f : u_coord;  
-                }  
-            }  
-              
-            for (int y = y_start; y <= y_end; y++) {  
-                int depth_index = y * render_width + screen_x;  
-                  
-                if (closest_distance < depth_buffer[depth_index]) {  
-                    uint32_t pixel_color;  
-                      
-                    if (wall_texture && wall_texture->width > 0 && wall_texture->height > 0) {  
-                        float v_coord = (float)(y - y_start) / (float)(y_end - y_start + 1);  
-                        v_coord = (v_coord < 0.0f) ? 0.0f : (v_coord > 1.0f) ? 1.0f : v_coord;  
-                          
-                        int tex_x = (int)(u_coord * (wall_texture->width - 1));  
-                        int tex_y = (int)(v_coord * (wall_texture->height - 1));  
-                          
-                        tex_x = (tex_x < 0) ? 0 : (tex_x >= wall_texture->width) ? wall_texture->width - 1 : tex_x;  
-                        tex_y = (tex_y < 0) ? 0 : (tex_y >= wall_texture->height) ? wall_texture->height - 1 : tex_y;  
-                          
-                        uint32_t tex_color = gr_get_pixel(wall_texture, tex_x, tex_y);  
-                          
-                        float fog = 1.0f - (closest_distance / 800.0f);  
-                        if (fog < 0.3f) fog = 0.3f;  
-                          
-                        // CORRECCIÓN: Usar shifts del formato de píxeles  
-                        uint8_t r = ((tex_color >> gPixelFormat->Rshift) & 0xFF) * fog;  
-                        uint8_t g = ((tex_color >> gPixelFormat->Gshift) & 0xFF) * fog;  
-                        uint8_t b = ((tex_color >> gPixelFormat->Bshift) & 0xFF) * fog;  
-                        pixel_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
-                    } else {  
-                        float fog = 1.0f - (closest_distance / 800.0f);  
-                        if (fog < 0.3f) fog = 0.3f;  
-                        pixel_color = SDL_MapRGBA(gPixelFormat,  
-                            (uint8_t)(120 * fog),  
-                            (uint8_t)(100 * fog),  
-                            (uint8_t)(80 * fog), 255);  
-                    }  
-                      
-                    gr_put_pixel(sector_render_buffer, screen_x, y, pixel_color);  
-                    depth_buffer[depth_index] = closest_distance;  
-                }  
-            }  
+            render_wall_vpe(hm, closest_wall_idx, screen_x, hit_x, hit_y,  
+                          closest_distance, render_buffer, depth_buffer,  
+                          column_clips, render_width, render_height);  
         }  
-    }
-      // ========================================  
-    // RENDERIZADO DE SUELO Y TECHO  
-    // ========================================  
+    }  
+      
+    render_floor_ceiling_vpe(hm, region_id, render_buffer, depth_buffer,  
+                            column_clips, render_width, render_height);  
+}
+
+// Función stub para renderizar paredes  
+static void render_wall_vpe(HEIGHTMAP *hm, int wall_idx, int screen_x,  
+                           float hit_x, float hit_y, float distance,  
+                           GRAPH *render_buffer, float *depth_buffer,  
+                           COLUMN_CLIP *column_clips,   
+                           int render_width, int render_height) {  
+    struct SECTOR_Wall *wall = &hm->sector_walls[wall_idx];  
+    struct SECTOR_Region *region = &hm->sector_regions[wall->region1];  
+    int half_height = render_height / 2;  
+      
+    // Proyección de altura  
+    float wall_top_y = half_height - ((region->ceiling_height - camera.z) / distance) * 300.0f;  
+    float wall_bottom_y = half_height - ((region->floor_height - camera.z) / distance) * 300.0f;  
+      
+    float pitch_factor = camera.pitch * 0.5f;  
+    wall_top_y -= pitch_factor * 300.0f;  
+    wall_bottom_y -= pitch_factor * 300.0f;  
+      
+    int y_start = (int)wall_top_y;  
+    int y_end = (int)wall_bottom_y;  
+      
+    if (y_start < 0) y_start = 0;  
+    if (y_end >= render_height) y_end = render_height - 1;  
+      
+    GRAPH *wall_texture = NULL;  
+    if (wall->texture > 0 && wall->texture <= 999) {  
+        wall_texture = get_tex_image(wall->texture);  
+    }  
+      
+    // CÁLCULO CORRECTO DE COORDENADA U usando producto punto  
+    float u_coord = 0.0f;  
+    if (wall_texture && wall->point1 >= 0 && wall->point2 >= 0 &&  
+        wall->point1 < hm->num_sector_points && wall->point2 < hm->num_sector_points) {  
+          
+        struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
+        struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
+          
+        float wall_dx = p2->x - p1->x;  
+        float wall_dy = p2->y - p1->y;  
+        float wall_length_squared = wall_dx * wall_dx + wall_dy * wall_dy;  
+          
+        if (wall_length_squared > 0.001f) {  
+            float hit_dx = hit_x - p1->x;  
+            float hit_dy = hit_y - p1->y;  
+              
+            // Producto punto para proyectar el punto de impacto sobre la pared  
+            float dot_product = hit_dx * wall_dx + hit_dy * wall_dy;  
+            u_coord = dot_product / wall_length_squared;  
+            u_coord = (u_coord < 0.0f) ? 0.0f : (u_coord > 1.0f) ? 1.0f : u_coord;  
+        }  
+    }  
+      
+    // Renderizado de píxeles de pared  
+    for (int y = y_start; y <= y_end; y++) {  
+        int depth_index = y * render_width + screen_x;  
+          
+        if (distance < depth_buffer[depth_index]) {  
+            uint32_t pixel_color;  
+              
+            if (wall_texture && wall_texture->width > 0 && wall_texture->height > 0) {  
+                float v_coord = (float)(y - y_start) / (float)(y_end - y_start + 1);  
+                v_coord = (v_coord < 0.0f) ? 0.0f : (v_coord > 1.0f) ? 1.0f : v_coord;  
+                  
+                int tex_x = (int)(u_coord * (wall_texture->width - 1));  
+                int tex_y = (int)(v_coord * (wall_texture->height - 1));  
+                  
+                tex_x = (tex_x < 0) ? 0 : (tex_x >= wall_texture->width) ? wall_texture->width - 1 : tex_x;  
+                tex_y = (tex_y < 0) ? 0 : (tex_y >= wall_texture->height) ? wall_texture->height - 1 : tex_y;  
+                  
+                uint32_t tex_color = gr_get_pixel(wall_texture, tex_x, tex_y);  
+                  
+                float fog = 1.0f - (distance / 800.0f);  
+                if (fog < 0.3f) fog = 0.3f;  
+                  
+                uint8_t r = ((tex_color >> gPixelFormat->Rshift) & 0xFF) * fog;  
+                uint8_t g = ((tex_color >> gPixelFormat->Gshift) & 0xFF) * fog;  
+                uint8_t b = ((tex_color >> gPixelFormat->Bshift) & 0xFF) * fog;  
+                pixel_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
+            } else {  
+                float fog = 1.0f - (distance / 800.0f);  
+                if (fog < 0.3f) fog = 0.3f;  
+                pixel_color = SDL_MapRGBA(gPixelFormat,  
+                    (uint8_t)(120 * fog),  
+                    (uint8_t)(100 * fog),  
+                    (uint8_t)(80 * fog), 255);  
+            }  
+              
+            gr_put_pixel(render_buffer, screen_x, y, pixel_color);  
+            depth_buffer[depth_index] = distance;  
+        }  
+    }  
+}
+  
+// Función stub para renderizar suelo/techo  
+static void render_floor_ceiling_vpe(HEIGHTMAP *hm, int region_id,  
+                                    GRAPH *render_buffer, float *depth_buffer,  
+                                    COLUMN_CLIP *column_clips,  
+                                    int render_width, int render_height) {  
+    struct SECTOR_Region *region = &hm->sector_regions[region_id];  
+    int half_height = render_height / 2;  
       
     for (int screen_y = 0; screen_y < render_height; screen_y++) {  
-        // Determinar si es suelo (abajo) o techo (arriba)  
         int is_floor = (screen_y > half_height) ? 1 : 0;  
           
-        // Calcular distancia del rayo para esta fila Y  
+        // Calcular distancia del rayo para esta fila Y (código existente)  
         float row_distance;  
         if (is_floor) {  
-            // CORRECCIÓN: Aplicar pitch correctamente al suelo  
             float effective_camera_height = camera.z + camera.pitch * 20.0f;  
             row_distance = (effective_camera_height * 300.0f) / (float)(screen_y - half_height);  
         } else {  
-            // CORRECCIÓN: Aplicar pitch correctamente al techo  
-            float effective_ceiling_height = hm->sector_regions[0].ceiling_height + camera.pitch * 20.0f;  
+            float effective_ceiling_height = region->ceiling_height + camera.pitch * 20.0f;  
             row_distance = ((effective_ceiling_height - camera.z) * 300.0f) / (float)(half_height - screen_y);  
         }  
           
         if (row_distance <= 0.1f) continue;  
           
         for (int screen_x = 0; screen_x < render_width; screen_x++) {  
-            // Calcular dirección del rayo  
+            // Calcular dirección del rayo (código existente)  
             float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;  
-            float angle_offset = (camera_x * fov) / 2.0f;  
+            float angle_offset = (camera_x * 0.8f) / 2.0f;  // FOV fijo como en el original  
             float ray_angle = camera.angle + angle_offset;  
             float ray_dir_x = cosf(ray_angle);  
             float ray_dir_y = sinf(ray_angle);  
               
-            // Calcular punto de intersección en el mundo  
+            // Calcular punto de intersección en el mundo (código existente)  
             float world_x = camera.x + ray_dir_x * row_distance;  
             float world_y = camera.y + ray_dir_y * row_distance;  
               
-            // Validar si está dentro del sector  
-            if (!point_in_region(hm, 0, world_x, world_y)) {  
+            // MANTENER point_in_region - es necesario para evitar artefactos  
+            if (!point_in_region(hm, region_id, world_x, world_y)) {  
                 continue;  
             }  
               
-            // Verificar depth buffer  
+            // Verificar depth buffer (código existente)  
             int depth_index = screen_y * render_width + screen_x;  
             if (row_distance >= depth_buffer[depth_index]) {  
                 continue;  
             }  
               
-            // Obtener región y textura  
-            struct SECTOR_Region *region = &hm->sector_regions[0];  
+            // Obtener textura (código existente)  
             int tex_index = is_floor ? region->floor_texture : region->ceiling_texture;  
             GRAPH *surface_texture = NULL;  
             if (tex_index > 0 && tex_index <= 999) {  
@@ -3985,9 +4009,8 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
             }  
               
             uint32_t pixel_color;  
-              
             if (surface_texture && surface_texture->width > 0 && surface_texture->height > 0) {  
-                // Calcular UV basado en posición mundial  
+                // Cálculo UV EXACTO como en el código existente  
                 float u_coord = fmodf(world_x / 64.0f, 1.0f);  
                 float v_coord = fmodf(world_y / 64.0f, 1.0f);  
                   
@@ -3997,6 +4020,7 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
                 int tex_x = (int)(u_coord * (surface_texture->width - 1));  
                 int tex_y = (int)(v_coord * (surface_texture->height - 1));  
                   
+                // Clamp seguro  
                 tex_x = (tex_x < 0) ? 0 : (tex_x >= surface_texture->width) ? surface_texture->width - 1 : tex_x;  
                 tex_y = (tex_y < 0) ? 0 : (tex_y >= surface_texture->height) ? surface_texture->height - 1 : tex_y;  
                   
@@ -4005,13 +4029,12 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
                 float fog = 1.0f - (row_distance / 800.0f);  
                 if (fog < 0.3f) fog = 0.3f;  
                   
-                // CORRECCIÓN: Usar shifts del formato de píxeles  
                 uint8_t r = ((tex_color >> gPixelFormat->Rshift) & 0xFF) * fog;  
                 uint8_t g = ((tex_color >> gPixelFormat->Gshift) & 0xFF) * fog;  
                 uint8_t b = ((tex_color >> gPixelFormat->Bshift) & 0xFF) * fog;  
                 pixel_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
             } else {  
-                // Color sólido fallback  
+                // Color sólido fallback (código existente)  
                 float fog = 1.0f - (row_distance / 800.0f);  
                 if (fog < 0.3f) fog = 0.3f;  
                   
@@ -4022,20 +4045,47 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
                     (uint8_t)(color_val * fog), 255);  
             }  
               
-            gr_put_pixel(sector_render_buffer, screen_x, screen_y, pixel_color);  
+            gr_put_pixel(render_buffer, screen_x, screen_y, pixel_color);  
             depth_buffer[depth_index] = row_distance;  
         }  
     }  
-      
-    // ========================================  
-    // ACTUALIZAR BUFFER GLOBAL Y RETORNAR  
-    // ========================================  
-      
-    render_buffer = sector_render_buffer;  
-    return render_buffer ? render_buffer->code : 0;  
 }
-
-
+  
+// Función stub para actualizar portales  
+static void update_portal_clips(HEIGHTMAP *hm, struct SECTOR_Wall *portal_wall,  
+                               COLUMN_CLIP *column_clips,   
+                               int render_width, int render_height) {  
+    struct SECTOR_Region *region1 = &hm->sector_regions[portal_wall->region1];  
+      
+    for (int screen_x = 0; screen_x < render_width; screen_x++) {  
+        float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;  
+        float angle_offset = (camera_x * camera.fov) / 2.0f;  
+        float ray_angle = camera.angle + angle_offset;  
+        float ray_dir_x = cosf(ray_angle);  
+        float ray_dir_y = sinf(ray_angle);  
+          
+        struct SECTOR_Point *p1 = &hm->sector_points[portal_wall->point1];  
+        struct SECTOR_Point *p2 = &hm->sector_points[portal_wall->point2];  
+          
+        float distance = ray_wall_intersection(camera.x, camera.y,  
+                                              ray_dir_x, ray_dir_y,  
+                                              p1->x, p1->y, p2->x, p2->y);  
+          
+        if (distance > 0.1f) {  
+            int half_height = render_height / 2;  
+              
+            float portal_top = half_height - ((region1->ceiling_height - camera.z) / distance) * 300.0f;  
+            float portal_bottom = half_height - ((region1->floor_height - camera.z) / distance) * 300.0f;  
+              
+            float pitch_factor = camera.pitch * 0.5f;  
+            portal_top -= pitch_factor * 300.0f;  
+            portal_bottom -= pitch_factor * 300.0f;  
+              
+            column_clips[screen_x].top = max(column_clips[screen_x].top, (int)portal_bottom);  
+            column_clips[screen_x].bottom = min(column_clips[screen_x].bottom, (int)portal_top);  
+        }  
+    }  
+}
   
 // Helper: Point in region test  
 static int point_in_region(HEIGHTMAP *hm, int region_id, float px, float py) {  
