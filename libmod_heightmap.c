@@ -3742,7 +3742,10 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
     int64_t render_width = params[1];  
     int64_t render_height = params[2];  
       
-    // Validación básica  
+    // ========================================  
+    // VALIDACIÓN Y BÚSQUEDA DE HEIGHTMAP  
+    // ========================================  
+      
     HEIGHTMAP *hm = NULL;  
     for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
         if (heightmaps[i].id == hm_id) {  
@@ -3759,12 +3762,14 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
         return 0;  
     }  
       
-    // Validación de seguridad adicional  
     if (hm->num_sector_walls <= 0 || hm->num_sector_points <= 0 || hm->num_sector_regions <= 0) {  
         return 0;  
     }  
       
-    // Buffer de renderizado  
+    // ========================================  
+    // CREAR BUFFER DE RENDERIZADO  
+    // ========================================  
+      
     static GRAPH *sector_render_buffer = NULL;  
     if (!sector_render_buffer) {  
         sector_render_buffer = bitmap_new_syslib(render_width, render_height);  
@@ -3775,13 +3780,19 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
     uint32_t sky_color = SDL_MapRGBA(gPixelFormat, 135, 206, 235, 255);  
     gr_clear_as(sector_render_buffer, sky_color);  
       
-    // Cámara y raycasting  
+    // ========================================  
+    // PRECALCULAR VALORES DE CÁMARA  
+    // ========================================  
+      
     float cos_cam = cosf(camera.angle);  
     float sin_cam = sinf(camera.angle);  
-    float fov = 0.8f;  // ~45.8 grados  
+    float fov = 0.8f;  
     int half_height = render_height / 2;  
       
-    // Depth buffer  
+    // ========================================  
+    // INICIALIZAR DEPTH BUFFER  
+    // ========================================  
+      
     static float *depth_buffer = NULL;  
     static int depth_buffer_size = 0;  
       
@@ -3789,38 +3800,30 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
         if (depth_buffer) free(depth_buffer);  
         depth_buffer = malloc(render_width * render_height * sizeof(float));  
         depth_buffer_size = render_width * render_height;  
-          
         if (!depth_buffer) return 0;  
     }  
       
-    // Inicializar depth buffer  
     for (int i = 0; i < render_width * render_height; i++) {  
         depth_buffer[i] = 999999.0f;  
     }  
       
-    // Renderizado por columnas  
+    // ========================================  
+    // RENDERIZADO POR COLUMNAS (PAREDES)  
+    // ========================================  
+      
     for (int screen_x = 0; screen_x < render_width; screen_x++) {  
-        // Calcular dirección del rayo  
         float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;  
         float angle_offset = (camera_x * fov) / 2.0f;  
         float ray_angle = camera.angle + angle_offset;  
         float ray_dir_x = cosf(ray_angle);  
         float ray_dir_y = sinf(ray_angle);  
           
-        // Encontrar pared más cercana  
         float closest_distance = 999999.0f;  
         int closest_wall_idx = -1;  
         float hit_x = 0, hit_y = 0;  
           
         for (int wall_idx = 0; wall_idx < hm->num_sector_walls; wall_idx++) {  
             struct SECTOR_Wall *wall = &hm->sector_walls[wall_idx];  
-              
-            // Validar índices de puntos  
-            if (wall->point1 < 0 || wall->point1 >= hm->num_sector_points ||  
-                wall->point2 < 0 || wall->point2 >= hm->num_sector_points) {  
-                continue;  
-            }  
-              
             struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
             struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
               
@@ -3844,39 +3847,34 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
             }  
         }  
           
-        // Renderizar pared encontrada  
+        // ========================================  
+        // RENDERIZAR PARED ENCONTRADA  
+        // ========================================  
+          
         if (closest_wall_idx >= 0) {  
             struct SECTOR_Wall *wall = &hm->sector_walls[closest_wall_idx];  
-              
-            // Validar índice de región  
-            if (wall->region1 < 0 || wall->region1 >= hm->num_sector_regions) {  
-                continue;  
-            }  
-              
             struct SECTOR_Region *region = &hm->sector_regions[wall->region1];  
               
             // Calcular altura proyectada  
             float wall_top_y = half_height - ((region->ceiling_height - camera.z) / closest_distance) * 300.0f;  
             float wall_bottom_y = half_height - ((region->floor_height - camera.z) / closest_distance) * 300.0f;  
               
-            // Aplicar pitch  
-            wall_top_y += camera.pitch * 40.0f;  
-            wall_bottom_y += camera.pitch * 40.0f;  
+            // CORRECCIÓN: Pitch integrado en proyección (sin desplazamiento)  
+            float pitch_factor = camera.pitch * 0.5f;  
+            wall_top_y -= pitch_factor * 300.0f;  
+            wall_bottom_y -= pitch_factor * 300.0f;  
               
             int y_start = (int)wall_top_y;  
             int y_end = (int)wall_bottom_y;  
               
-            // Clamping  
             if (y_start < 0) y_start = 0;  
             if (y_end >= render_height) y_end = render_height - 1;  
               
-            // Obtener textura con validación  
             GRAPH *wall_texture = NULL;  
             if (wall->texture > 0 && wall->texture <= 999) {  
                 wall_texture = get_tex_image(wall->texture);  
             }  
               
-            // Calcular coordenadas UV si hay textura  
             float u_coord = 0.0f;  
             if (wall_texture && wall->point1 >= 0 && wall->point2 >= 0 &&  
                 wall->point1 < hm->num_sector_points && wall->point2 < hm->num_sector_points) {  
@@ -3888,12 +3886,10 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
                 if (wall_length > 0.001f) {  
                     float hit_distance_along_wall = sqrtf((hit_x - p1->x) * (hit_x - p1->x) + (hit_y - p1->y) * (hit_y - p1->y));  
                     u_coord = hit_distance_along_wall / wall_length;  
-                    // CLAMP en lugar de wrap  
                     u_coord = (u_coord < 0.0f) ? 0.0f : (u_coord > 1.0f) ? 1.0f : u_coord;  
                 }  
             }  
               
-            // Renderizar columna  
             for (int y = y_start; y <= y_end; y++) {  
                 int depth_index = y * render_width + screen_x;  
                   
@@ -3901,11 +3897,9 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
                     uint32_t pixel_color;  
                       
                     if (wall_texture && wall_texture->width > 0 && wall_texture->height > 0) {  
-                        // Calcular V coordinate  
                         float v_coord = (float)(y - y_start) / (float)(y_end - y_start + 1);  
                         v_coord = (v_coord < 0.0f) ? 0.0f : (v_coord > 1.0f) ? 1.0f : v_coord;  
                           
-                        // Mapear UV a coordenadas de textura con bounds checking  
                         int tex_x = (int)(u_coord * (wall_texture->width - 1));  
                         int tex_y = (int)(v_coord * (wall_texture->height - 1));  
                           
@@ -3914,19 +3908,17 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
                           
                         uint32_t tex_color = gr_get_pixel(wall_texture, tex_x, tex_y);  
                           
-                        // Fog reducido (mínimo 0.5 en lugar de 0.3)  
                         float fog = 1.0f - (closest_distance / 800.0f);  
-                        if (fog < 0.7f) fog = 0.7f;  
+                        if (fog < 0.3f) fog = 0.3f;  
                           
-                        // Aplicar fog más suave  
-                        uint8_t r = ((tex_color >> 16) & 0xFF) * fog;  
-                        uint8_t g = ((tex_color >> 8) & 0xFF) * fog;  
-                        uint8_t b = (tex_color & 0xFF) * fog;  
+                        // CORRECCIÓN: Usar shifts del formato de píxeles  
+                        uint8_t r = ((tex_color >> gPixelFormat->Rshift) & 0xFF) * fog;  
+                        uint8_t g = ((tex_color >> gPixelFormat->Gshift) & 0xFF) * fog;  
+                        uint8_t b = ((tex_color >> gPixelFormat->Bshift) & 0xFF) * fog;  
                         pixel_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
                     } else {  
-                        // Color sólido fallback  
                         float fog = 1.0f - (closest_distance / 800.0f);  
-                        if (fog < 0.5f) fog = 0.5f;  
+                        if (fog < 0.3f) fog = 0.3f;  
                         pixel_color = SDL_MapRGBA(gPixelFormat,  
                             (uint8_t)(120 * fog),  
                             (uint8_t)(100 * fog),  
@@ -3938,7 +3930,106 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
                 }  
             }  
         }  
+    }
+      // ========================================  
+    // RENDERIZADO DE SUELO Y TECHO  
+    // ========================================  
+      
+    for (int screen_y = 0; screen_y < render_height; screen_y++) {  
+        // Determinar si es suelo (abajo) o techo (arriba)  
+        int is_floor = (screen_y > half_height) ? 1 : 0;  
+          
+        // Calcular distancia del rayo para esta fila Y  
+        float row_distance;  
+        if (is_floor) {  
+            // CORRECCIÓN: Aplicar pitch correctamente al suelo  
+            float effective_camera_height = camera.z + camera.pitch * 20.0f;  
+            row_distance = (effective_camera_height * 300.0f) / (float)(screen_y - half_height);  
+        } else {  
+            // CORRECCIÓN: Aplicar pitch correctamente al techo  
+            float effective_ceiling_height = hm->sector_regions[0].ceiling_height + camera.pitch * 20.0f;  
+            row_distance = ((effective_ceiling_height - camera.z) * 300.0f) / (float)(half_height - screen_y);  
+        }  
+          
+        if (row_distance <= 0.1f) continue;  
+          
+        for (int screen_x = 0; screen_x < render_width; screen_x++) {  
+            // Calcular dirección del rayo  
+            float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;  
+            float angle_offset = (camera_x * fov) / 2.0f;  
+            float ray_angle = camera.angle + angle_offset;  
+            float ray_dir_x = cosf(ray_angle);  
+            float ray_dir_y = sinf(ray_angle);  
+              
+            // Calcular punto de intersección en el mundo  
+            float world_x = camera.x + ray_dir_x * row_distance;  
+            float world_y = camera.y + ray_dir_y * row_distance;  
+              
+            // Validar si está dentro del sector  
+            if (!point_in_region(hm, 0, world_x, world_y)) {  
+                continue;  
+            }  
+              
+            // Verificar depth buffer  
+            int depth_index = screen_y * render_width + screen_x;  
+            if (row_distance >= depth_buffer[depth_index]) {  
+                continue;  
+            }  
+              
+            // Obtener región y textura  
+            struct SECTOR_Region *region = &hm->sector_regions[0];  
+            int tex_index = is_floor ? region->floor_texture : region->ceiling_texture;  
+            GRAPH *surface_texture = NULL;  
+            if (tex_index > 0 && tex_index <= 999) {  
+                surface_texture = get_tex_image(tex_index);  
+            }  
+              
+            uint32_t pixel_color;  
+              
+            if (surface_texture && surface_texture->width > 0 && surface_texture->height > 0) {  
+                // Calcular UV basado en posición mundial  
+                float u_coord = fmodf(world_x / 64.0f, 1.0f);  
+                float v_coord = fmodf(world_y / 64.0f, 1.0f);  
+                  
+                if (u_coord < 0.0f) u_coord += 1.0f;  
+                if (v_coord < 0.0f) v_coord += 1.0f;  
+                  
+                int tex_x = (int)(u_coord * (surface_texture->width - 1));  
+                int tex_y = (int)(v_coord * (surface_texture->height - 1));  
+                  
+                tex_x = (tex_x < 0) ? 0 : (tex_x >= surface_texture->width) ? surface_texture->width - 1 : tex_x;  
+                tex_y = (tex_y < 0) ? 0 : (tex_y >= surface_texture->height) ? surface_texture->height - 1 : tex_y;  
+                  
+                uint32_t tex_color = gr_get_pixel(surface_texture, tex_x, tex_y);  
+                  
+                float fog = 1.0f - (row_distance / 800.0f);  
+                if (fog < 0.3f) fog = 0.3f;  
+                  
+                // CORRECCIÓN: Usar shifts del formato de píxeles  
+                uint8_t r = ((tex_color >> gPixelFormat->Rshift) & 0xFF) * fog;  
+                uint8_t g = ((tex_color >> gPixelFormat->Gshift) & 0xFF) * fog;  
+                uint8_t b = ((tex_color >> gPixelFormat->Bshift) & 0xFF) * fog;  
+                pixel_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
+            } else {  
+                // Color sólido fallback  
+                float fog = 1.0f - (row_distance / 800.0f);  
+                if (fog < 0.3f) fog = 0.3f;  
+                  
+                uint8_t color_val = is_floor ? 80 : 100;  
+                pixel_color = SDL_MapRGBA(gPixelFormat,  
+                    (uint8_t)(color_val * fog),  
+                    (uint8_t)(color_val * fog),  
+                    (uint8_t)(color_val * fog), 255);  
+            }  
+              
+            gr_put_pixel(sector_render_buffer, screen_x, screen_y, pixel_color);  
+            depth_buffer[depth_index] = row_distance;  
+        }  
     }  
+      
+    // ========================================  
+    // ACTUALIZAR BUFFER GLOBAL Y RETORNAR  
+    // ========================================  
       
     render_buffer = sector_render_buffer;  
     return render_buffer ? render_buffer->code : 0;  
