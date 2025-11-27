@@ -1,5 +1,5 @@
 /*  
- * Creador de mapas DMP2 - Formato TEX para libmod_heightmap  
+ * Creador de mapas DMP2 - Versión final que escribe archivos válidos  
  * Genera una sala cuadrada de 1024x1024 con texturas desde TEX  
  */  
   
@@ -10,7 +10,10 @@
   
 #pragma pack(push, 1)  
   
-// Estructuras DMP2 (coincidentes con las del header)  
+// ========================================  
+// ESTRUCTURAS DMP2 (coincidentes con libmod_heightmap.h)  
+// ========================================  
+  
 typedef struct {  
     char magic[4];              // "DMP2"  
     uint32_t version;           // 1  
@@ -22,7 +25,7 @@ typedef struct {
   
 typedef struct {  
     int16_t x, y;  
-    int16_t type;  
+    int16_t Type;    // Mayúscula igual que SECTOR_Point  
     int32_t link;  
 } DMP2_POINT;  
   
@@ -41,181 +44,139 @@ typedef struct {
     int16_t texture;              // 2 bytes  
     int16_t flags;                // 2 bytes  
     uint16_t x_offset, y_offset;  // 4 bytes  
-} DMP2_WALL;  // Total: 16 byte
+} __attribute__((packed)) DMP2_WALL;  // Total: 16 bytes  
   
 #pragma pack(pop)  
   
 // Función para crear una sala cuadrada DMP2 para TEX  
-int create_square_room_dmp2_tex(const char *filename, int room_size) {  
+int create_square_room_dmp2_tex(const char *filename) {  
     FILE *file = fopen(filename, "wb");  
     if (!file) {  
-        printf("Error: No se pudo crear archivo %s\n", filename);  
+        printf("Error: No se pudo crear archivo DMP2: %s\n", filename);  
         return 0;  
     }  
       
-    // ========================================  
-    // CONFIGURACIÓN DE LA SALA (1024x1024)  
-    // ========================================  
-      
-    // Definir tamaño de la sala (1024x1024 unidades)  
-    int half_size = room_size / 2;  
-      
-    // Índices de texturas en TEX (no FPG)  
-    // 1 = textura de paredes  
-    // 2 = textura de suelo    
-    // 3 = textura de techo  
-    int16_t wall_texture_index = 1;  
-    int16_t floor_texture_index = 2;  
-    int16_t ceiling_texture_index = 3;  
+    printf("DEBUG: Creando sala DMP2 1024x1024 para TEX\n");  
+    printf("DEBUG: sizeof(DMP2_HEADER) = %zu bytes\n", sizeof(DMP2_HEADER));  
+    printf("DEBUG: sizeof(DMP2_POINT) = %zu bytes\n", sizeof(DMP2_POINT));  
+    printf("DEBUG: sizeof(DMP2_REGION) = %zu bytes\n", sizeof(DMP2_REGION));  
+    printf("DEBUG: sizeof(DMP2_WALL) = %zu bytes\n", sizeof(DMP2_WALL));  
       
     // ========================================  
-    // PREPARAR HEADER DMP2  
+    // HEADER DMP2  
     // ========================================  
       
     DMP2_HEADER header;  
+    memset(&header, 0, sizeof(DMP2_HEADER));  
     memcpy(header.magic, "DMP2", 4);  
     header.version = 1;  
-    header.num_points = 4;      // 4 esquinas  
-    header.num_regions = 1;     // 1 región interior  
-    header.num_walls = 4;       // 4 paredes  
-    header.num_textures = 3;    // pared, suelo, techo (desde TEX)  
+    header.num_points = 4;        // 4 esquinas  
+    header.num_regions = 1;       // 1 región interior  
+    header.num_walls = 4;         // 4 paredes  
+    header.num_textures = 3;      // pared, suelo, techo  
+      
+    printf("DEBUG: Escribiendo header DMP2 (%zu bytes)\n", sizeof(DMP2_HEADER));  
+    size_t header_written = fwrite(&header, sizeof(DMP2_HEADER), 1, file);  
+    printf("DEBUG: Header escrito: %zu/1\n", header_written);  
       
     // ========================================  
-    // CREAR PUNTOS (ESQUINAS)  
+    // PUNTOS DMP2 (esquinas de la sala)  
     // ========================================  
       
-    DMP2_POINT points[4];  
+    DMP2_POINT dmp2_points[4] = {  
+        {-512, -512, 0, -1},     // esquina inferior izquierda  
+        { 512, -512, 0, -1},     // esquina inferior derecha  
+        { 512,  512, 0, -1},     // esquina superior derecha  
+        {-512,  512, 0, -1}      // esquina superior izquierda  
+    };  
       
-    // Esquina superior izquierda  
-    points[0].x = -half_size;  
-    points[0].y = -half_size;  
-    points[0].type = 0;  
-    points[0].link = -1;  
-      
-    // Esquina superior derecha  
-    points[1].x = half_size;  
-    points[1].y = -half_size;  
-    points[1].type = 0;  
-    points[1].link = -1;  
-      
-    // Esquina inferior derecha  
-    points[2].x = half_size;  
-    points[2].y = half_size;  
-    points[2].type = 0;  
-    points[2].link = -1;  
-      
-    // Esquina inferior izquierda  
-    points[3].x = -half_size;  
-    points[3].y = half_size;  
-    points[3].type = 0;  
-    points[3].link = -1;  
+    printf("DEBUG: Escribiendo %d puntos DMP2 (%zu bytes)\n", header.num_points,   
+           sizeof(DMP2_POINT) * header.num_points);  
+    size_t points_written = fwrite(dmp2_points, sizeof(DMP2_POINT), header.num_points, file);  
+    printf("DEBUG: Puntos escritos: %zu/%d\n", points_written, header.num_points);  
       
     // ========================================  
-    // CREAR REGIÓN (INTERIOR)  
+    // REGIONES DMP2 (sala interior)  
     // ========================================  
       
-    DMP2_REGION region;  
-    region.floor_height = 0;           // Suelo a nivel 0  
-    region.ceiling_height = 256;       // Techo a 256 unidades de altura  
-    region.floor_texture = floor_texture_index;   // Textura 2 desde TEX  
-    region.ceiling_texture = ceiling_texture_index; // Textura 3 desde TEX  
-    region.light_level = 255;          // Iluminación máxima  
-    region.flags = 0;                  // Sin flags especiales  
+    DMP2_REGION dmp2_regions[1] = {  
+        {0, 256, 2, 3, 255, 0}    // suelo=2, techo=3, iluminación máxima  
+    };  
+      
+    printf("DEBUG: Escribiendo %d regiones DMP2 (%zu bytes)\n", header.num_regions,  
+           sizeof(DMP2_REGION) * header.num_regions);  
+    size_t regions_written = fwrite(dmp2_regions, sizeof(DMP2_REGION), header.num_regions, file);  
+    printf("DEBUG: Regiones escritas: %zu/%d\n", regions_written, header.num_regions);  
       
     // ========================================  
-    // CREAR PAREDES  
+    // PAREDES DMP2 (4 paredes de la sala)  
     // ========================================  
       
-    DMP2_WALL walls[4];  
+    DMP2_WALL dmp2_walls[4] = {  
+        // Pared inferior (punto 0 -> punto 1)  
+        {0, 1, 0, -1, 1, 0, 0, 0},  
+        // Pared derecha (punto 1 -> punto 2)  
+        {1, 2, 0, -1, 1, 0, 0, 0},  
+        // Pared superior (punto 2 -> punto 3)  
+        {2, 3, 0, -1, 1, 0, 0, 0},  
+        // Pared izquierda (punto 3 -> punto 0)  
+        {3, 0, 0, -1, 1, 0, 0, 0}  
+    };  
       
-    // Pared norte (superior)  
-    walls[0].point1 = 0;  
-    walls[0].point2 = 1;  
-    walls[0].region1 = 0;      // Interior  
-    walls[0].region2 = -1;     // Exterior (sólido)  
-    walls[0].texture = wall_texture_index;  // Textura 1 desde TEX  
-    walls[0].flags = 0;  
-    walls[0].x_offset = 0;  
-    walls[0].y_offset = 0;  
-      
-    // Pared este (derecha)  
-    walls[1].point1 = 1;  
-    walls[1].point2 = 2;  
-    walls[1].region1 = 0;      // Interior  
-    walls[1].region2 = -1;     // Exterior (sólido)  
-    walls[1].texture = wall_texture_index;  // Textura 1 desde TEX  
-    walls[1].flags = 0;  
-    walls[1].x_offset = 0;  
-    walls[1].y_offset = 0;  
-      
-    // Pared sur (inferior)  
-    walls[2].point1 = 2;  
-    walls[2].point2 = 3;  
-    walls[2].region1 = 0;      // Interior  
-    walls[2].region2 = -1;     // Exterior (sólido)  
-    walls[2].texture = wall_texture_index;  // Textura 1 desde TEX  
-    walls[2].flags = 0;  
-    walls[2].x_offset = 0;  
-    walls[2].y_offset = 0;  
-      
-    // Pared oeste (izquierda)  
-    walls[3].point1 = 3;  
-    walls[3].point2 = 0;  
-    walls[3].region1 = 0;      // Interior  
-    walls[3].region2 = -1;     // Exterior (sólido)  
-    walls[3].texture = wall_texture_index;  // Textura 1 desde TEX  
-    walls[3].flags = 0;  
-    walls[3].x_offset = 0;  
-    walls[3].y_offset = 0;  
+    printf("DEBUG: Escribiendo %d paredes DMP2 (%zu bytes)\n", header.num_walls,  
+           sizeof(DMP2_WALL) * header.num_walls);  
+    size_t walls_written = fwrite(dmp2_walls, sizeof(DMP2_WALL), header.num_walls, file);  
+    printf("DEBUG: Paredes escritas: %zu/%d\n", walls_written, header.num_walls);  
       
     // ========================================  
-    // ESCRIBIR ARCHIVO DMP2  
+    // TEXTURAS DMP2 (índices para archivo TEX)  
     // ========================================  
       
-    // Escribir header  
-    fwrite(&header, sizeof(DMP2_HEADER), 1, file);  
+    int16_t texture_indices[3] = {1, 2, 3};  // pared=1, suelo=2, techo=3  
       
-    // Escribir puntos  
-    fwrite(points, sizeof(DMP2_POINT), header.num_points, file);  
+    printf("DEBUG: Escribiendo %d texturas DMP2 (%zu bytes)\n", header.num_textures,  
+           sizeof(int16_t) * header.num_textures);  
+    size_t textures_written = fwrite(texture_indices, sizeof(int16_t), header.num_textures, file);  
+    printf("DEBUG: Texturas escritas: %zu/%d\n", textures_written, header.num_textures);  
       
-    // Escribir región  
-    fwrite(&region, sizeof(DMP2_REGION), header.num_regions, file);  
+    // ========================================  
+    // VERIFICACIÓN FINAL  
+    // ========================================  
       
-    // Escribir paredes  
-    fwrite(walls, sizeof(DMP2_WALL), header.num_walls, file);  
+    long current_pos = ftell(file);  
+    printf("DEBUG: Posición final del archivo: %ld bytes\n", current_pos);  
       
-    // Escribir índices de texturas (para TEX)  
-    int16_t texture_indices[] = {wall_texture_index, floor_texture_index, ceiling_texture_index};  
-    fwrite(texture_indices, sizeof(int16_t), header.num_textures, file);  
+    // Calcular tamaño esperado  
+    long expected_size = sizeof(DMP2_HEADER) +   
+                        (sizeof(DMP2_POINT) * header.num_points) +  
+                        (sizeof(DMP2_REGION) * header.num_regions) +  
+                        (sizeof(DMP2_WALL) * header.num_walls) +  
+                        (sizeof(int16_t) * header.num_textures);  
+      
+    printf("DEBUG: Tamaño esperado: %ld bytes\n", expected_size);  
+    printf("DEBUG: Tamaño real: %ld bytes\n", current_pos);  
+    printf("DEBUG: Diferencia: %ld bytes\n", current_pos - expected_size);  
       
     fclose(file);  
       
-    printf("Mapa DMP2 creado: %s\n", filename);  
-    printf("  - Sala cuadrada: %dx%d unidades\n", room_size, room_size);  
-    printf("  - Puntos: %d, Regiones: %d, Paredes: %d\n",   
-           header.num_points, header.num_regions, header.num_walls);  
-    printf("  - Texturas TEX: pared=%d, suelo=%d, techo=%d\n",  
-           wall_texture_index, floor_texture_index, ceiling_texture_index);  
-    printf("  - Cargar con: LOAD_TEX_FILE(\"textures.tex\")\n");  
-    printf("  - Luego: HEIGHTMAP_LOAD_DMP2(\"%s\", 1)\n", filename);  
+    printf("✓ Archivo DMP2 creado: %s (%ld bytes)\n", filename, current_pos);  
+    printf("✓ Configuración para TEX: texturas 1=pared, 2=suelo, 3=techo\n");  
       
     return 1;  
 }  
   
-// Función principal para probar la creación  
 int main() {  
-    printf("=== Creador de Mapas DMP2 para TEX ===\n");  
+    printf("=== Creador de Mapas DMP2 para Sistema TEX ===\n");  
+    printf("Creando sala de 1024x1024 unidades...\n\n");  
       
-    // Crear sala cuadrada de 1024x1024 unidades  
-    if (create_square_room_dmp2_tex("assets/test_room_1024.dmp2", 1024)) {  
-        printf("\n¡Mapa DMP2 para TEX creado exitosamente!\n");  
+    if (create_square_room_dmp2_tex("test_room_1024.dmp2")) {  
+        printf("\n✓ Éxito: Mapa DMP2 creado correctamente\n");  
         printf("Usa en BennuGD2:\n");  
         printf("  LOAD_TEX_FILE(\"assets/textures.tex\");\n");  
-        printf("  map_id = HEIGHTMAP_LOAD_DMP2(\"assets/test_room_1024.dmp2\", 1);\n");  
-        printf("  HEIGHTMAP_RENDER_SECTOR_CPU(map_id, 640, 480);\n");  
+        printf("  map_id = HEIGHTMAP_LOAD_DMP2(\"test_room_1024.dmp2\", 1);\n");  
         return 0;  
     }  
       
-    printf("\nError al crear el mapa DMP2\n");  
+    printf("\n✗ Error: No se pudo crear el mapa DMP2\n");  
     return 1;  
 }

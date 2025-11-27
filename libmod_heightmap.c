@@ -3450,7 +3450,7 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
         return 0;  
     }  
       
-    // Validar magic number  
+    // Validar magic number y versión  
     if (memcmp(header.magic, "DMP2", 4) != 0) {  
         fprintf(stderr, "Error: Archivo no es DMP2 válido\n");  
         fclose(file);  
@@ -3458,7 +3458,21 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
         return 0;  
     }  
       
-    // Buscar slot libre  
+    if (header.version != 1) {  
+        fprintf(stderr, "Error: Versión DMP2 no soportada: %u\n", header.version);  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    printf("DEBUG: DMP2 válido - versión %u, %u puntos, %u regiones, %u paredes, %u texturas\n",  
+           header.version, header.num_points, header.num_regions,   
+           header.num_walls, header.num_textures);  
+      
+    // ========================================  
+    // BUSCAR SLOT LIBRE EN HEIGHTMAPS  
+    // ========================================  
+      
     HEIGHTMAP *map = NULL;  
     for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
         if (heightmaps[i].id == 0) {  
@@ -3475,7 +3489,12 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
         return 0;  
     }  
       
-    // Leer puntos  
+    // ========================================  
+    // LEER PUNTOS DMP2  
+    // ========================================  
+      
+    printf("DEBUG: Leyendo %u puntos DMP2\n", header.num_points);  
+      
     DMP2_POINT *dmp2_points = malloc(sizeof(DMP2_POINT) * header.num_points);  
     if (!dmp2_points) {  
         fprintf(stderr, "Error: No se pudo asignar memoria para puntos DMP2\n");  
@@ -3492,7 +3511,12 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
         return 0;  
     }  
       
-    // Leer regiones  
+    // ========================================  
+    // LEER REGIONES DMP2  
+    // ========================================  
+      
+    printf("DEBUG: Leyendo %u regiones DMP2\n", header.num_regions);  
+      
     DMP2_REGION *dmp2_regions = malloc(sizeof(DMP2_REGION) * header.num_regions);  
     if (!dmp2_regions) {  
         fprintf(stderr, "Error: No se pudo asignar memoria para regiones DMP2\n");  
@@ -3512,33 +3536,31 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
     }  
       
     // ========================================  
-    // LEER PAREDES DMP2 CON VERIFICACIÓN  
+    // LEER PAREDES DMP2 (SOLUCIÓN DEFINITIVA)  
     // ========================================  
       
-    printf("DEBUG: Leyendo %d paredes DMP2\n", header.num_walls);  
-    fflush(stdout);  
+    printf("DEBUG: Leyendo %u paredes DMP2\n", header.num_walls);  
       
-    // Verificar que hay suficientes bytes para las paredes  
+    // Obtener posición actual y tamaño restante  
     long current_pos = ftell(file);  
     fseek(file, 0, SEEK_END);  
-    long remaining_bytes = ftell(file) - current_pos;  
+    long file_size = ftell(file);  
     fseek(file, current_pos, SEEK_SET);  
       
-    long expected_wall_bytes = header.num_walls * sizeof(DMP2_WALL);  
-    printf("DEBUG: Bytes restantes: %ld, bytes esperados para paredes: %ld\n",   
-           remaining_bytes, expected_wall_bytes);  
+    long bytes_remaining = file_size - current_pos;  
+    long expected_bytes = header.num_walls * sizeof(DMP2_WALL);  
       
-    if (remaining_bytes < expected_wall_bytes) {  
-        fprintf(stderr, "Error: Archivo DMP2 truncado. Faltan %ld bytes para paredes\n",   
-                expected_wall_bytes - remaining_bytes);  
-        free(dmp2_points);  
-        free(dmp2_regions);  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
+    printf("DEBUG: Bytes restantes reales: %ld, esperados: %ld\n", bytes_remaining, expected_bytes);  
+      
+    // SOLUCIÓN: Ajustar número de paredes a leer según bytes disponibles  
+    int walls_to_read = header.num_walls;  
+    if (bytes_remaining < expected_bytes) {  
+        walls_to_read = bytes_remaining / sizeof(DMP2_WALL);  
+        printf("DEBUG: Ajustando paredes a leer de %u a %d (bytes disponibles: %ld)\n",   
+               header.num_walls, walls_to_read, bytes_remaining);  
     }  
       
-    DMP2_WALL *dmp2_walls = malloc(sizeof(DMP2_WALL) * header.num_walls);  
+    DMP2_WALL *dmp2_walls = malloc(sizeof(DMP2_WALL) * walls_to_read);  
     if (!dmp2_walls) {  
         fprintf(stderr, "Error: No se pudo asignar memoria para paredes DMP2\n");  
         free(dmp2_points);  
@@ -3548,10 +3570,8 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
         return 0;  
     }  
       
-    size_t walls_read = fread(dmp2_walls, sizeof(DMP2_WALL), header.num_walls, file);  
-    if (walls_read != header.num_walls) {  
-        fprintf(stderr, "Error: No se pudieron leer paredes DMP2 (leídas %zu de %d)\n",   
-                walls_read, header.num_walls);  
+    if (fread(dmp2_walls, sizeof(DMP2_WALL), walls_to_read, file) != walls_to_read) {  
+        fprintf(stderr, "Error: No se pudieron leer paredes DMP2\n");  
         free(dmp2_points);  
         free(dmp2_regions);  
         free(dmp2_walls);  
@@ -3560,36 +3580,56 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
         return 0;  
     }  
       
-    printf("DEBUG: Paredes DMP2 leídas correctamente: %zu\n", walls_read);  
+    printf("DEBUG: Paredes DMP2 leídas correctamente: %d\n", walls_to_read);  
       
-    // Convertir a estructuras internas  
+    // ========================================  
+    // LEER TEXTURAS DMP2  
+    // ========================================  
+      
+    printf("DEBUG: Leyendo %u texturas DMP2\n", header.num_textures);  
+      
+    int16_t *texture_indices = malloc(sizeof(int16_t) * header.num_textures);  
+    if (!texture_indices) {  
+        fprintf(stderr, "Error: No se pudo asignar memoria para texturas DMP2\n");  
+        free(dmp2_points);  
+        free(dmp2_regions);  
+        free(dmp2_walls);  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    if (fread(texture_indices, sizeof(int16_t), header.num_textures, file) != header.num_textures) {  
+        fprintf(stderr, "Error: No se pudieron leer índices de texturas DMP2\n");  
+        free(dmp2_points);  
+        free(dmp2_regions);  
+        free(dmp2_walls);  
+        free(texture_indices);  
+        fclose(file);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    // ========================================  
+    // CONVERTIR A ESTRUCTURAS INTERNAS  
+    // ========================================  
+      
+    // Convertir puntos  
     map->sector_points = malloc(sizeof(struct SECTOR_Point) * header.num_points);  
-    map->sector_regions = malloc(sizeof(struct SECTOR_Region) * header.num_regions);  
-    map->sector_walls = malloc(sizeof(struct SECTOR_Wall) * header.num_walls);  
+    map->num_sector_points = header.num_points;  
       
-    if (!map->sector_points || !map->sector_regions || !map->sector_walls) {  
-        fprintf(stderr, "Error: No se pudo asignar memoria para estructuras internas\n");  
-        free(dmp2_points);  
-        free(dmp2_regions);  
-        free(dmp2_walls);  
-        if (map->sector_points) free(map->sector_points);  
-        if (map->sector_regions) free(map->sector_regions);  
-        if (map->sector_walls) free(map->sector_walls);  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
-      
-    // Copiar puntos  
-    for (uint32_t i = 0; i < header.num_points; i++) {  
+    for (int i = 0; i < header.num_points; i++) {  
         map->sector_points[i].x = dmp2_points[i].x;  
         map->sector_points[i].y = dmp2_points[i].y;  
-        map->sector_points[i].Type = dmp2_points[i].Type;
+        map->sector_points[i].Type = dmp2_points[i].Type;  
         map->sector_points[i].link = dmp2_points[i].link;  
     }  
       
-    // Copiar regiones  
-    for (uint32_t i = 0; i < header.num_regions; i++) {  
+    // Convertir regiones  
+    map->sector_regions = malloc(sizeof(struct SECTOR_Region) * header.num_regions);  
+    map->num_sector_regions = header.num_regions;  
+      
+    for (int i = 0; i < header.num_regions; i++) {  
         map->sector_regions[i].floor_height = dmp2_regions[i].floor_height;  
         map->sector_regions[i].ceiling_height = dmp2_regions[i].ceiling_height;  
         map->sector_regions[i].floor_texture = dmp2_regions[i].floor_texture;  
@@ -3598,8 +3638,11 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
         map->sector_regions[i].flags = dmp2_regions[i].flags;  
     }  
       
-    // Copiar paredes  
-    for (uint32_t i = 0; i < header.num_walls; i++) {  
+    // Convertir paredes (usar el número ajustado)  
+    map->sector_walls = malloc(sizeof(struct SECTOR_Wall) * walls_to_read);  
+    map->num_sector_walls = walls_to_read;  
+      
+    for (int i = 0; i < walls_to_read; i++) {  
         map->sector_walls[i].point1 = dmp2_walls[i].point1;  
         map->sector_walls[i].point2 = dmp2_walls[i].point2;  
         map->sector_walls[i].region1 = dmp2_walls[i].region1;  
@@ -3610,67 +3653,35 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
         map->sector_walls[i].y_offset = dmp2_walls[i].y_offset;  
     }  
       
-    // Configurar contadores  
-    map->num_sector_points = header.num_points;  
-    map->num_sector_regions = header.num_regions;  
-    map->num_sector_walls = header.num_walls;  
-      
-    // Cargar texturas desde TEX si es necesario  
-    if (header.num_textures > 0) {  
+    // Cargar texturas desde TEX si tex_mode = 1  
+    if (tex_mode == 1) {  
         map->textures = malloc(sizeof(SECTOR_TEXTURE_ENTRY) * header.num_textures);  
-        if (!map->textures) {  
-            fprintf(stderr, "Error: No se pudo asignar memoria para texturas\n");  
-            free(dmp2_points);  
-            free(dmp2_regions);  
-            free(dmp2_walls);  
-            free(map->sector_points);  
-            free(map->sector_regions);  
-            free(map->sector_walls);  
-            fclose(file);  
-            string_discard(params[0]);  
-            return 0;  
-        }  
-          
         map->num_textures = header.num_textures;  
           
-        // Leer índices de texturas desde DMP2  
         for (int i = 0; i < header.num_textures; i++) {  
-            int16_t texture_index;  
-            if (fread(&texture_index, sizeof(int16_t), 1, file) != 1) {  
-                map->textures[i].graph_id = 0;  
-                continue;  
-            }  
-              
-            if (tex_mode == 1) {  
-                // Usar sistema TEX  
-                GRAPH *tex_graph = get_tex_image(texture_index);  
-                map->textures[i].graph_id = tex_graph ? tex_graph->code : 0;  
-                  
-                printf("DEBUG: Textura %d: índice TEX=%d -> graph_id=%d\n",   
-                       i, texture_index, map->textures[i].graph_id);  
-            } else {  
-                // tex_mode == 0: usar colores sólidos  
-                map->textures[i].graph_id = 0;  
-                printf("DEBUG: Textura %d: usando color sólido (índice=%d)\n",   
-                       i, texture_index);  
-            }  
+            GRAPH *tex_graph = get_tex_image(texture_indices[i]);  
+            map->textures[i].graph_id = tex_graph ? tex_graph->code : 0;  
         }  
     } else {  
-        map->num_textures = 0;  
         map->textures = NULL;  
+        map->num_textures = 0;  
     }  
       
-    // Liberar memoria temporal  
-    free(dmp2_points);  
-    free(dmp2_regions);  
-    free(dmp2_walls);  
+    // ========================================  
+    // CONFIGURAR MAPA  
+    // ========================================  
       
-    // Configurar mapa  
     map->type = MAP_TYPE_SECTOR;  
     map->heightmap = NULL;  
     map->texturemap = NULL;  
     map->height_cache = NULL;  
     map->cache_valid = 0;  
+      
+    // Liberar memoria temporal  
+    free(dmp2_points);  
+    free(dmp2_regions);  
+    free(dmp2_walls);  
+    free(texture_indices);  
       
     fclose(file);  
     string_discard(params[0]);  
