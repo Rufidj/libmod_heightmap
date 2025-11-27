@@ -3466,7 +3466,7 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
     }  
       
     printf("DEBUG: DMP2 válido - versión %u, %u puntos, %u regiones, %u paredes, %u texturas\n",  
-           header.version, header.num_points, header.num_regions,   
+           header.version, header.num_points, header.num_regions,  
            header.num_walls, header.num_textures);  
       
     // ========================================  
@@ -3536,10 +3536,10 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
     }  
       
     // ========================================  
-    // LEER PAREDES DMP2 (SOLUCIÓN DEFINITIVA)  
+    // LEER PAREDES DMP2 (LECTURA MANUAL)  
     // ========================================  
       
-    printf("DEBUG: Leyendo %u paredes DMP2\n", header.num_walls);  
+    printf("DEBUG: Leyendo %u paredes DMP2 (método manual)\n", header.num_walls);  
       
     // Obtener posición actual y tamaño restante  
     long current_pos = ftell(file);  
@@ -3548,15 +3548,15 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
     fseek(file, current_pos, SEEK_SET);  
       
     long bytes_remaining = file_size - current_pos;  
-    long expected_bytes = header.num_walls * sizeof(DMP2_WALL);  
+    long expected_bytes = header.num_walls * 16;  // 16 bytes por pared  
       
     printf("DEBUG: Bytes restantes reales: %ld, esperados: %ld\n", bytes_remaining, expected_bytes);  
       
-    // SOLUCIÓN: Ajustar número de paredes a leer según bytes disponibles  
+    // Determinar cuántas paredes podemos leer  
     int walls_to_read = header.num_walls;  
     if (bytes_remaining < expected_bytes) {  
-        walls_to_read = bytes_remaining / sizeof(DMP2_WALL);  
-        printf("DEBUG: Ajustando paredes a leer de %u a %d (bytes disponibles: %ld)\n",   
+        walls_to_read = bytes_remaining / 16;  
+        printf("DEBUG: Ajustando paredes a leer de %u a %d (bytes disponibles: %ld)\n",  
                header.num_walls, walls_to_read, bytes_remaining);  
     }  
       
@@ -3570,14 +3570,39 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
         return 0;  
     }  
       
-    if (fread(dmp2_walls, sizeof(DMP2_WALL), walls_to_read, file) != walls_to_read) {  
-        fprintf(stderr, "Error: No se pudieron leer paredes DMP2\n");  
-        free(dmp2_points);  
-        free(dmp2_regions);  
-        free(dmp2_walls);  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
+    // LEER PAREDES MANUALMENTE BYTE POR BYTE  
+    for (int i = 0; i < walls_to_read; i++) {  
+        // Leer 16 bytes manualmente para cada pared  
+        uint8_t wall_data[16];  
+        if (fread(wall_data, 1, 16, file) != 16) {  
+            printf("ERROR: No se pudo leer pared %d\n", i);  
+            break;  
+        }  
+          
+        // Reconstruir estructura manualmente (little-endian)  
+        dmp2_walls[i].point1 = *(int16_t*)&wall_data[0];  
+        dmp2_walls[i].point2 = *(int16_t*)&wall_data[2];  
+        dmp2_walls[i].region1 = *(int16_t*)&wall_data[4];  
+        dmp2_walls[i].region2 = *(int16_t*)&wall_data[6];  
+        dmp2_walls[i].texture = *(int16_t*)&wall_data[8];  
+        dmp2_walls[i].flags = *(int16_t*)&wall_data[10];  
+        dmp2_walls[i].x_offset = *(uint16_t*)&wall_data[12];  
+        dmp2_walls[i].y_offset = *(uint16_t*)&wall_data[14];  
+          
+        printf("DEBUG: Pared %d leída manualmente - texture=%d, point1=%d, point2=%d\n",  
+               i, dmp2_walls[i].texture, dmp2_walls[i].point1, dmp2_walls[i].point2);  
+    }  
+      
+    // VERIFICACIÓN INMEDIATA DE DATOS  
+    printf("DEBUG: Verificando índices de textura...\n");  
+    for (int i = 0; i < walls_to_read; i++) {  
+        if (dmp2_walls[i].texture < 1 || dmp2_walls[i].texture > 999) {  
+            printf("ERROR: Pared %d tiene texture inválido: %d - CORRIGIENDO a 1\n",   
+                   i, dmp2_walls[i].texture);  
+            dmp2_walls[i].texture = 1; // Forzar valor válido  
+        } else {  
+            printf("DEBUG: Pared %d texture OK: %d\n", i, dmp2_walls[i].texture);  
+        }  
     }  
       
     printf("DEBUG: Paredes DMP2 leídas correctamente: %d\n", walls_to_read);  
@@ -3651,6 +3676,9 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
         map->sector_walls[i].flags = dmp2_walls[i].flags;  
         map->sector_walls[i].x_offset = dmp2_walls[i].x_offset;  
         map->sector_walls[i].y_offset = dmp2_walls[i].y_offset;  
+          
+        printf("DEBUG: Convertida pared %d a estructura interna - texture=%d\n",   
+               i, map->sector_walls[i].texture);  
     }  
       
     // Cargar texturas desde TEX si tex_mode = 1  
@@ -3686,7 +3714,7 @@ int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params) {
     fclose(file);  
     string_discard(params[0]);  
       
-    printf("DEBUG: Mapa DMP2 cargado exitosamente\n");  
+    printf("DEBUG: Mapa DMP2 cargado exitosamente con lectura manual\n");  
     return map->id;  
 }
 
@@ -3714,10 +3742,7 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
     int64_t render_width = params[1];  
     int64_t render_height = params[2];  
       
-    // ========================================  
-    // VALIDACIÓN Y BÚSQUEDA DE HEIGHTMAP  
-    // ========================================  
-      
+    // Validación básica  
     HEIGHTMAP *hm = NULL;  
     for (int i = 0; i < MAX_HEIGHTMAPS; i++) {  
         if (heightmaps[i].id == hm_id) {  
@@ -3727,40 +3752,36 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
     }  
       
     if (!hm || hm->type != MAP_TYPE_SECTOR) {  
-        fprintf(stderr, "Error: Mapa inválido o no es tipo SECTOR (DMP2)\n");  
         return 0;  
     }  
       
     if (!hm->sector_points || !hm->sector_regions || !hm->sector_walls) {  
-        fprintf(stderr, "Error: Datos DMP2 no inicializados\n");  
         return 0;  
     }  
       
-    // ========================================  
-    // CREAR BUFFER DE RENDERIZADO  
-    // ========================================  
-      
-    static GRAPH *sector_render_buffer = NULL;  
-    static int64_t last_width = 0;  
-    static int64_t last_height = 0;  
-      
-    if (!sector_render_buffer || last_width != render_width || last_height != render_height) {  
-        if (sector_render_buffer) {  
-            bitmap_destroy(sector_render_buffer);  
-        }  
-        sector_render_buffer = bitmap_new_syslib(render_width, render_height);  
-        if (!sector_render_buffer) {  
-            fprintf(stderr, "Error: No se pudo crear buffer de renderizado\n");  
-            return 0;  
-        }  
-        last_width = render_width;  
-        last_height = render_height;  
+    // Validación de seguridad adicional  
+    if (hm->num_sector_walls <= 0 || hm->num_sector_points <= 0 || hm->num_sector_regions <= 0) {  
+        return 0;  
     }  
       
-    // ========================================  
-    // INICIALIZAR DEPTH BUFFER  
-    // ========================================  
+    // Buffer de renderizado  
+    static GRAPH *sector_render_buffer = NULL;  
+    if (!sector_render_buffer) {  
+        sector_render_buffer = bitmap_new_syslib(render_width, render_height);  
+        if (!sector_render_buffer) return 0;  
+    }  
       
+    // Limpiar con cielo  
+    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, 135, 206, 235, 255);  
+    gr_clear_as(sector_render_buffer, sky_color);  
+      
+    // Cámara y raycasting  
+    float cos_cam = cosf(camera.angle);  
+    float sin_cam = sinf(camera.angle);  
+    float fov = 0.8f;  // ~45.8 grados  
+    int half_height = render_height / 2;  
+      
+    // Depth buffer  
     static float *depth_buffer = NULL;  
     static int depth_buffer_size = 0;  
       
@@ -3769,73 +3790,40 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
         depth_buffer = malloc(render_width * render_height * sizeof(float));  
         depth_buffer_size = render_width * render_height;  
           
-        if (!depth_buffer) {  
-            fprintf(stderr, "Error: No se pudo crear depth buffer\n");  
-            return 0;  
-        }  
+        if (!depth_buffer) return 0;  
     }  
       
-    // Inicializar depth buffer con distancia máxima  
+    // Inicializar depth buffer  
     for (int i = 0; i < render_width * render_height; i++) {  
         depth_buffer[i] = 999999.0f;  
     }  
       
-    // ========================================  
-    // LIMPIAR BUFFER CON COLOR DE CIELO  
-    // ========================================  
-      
-    uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, 255);  
-    gr_clear_as(sector_render_buffer, sky_color);  
-      
-    // ========================================  
-    // PRECALCULAR VALORES DE CÁMARA  
-    // ========================================  
-      
-    float cos_cam = cosf(camera.angle);  
-    float sin_cam = sinf(camera.angle);  
-    float fov = 0.66f;  
-    float projection_scale = (render_width / 2.0f) / tanf(fov / 2.0f);  
-    int half_height = render_height / 2;  
-      
-    // ========================================  
-    // DEBUG: MOSTRAR INFORMACIÓN DMP2  
-    // ========================================  
-      
-    printf("DEBUG: Renderizando DMP2 - Puntos: %d, Regiones: %d, Paredes: %d\n",   
-           hm->num_sector_points, hm->num_sector_regions, hm->num_sector_walls);  
-      
-    // ========================================  
-    // RENDERIZADO POR COLUMNAS CON RAYCASTING  
-    // ========================================  
-      
+    // Renderizado por columnas  
     for (int screen_x = 0; screen_x < render_width; screen_x++) {  
-        // Calcular dirección del rayo para esta columna  
+        // Calcular dirección del rayo  
         float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;  
-        float ray_dir_x = cos_cam + camera.plane_x * camera_x;  
-        float ray_dir_y = sin_cam + camera.plane_y * camera_x;  
+        float angle_offset = (camera_x * fov) / 2.0f;  
+        float ray_angle = camera.angle + angle_offset;  
+        float ray_dir_x = cosf(ray_angle);  
+        float ray_dir_y = sinf(ray_angle);  
           
-        // Normalizar dirección del rayo  
-        float ray_length = sqrtf(ray_dir_x * ray_dir_x + ray_dir_y * ray_dir_y);  
-        ray_dir_x /= ray_length;  
-        ray_dir_y /= ray_length;  
-          
-        // ========================================  
-        // ENCONTRAR PARED MÁS CERCANA (RAYCASTING)  
-        // ========================================  
-          
+        // Encontrar pared más cercana  
         float closest_distance = 999999.0f;  
         int closest_wall_idx = -1;  
         float hit_x = 0, hit_y = 0;  
           
-        // Probar intersección con todas las paredes  
         for (int wall_idx = 0; wall_idx < hm->num_sector_walls; wall_idx++) {  
             struct SECTOR_Wall *wall = &hm->sector_walls[wall_idx];  
               
-            // Obtener puntos de la pared  
+            // Validar índices de puntos  
+            if (wall->point1 < 0 || wall->point1 >= hm->num_sector_points ||  
+                wall->point2 < 0 || wall->point2 >= hm->num_sector_points) {  
+                continue;  
+            }  
+              
             struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
             struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
               
-            // Verificar intersección línea-línea  
             float current_hit_x, current_hit_y;  
             if (line_line_intersection(camera.x, camera.y,  
                                       camera.x + ray_dir_x * 1000.0f,  
@@ -3843,7 +3831,6 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
                                       p1->x, p1->y, p2->x, p2->y,  
                                       &current_hit_x, &current_hit_y)) {  
                   
-                // Calcular distancia a punto de impacto  
                 float dist_x = current_hit_x - camera.x;  
                 float dist_y = current_hit_y - camera.y;  
                 float distance = sqrtf(dist_x * dist_x + dist_y * dist_y);  
@@ -3857,19 +3844,22 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
             }  
         }  
           
-        // ========================================  
-        // RENDERIZAR PARED ENCONTRADA  
-        // ========================================  
-          
+        // Renderizar pared encontrada  
         if (closest_wall_idx >= 0) {  
             struct SECTOR_Wall *wall = &hm->sector_walls[closest_wall_idx];  
+              
+            // Validar índice de región  
+            if (wall->region1 < 0 || wall->region1 >= hm->num_sector_regions) {  
+                continue;  
+            }  
+              
             struct SECTOR_Region *region = &hm->sector_regions[wall->region1];  
               
-            // Calcular altura proyectada de la pared  
-            float wall_top_y = half_height - ((region->ceiling_height - camera.z) / closest_distance) * projection_scale;  
-            float wall_bottom_y = half_height - ((region->floor_height - camera.z) / closest_distance) * projection_scale;  
+            // Calcular altura proyectada  
+            float wall_top_y = half_height - ((region->ceiling_height - camera.z) / closest_distance) * 300.0f;  
+            float wall_bottom_y = half_height - ((region->floor_height - camera.z) / closest_distance) * 300.0f;  
               
-            // Aplicar pitch de cámara  
+            // Aplicar pitch  
             wall_top_y += camera.pitch * 40.0f;  
             wall_bottom_y += camera.pitch * 40.0f;  
               
@@ -3880,78 +3870,80 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
             if (y_start < 0) y_start = 0;  
             if (y_end >= render_height) y_end = render_height - 1;  
               
-            // Calcular fog  
-            float fog = 1.0f - (closest_distance / max_render_distance);  
-            if (fog < 0.3f) fog = 0.3f;  
+            // Obtener textura con validación  
+            GRAPH *wall_texture = NULL;  
+            if (wall->texture > 0 && wall->texture <= 999) {  
+                wall_texture = get_tex_image(wall->texture);  
+            }  
               
-            // Color de pared basado en textura (sólido por ahora)  
-            uint32_t wall_color = SDL_MapRGBA(gPixelFormat,   
-                (uint8_t)(120 * fog),   
-                (uint8_t)(100 * fog),   
-                (uint8_t)(80 * fog), 255);  
+            // Calcular coordenadas UV si hay textura  
+            float u_coord = 0.0f;  
+            if (wall_texture && wall->point1 >= 0 && wall->point2 >= 0 &&  
+                wall->point1 < hm->num_sector_points && wall->point2 < hm->num_sector_points) {  
+                  
+                struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
+                struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
+                  
+                float wall_length = sqrtf((p2->x - p1->x) * (p2->x - p1->x) + (p2->y - p1->y) * (p2->y - p1->y));  
+                if (wall_length > 0.001f) {  
+                    float hit_distance_along_wall = sqrtf((hit_x - p1->x) * (hit_x - p1->x) + (hit_y - p1->y) * (hit_y - p1->y));  
+                    u_coord = hit_distance_along_wall / wall_length;  
+                    // CLAMP en lugar de wrap  
+                    u_coord = (u_coord < 0.0f) ? 0.0f : (u_coord > 1.0f) ? 1.0f : u_coord;  
+                }  
+            }  
               
-            // Renderizar columna de pared con depth testing  
+            // Renderizar columna  
             for (int y = y_start; y <= y_end; y++) {  
                 int depth_index = y * render_width + screen_x;  
                   
                 if (closest_distance < depth_buffer[depth_index]) {  
-                    gr_put_pixel(sector_render_buffer, screen_x, y, wall_color);  
+                    uint32_t pixel_color;  
+                      
+                    if (wall_texture && wall_texture->width > 0 && wall_texture->height > 0) {  
+                        // Calcular V coordinate  
+                        float v_coord = (float)(y - y_start) / (float)(y_end - y_start + 1);  
+                        v_coord = (v_coord < 0.0f) ? 0.0f : (v_coord > 1.0f) ? 1.0f : v_coord;  
+                          
+                        // Mapear UV a coordenadas de textura con bounds checking  
+                        int tex_x = (int)(u_coord * (wall_texture->width - 1));  
+                        int tex_y = (int)(v_coord * (wall_texture->height - 1));  
+                          
+                        tex_x = (tex_x < 0) ? 0 : (tex_x >= wall_texture->width) ? wall_texture->width - 1 : tex_x;  
+                        tex_y = (tex_y < 0) ? 0 : (tex_y >= wall_texture->height) ? wall_texture->height - 1 : tex_y;  
+                          
+                        uint32_t tex_color = gr_get_pixel(wall_texture, tex_x, tex_y);  
+                          
+                        // Fog reducido (mínimo 0.5 en lugar de 0.3)  
+                        float fog = 1.0f - (closest_distance / 800.0f);  
+                        if (fog < 0.7f) fog = 0.7f;  
+                          
+                        // Aplicar fog más suave  
+                        uint8_t r = ((tex_color >> 16) & 0xFF) * fog;  
+                        uint8_t g = ((tex_color >> 8) & 0xFF) * fog;  
+                        uint8_t b = (tex_color & 0xFF) * fog;  
+                        pixel_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
+                    } else {  
+                        // Color sólido fallback  
+                        float fog = 1.0f - (closest_distance / 800.0f);  
+                        if (fog < 0.5f) fog = 0.5f;  
+                        pixel_color = SDL_MapRGBA(gPixelFormat,  
+                            (uint8_t)(120 * fog),  
+                            (uint8_t)(100 * fog),  
+                            (uint8_t)(80 * fog), 255);  
+                    }  
+                      
+                    gr_put_pixel(sector_render_buffer, screen_x, y, pixel_color);  
                     depth_buffer[depth_index] = closest_distance;  
                 }  
             }  
         }  
     }  
       
-    // ========================================  
-    // RENDERIZADO DE SUELO Y TECHO  
-    // ========================================  
-      
-    for (int screen_y = half_height; screen_y < render_height; screen_y++) {  
-        // Calcular distancia del rayo al suelo para esta fila Y  
-        float row_distance = (camera.z * 300.0f) / (float)(screen_y - half_height);  
-          
-        // Aplicar pitch de cámara  
-        if (fabsf(cosf(camera.pitch)) > 0.001f) {  
-            row_distance /= cosf(camera.pitch);  
-        }  
-          
-        for (int screen_x = 0; screen_x < render_width; screen_x++) {  
-            // Calcular dirección del rayo  
-            float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;  
-            float ray_dir_x = cos_cam + camera.plane_x * camera_x;  
-            float ray_dir_y = sin_cam + camera.plane_y * camera_x;  
-              
-            // Calcular punto de intersección en el mundo  
-            float floor_x = camera.x + ray_dir_x * row_distance;  
-            float floor_y = camera.y + ray_dir_y * row_distance;  
-              
-            // Verificar depth buffer  
-            int depth_index = screen_y * render_width + screen_x;  
-            if (row_distance >= depth_buffer[depth_index]) {  
-                continue; // Ya hay algo más cerca  
-            }  
-              
-            // Color de suelo (sólido por ahora)  
-            float fog = 1.0f - (row_distance / max_render_distance);  
-            if (fog < 0.3f) fog = 0.3f;  
-              
-            uint32_t floor_color = SDL_MapRGBA(gPixelFormat,  
-                (uint8_t)(80 * fog),  
-                (uint8_t)(80 * fog),  
-                (uint8_t)(80 * fog), 255);  
-              
-            gr_put_pixel(sector_render_buffer, screen_x, screen_y, floor_color);  
-            depth_buffer[depth_index] = row_distance;  
-        }  
-    }  
-      
-    // ========================================  
-    // ACTUALIZAR BUFFER GLOBAL Y RETORNAR  
-    // ========================================  
-      
     render_buffer = sector_render_buffer;  
     return render_buffer ? render_buffer->code : 0;  
 }
+
 
   
 // Helper: Point in region test  
@@ -4114,36 +4106,16 @@ static TEX_IMAGE tex_images[1000]; // índices 1-999
   
 int64_t load_tex_file(INSTANCE *my, int64_t *params) {  
     const char *filename = string_get(params[0]);  
-      
-    if (!filename) {  
-        printf("Error: string_get() retornó NULL\n");  
-        return 0;  
-    }  
-      
-    printf("DEBUG: Intentando cargar TEX: %s\n", filename);  
+    int64_t color_space_mode = params[1]; // 0 = auto-detect, 1 = sRGB, 2 = linear  
       
     FILE *file = fopen(filename, "rb");  
     if (!file) {  
         printf("Error: No se pudo abrir archivo TEX: %s\n", filename);  
-        printf("Verifica que el archivo exista y tenga permisos de lectura\n");  
         string_discard(params[0]);  
         return 0;  
     }  
       
-    // Verificar tamaño del archivo  
-    fseek(file, 0, SEEK_END);  
-    long file_size = ftell(file);  
-    fseek(file, 0, SEEK_SET);  
-      
-    printf("DEBUG: Archivo TEX abierto (tamaño: %ld bytes)\n", file_size);  
-      
-    if (file_size < sizeof(TEX_HEADER)) {  
-        printf("Error: Archivo TEX demasiado pequeño (%ld bytes)\n", file_size);  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
-      
+    // Leer header TEX  
     TEX_HEADER header;  
     if (fread(&header, sizeof(TEX_HEADER), 1, file) != 1) {  
         printf("Error: No se pudo leer header TEX\n");  
@@ -4152,22 +4124,25 @@ int64_t load_tex_file(INSTANCE *my, int64_t *params) {
         return 0;  
     }  
       
-    // Verificar magic number con depuración  
-    printf("DEBUG: Magic leído: ");  
-    for (int i = 0; i < 4; i++) {  
-        printf("\\x%02x", (unsigned char)header.magic[i]);  
-    }  
-    printf("\n");  
-      
-    if (memcmp(header.magic, "TEX\0", 4) != 0) {  
-        printf("Error: Magic number incorrecto\n");  
+    // Validar magic number  
+    if (memcmp(header.magic, "TEX", 3) != 0) {  
+        printf("Error: Archivo no es formato TEX válido\n");  
         fclose(file);  
         string_discard(params[0]);  
         return 0;  
     }  
       
-    printf("DEBUG: TEX válido - versión %d, %d imágenes\n",   
-           header.version, header.num_images);  
+    printf("DEBUG: TEX válido - versión %d, %d imágenes\n", header.version, header.num_images);  
+      
+    // Detectar orden de canales RGB/BDR del formato de píxeles  
+    int is_bgr_format = 0;  
+    if (gPixelFormat->Rmask > gPixelFormat->Bmask) {  
+        printf("DEBUG: Formato de píxeles detectado: RGB\n");  
+        is_bgr_format = 0;  
+    } else {  
+        printf("DEBUG: Formato de píxeles detectado: BGR (corrigiendo)\n");  
+        is_bgr_format = 1;  
+    }  
       
     // Limpiar imágenes anteriores  
     for (int i = 1; i < 1000; i++) {  
@@ -4203,7 +4178,7 @@ int64_t load_tex_file(INSTANCE *my, int64_t *params) {
         }  
           
         if (fread(temp_data, 1, data_size, file) == data_size) {  
-            // Convertir datos RGBA al formato de BennuGD2  
+            // Convertir datos RGBA al formato de BennuGD2 con corrección de canales  
             for (int y = 0; y < entry.height; y++) {  
                 for (int x = 0; x < entry.width; x++) {  
                     int pixel_index = (y * entry.width + x) * 4;  
@@ -4212,14 +4187,50 @@ int64_t load_tex_file(INSTANCE *my, int64_t *params) {
                     uint8_t b = temp_data[pixel_index + 2];  
                     uint8_t a = temp_data[pixel_index + 3];  
                       
-                    uint32_t color = SDL_MapRGBA(gPixelFormat, r, g, b, a);  
+                    // CORRECCIÓN DE CANALES: Ajustar RGB/BGR según el formato  
+                    uint8_t final_r, final_g, final_b;  
+                    if (is_bgr_format) {  
+                        // Formato BGR: intercambiar R y B  
+                        final_r = b;  
+                        final_g = g;  
+                        final_b = r;  
+                    } else {  
+                        // Formato RGB: mantener como está  
+                        final_r = r;  
+                        final_g = g;  
+                        final_b = b;  
+                    }  
+                      
+                    // Aplicar corrección de espacio de color si es necesario  
+                    if (color_space_mode == 1) {  
+                        // Modo sRGB: mantener valores originales (ya están en sRGB)  
+                        // No aplicar conversión gamma para mantener colores originales  
+                    } else if (color_space_mode == 2) {  
+                        // Modo linear: convertir sRGB a linear (opcional, usualmente no necesario)  
+                        float r_linear = final_r / 255.0f;  
+                        float g_linear = final_g / 255.0f;  
+                        float b_linear = final_b / 255.0f;  
+                          
+                        if (r_linear <= 0.04045f) r_linear /= 12.92f;  
+                        else r_linear = powf((r_linear + 0.055f) / 1.055f, 2.4f);  
+                        if (g_linear <= 0.04045f) g_linear /= 12.92f;  
+                        else g_linear = powf((g_linear + 0.055f) / 1.055f, 2.4f);  
+                        if (b_linear <= 0.04045f) b_linear /= 12.92f;  
+                        else b_linear = powf((b_linear + 0.055f) / 1.055f, 2.4f);  
+                          
+                        final_r = (uint8_t)(r_linear * 255.0f);  
+                        final_g = (uint8_t)(g_linear * 255.0f);  
+                        final_b = (uint8_t)(b_linear * 255.0f);  
+                    }  
+                      
+                    uint32_t color = SDL_MapRGBA(gPixelFormat, final_r, final_g, final_b, a);  
                     gr_put_pixel(graph, x, y, color);  
                 }  
             }  
               
             tex_images[entry.index].graph = graph;  
             tex_images[entry.index].loaded = 1;  
-            printf("DEBUG: Textura %d cargada correctamente\n", entry.index);  
+            printf("DEBUG: Textura %d cargada (canales corregidos)\n", entry.index);  
         } else {  
             printf("Error: No se pudieron leer datos de imagen %d\n", i);  
             bitmap_destroy(graph);  
@@ -4233,11 +4244,18 @@ int64_t load_tex_file(INSTANCE *my, int64_t *params) {
     string_discard(params[0]);  
     return 1;  
 }
+
 GRAPH *get_tex_image(int index) {  
-    if (index < 1 || index > 999) return NULL;  
-    if (!tex_images[index].loaded) return NULL;  
+      
+    if (index < 1 || index >= 1000) {   
+        return NULL;  
+    }  
+    if (!tex_images[index].loaded) {  
+        
+        return NULL;  
+    }   
     return tex_images[index].graph;  
-}  
+}
   
 void cleanup_tex_images() {  
     for (int i = 1; i < 1000; i++) {  
@@ -4248,5 +4266,44 @@ void cleanup_tex_images() {
     }  
 }
 
+int64_t libmod_heightmap_init_camera_in_sector(INSTANCE *my, int64_t *params) {  
+    int64_t hm_id = params[0];  
+      
+    HEIGHTMAP *hm = find_heightmap_by_id(hm_id);  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) {  
+        return 0;  
+    }  
+      
+    // Colocar cámara en el centro del sector (coordenadas del DMP2)  
+    camera.x = 0.0f;    // Centro de la sala (-512 a 512)  
+    camera.y = 0.0f;    // Centro de la sala (-512 a 512)  
+    camera.z = 75.0f;   // Altura media (entre floor=0 y ceiling=150)  
+      
+    camera.angle = 0.0f;  
+    camera.pitch = 0.0f;  
+    camera.fov = DEFAULT_FOV;  
+      
+    printf("DEBUG: Cámara inicializada en sector DMP2: (%.2f, %.2f, %.2f)\n",   
+           camera.x, camera.y, camera.z);  
+      
+    return 1;  
+}
+
+void clamp_camera_to_sector(HEIGHTMAP *hm) {  
+    if (!hm || hm->type != MAP_TYPE_SECTOR) return;  
+      
+    // Para el DMP2 de prueba, los límites son -512 a 512  
+    float min_bound = -500.0f;  
+    float max_bound = 500.0f;  
+      
+    if (camera.x < min_bound) camera.x = min_bound;  
+    if (camera.x > max_bound) camera.x = max_bound;  
+    if (camera.y < min_bound) camera.y = min_bound;  
+    if (camera.y > max_bound) camera.y = max_bound;  
+      
+    // Mantener Z dentro de altura de sala  
+    if (camera.z < 10.0f) camera.z = 10.0f;  
+    if (camera.z > 140.0f) camera.z = 140.0f;  
+}
 
 #include "libmod_heightmap_exports.h"

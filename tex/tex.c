@@ -1,4 +1,4 @@
-// tex_creator_flexible.c - Carga cualquier PNG de la carpeta  
+// tex_creator_simple.c - Versión sin conversión gamma  
 #include <stdio.h>  
 #include <stdlib.h>  
 #include <string.h>  
@@ -114,7 +114,7 @@ int scan_png_files(const char *folder, char ***png_files, int **indices) {
             }  
               
             (*png_files)[count] = full_path;  
-            (*indices)[count] = count + 1; // Índices automáticos: 1, 2, 3...  
+            (*indices)[count] = count + 1;  
               
             printf("Encontrado PNG: %s -> índice %d\n", entry->d_name, count + 1);  
             count++;  
@@ -132,7 +132,6 @@ int create_tex_from_folder(const char *tex_filename, const char *folder) {
         return 0;  
     }  
       
-    // Escanear carpeta en busca de PNGs  
     char **png_files = NULL;  
     int *indices = NULL;  
     int num_files = scan_png_files(folder, &png_files, &indices);  
@@ -143,7 +142,6 @@ int create_tex_from_folder(const char *tex_filename, const char *folder) {
         return 0;  
     }  
       
-    // Escribir header  
     TEX_HEADER header;  
     memcpy(header.magic, "TEX\0", 4);  
     header.version = 1;  
@@ -152,23 +150,19 @@ int create_tex_from_folder(const char *tex_filename, const char *folder) {
       
     fwrite(&header, sizeof(TEX_HEADER), 1, tex_file);  
       
-    // Procesar cada PNG encontrado  
     for (int i = 0; i < num_files; i++) {  
         uint8_t *rgba_data = NULL;  
         int width, height;  
           
         if (load_png_to_rgba(png_files[i], &rgba_data, &width, &height)) {  
-            // Escribir entry  
             TEX_ENTRY entry;  
             entry.index = indices[i];  
             entry.width = width;  
             entry.height = height;  
-            entry.format = 1; // RGBA  
+            entry.format = 1;  
             memset(entry.reserved, 0, 250);  
               
             fwrite(&entry, sizeof(TEX_ENTRY), 1, tex_file);  
-              
-            // Escribir datos RGBA  
             fwrite(rgba_data, 1, width * height * 4, tex_file);  
               
             printf("Añadida imagen %d: %s (%dx%d)\n", indices[i], png_files[i], width, height);  
@@ -188,17 +182,13 @@ int create_tex_from_folder(const char *tex_filename, const char *folder) {
 }  
   
 int main() {  
-    printf("=== Creador de Archivos TEX (Cualquier PNG) ===\n");  
+    printf("=== Creador de Archivos TEX (Simple) ===\n");  
       
-    // Crear TEX desde cualquier PNG en la carpeta assets/  
     if (create_tex_from_folder("assets/textures.tex", "assets")) {  
         printf("\n¡Éxito! Los índices se asignaron automáticamente:\n");  
         printf("  - Primer PNG encontrado -> índice 1\n");  
         printf("  - Segundo PNG encontrado -> índice 2\n");  
         printf("  - etc...\n");  
-        printf("\nUsa en BennuGD2:\n");  
-        printf("  LOAD_TEX_FILE(\"assets/textures.tex\");\n");  
-        printf("  map_id = HEIGHTMAP_LOAD_DMP2(\"test_room_1024.dmp2\", 1);\n");  
         return 0;  
     }  
       
