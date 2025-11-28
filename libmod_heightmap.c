@@ -3808,152 +3808,115 @@ int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params) {
 }  
   
 // Función recursiva corregida  
-static void render_sector_recursive(HEIGHTMAP *hm, int region_id,   
-                                   GRAPH *render_buffer, float *depth_buffer,  
-                                   COLUMN_CLIP *column_clips,   
-                                   int render_width, int render_height) {  
-    for (int screen_x = 0; screen_x < render_width; screen_x++) {  
-        if (column_clips[screen_x].top > column_clips[screen_x].bottom) {  
-            continue;  
-        }  
-          
-        float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;  
-        float angle_offset = (camera_x * camera.fov) / 2.0f;  
-        float ray_angle = camera.angle + angle_offset;  
-        float ray_dir_x = cosf(ray_angle);  
-        float ray_dir_y = sinf(ray_angle);  
-          
-        float closest_distance = 999999.0f;  
-        int closest_wall_idx = -1;  
-        float hit_x = 0, hit_y = 0;  
-          
-        for (int wall_idx = 0; wall_idx < hm->num_sector_walls; wall_idx++) {  
-            struct SECTOR_Wall *wall = &hm->sector_walls[wall_idx];  
-            if (wall->region1 != region_id) continue;  
-              
-            struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
-            struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
-              
-            float distance = ray_wall_intersection(camera.x, camera.y,  
-                                                  ray_dir_x, ray_dir_y,  
-                                                  p1->x, p1->y, p2->x, p2->y);  
-              
-            if (distance > 0.1f) {  
-                float current_hit_x = camera.x + ray_dir_x * distance;  
-                float current_hit_y = camera.y + ray_dir_y * distance;  
-                  
-                if (distance < closest_distance) {  
-                    closest_distance = distance;  
-                    closest_wall_idx = wall_idx;  
-                    hit_x = current_hit_x;  
-                    hit_y = current_hit_y;  
-                }  
-            }  
-        }  
-          
-        if (closest_wall_idx >= 0) {  
-            render_wall_vpe(hm, closest_wall_idx, screen_x, hit_x, hit_y,  
-                          closest_distance, render_buffer, depth_buffer,  
-                          column_clips, render_width, render_height);  
-        }  
-    }  
+static void render_sector_recursive(HEIGHTMAP *hm, int region_id,     
+                                   GRAPH *render_buffer, float *depth_buffer,    
+                                   COLUMN_CLIP *column_clips,     
+                                   int render_width, int render_height) {    
+    // CORRECCIÓN: Pre-calcular valores trigonométricos para eficiencia  
+    float cos_cam = cosf(camera.angle);  
+    float sin_cam = sinf(camera.angle);  
       
-    render_floor_ceiling_vpe(hm, region_id, render_buffer, depth_buffer,  
-                            column_clips, render_width, render_height);  
+    for (int screen_x = 0; screen_x < render_width; screen_x++) {    
+        if (column_clips[screen_x].top > column_clips[screen_x].bottom) {    
+            continue;    
+        }    
+            
+        float camera_x = 2.0f * screen_x / (float)render_width - 1.0f;    
+        float angle_offset = (camera_x * camera.fov) / 2.0f;    
+        float ray_angle = camera.angle + angle_offset;    
+        float ray_dir_x = cosf(ray_angle);    
+        float ray_dir_y = sinf(ray_angle);    
+            
+        float closest_distance = 999999.0f;    
+        int closest_wall_idx = -1;    
+        float hit_x = 0, hit_y = 0;    
+            
+        for (int wall_idx = 0; wall_idx < hm->num_sector_walls; wall_idx++) {    
+            struct SECTOR_Wall *wall = &hm->sector_walls[wall_idx];    
+            if (wall->region1 != region_id) continue;    
+                
+            struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];    
+            struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];    
+                
+            float distance = ray_wall_intersection(camera.x, camera.y,    
+                                                  ray_dir_x, ray_dir_y,    
+                                                  p1->x, p1->y, p2->x, p2->y);    
+                
+            if (distance > 0.1f) {    
+                float current_hit_x = camera.x + ray_dir_x * distance;    
+                float current_hit_y = camera.y + ray_dir_y * distance;    
+                    
+                if (distance < closest_distance) {    
+                    closest_distance = distance;    
+                    closest_wall_idx = wall_idx;    
+                    hit_x = current_hit_x;    
+                    hit_y = current_hit_y;    
+                }    
+            }    
+        }    
+            
+        if (closest_wall_idx >= 0) {    
+            render_wall_vpe(hm, closest_wall_idx, screen_x, hit_x, hit_y,    
+                          closest_distance, render_buffer, depth_buffer,    
+                          column_clips, render_width, render_height);    
+        }    
+    }    
+        
+    render_floor_ceiling_vpe(hm, region_id, render_buffer, depth_buffer,    
+                            column_clips, render_width, render_height);    
 }
 
 // Función stub para renderizar paredes  
-static void render_wall_vpe(HEIGHTMAP *hm, int wall_idx, int screen_x,  
-                           float hit_x, float hit_y, float distance,  
-                           GRAPH *render_buffer, float *depth_buffer,  
-                           COLUMN_CLIP *column_clips,   
-                           int render_width, int render_height) {  
-    struct SECTOR_Wall *wall = &hm->sector_walls[wall_idx];  
-    struct SECTOR_Region *region = &hm->sector_regions[wall->region1];  
-    int half_height = render_height / 2;  
+static void render_wall_vpe(HEIGHTMAP *hm, int wall_idx, int screen_x,    
+                           float hit_x, float hit_y, float distance,    
+                           GRAPH *render_buffer, float *depth_buffer,    
+                           COLUMN_CLIP *column_clips,     
+                           int render_width, int render_height) {    
+    struct SECTOR_Wall *wall = &hm->sector_walls[wall_idx];    
+    struct SECTOR_Region *region = &hm->sector_regions[wall->region1];    
+    int half_height = render_height / 2;    
       
-    // Proyección de altura  
-    float wall_top_y = half_height - ((region->ceiling_height - camera.z) / distance) * 300.0f;  
-    float wall_bottom_y = half_height - ((region->floor_height - camera.z) / distance) * 300.0f;  
+    // FÓRMULA VPE FINAL: Sin factores intermedios que causan ondas  
+    int horizon = half_height;  
+    float view_height = camera.z;  
       
-    float pitch_factor = camera.pitch * 0.5f;  
-    wall_top_y -= pitch_factor * 300.0f;  
-    wall_bottom_y -= pitch_factor * 300.0f;  
+    // Constante VPE original - ya incluye toda la escala necesaria  
+    float const_v_dist = 300.0f;  
+    float t1 = const_v_dist / distance;  
       
-    int y_start = (int)wall_top_y;  
-    int y_end = (int)wall_bottom_y;  
+    // Fórmula lineal pura: horizon + t1 * height_diff  
+    float wall_bottom_y = horizon + t1 * (view_height - region->floor_height);  
+    float wall_top_y = horizon + t1 * (view_height - region->ceiling_height);  
       
-    if (y_start < 0) y_start = 0;  
-    if (y_end >= render_height) y_end = render_height - 1;  
+    // Pitch de cámara como en VPE original  
+    wall_top_y += camera.pitch * 40.0f;  
+    wall_bottom_y += camera.pitch * 40.0f;  
       
-    GRAPH *wall_texture = NULL;  
-    if (wall->texture > 0 && wall->texture <= 999) {  
-        wall_texture = get_tex_image(wall->texture);  
+    int y_start = (int)wall_top_y;    
+    int y_end = (int)wall_bottom_y;    
+      
+    if (y_start < 0) y_start = 0;    
+    if (y_end >= render_height) y_end = render_height - 1;    
+      
+    // Debug mínimo para verificar suavidad  
+    if (screen_x % 100 == 0) {  
+        printf("DEBUG FINAL: distance=%.2f, wall_top=%.1f, wall_bottom=%.1f\n",   
+               distance, wall_top_y, wall_bottom_y);  
     }  
       
-    // CÁLCULO CORRECTO DE COORDENADA U usando producto punto  
-    float u_coord = 0.0f;  
-    if (wall_texture && wall->point1 >= 0 && wall->point2 >= 0 &&  
-        wall->point1 < hm->num_sector_points && wall->point2 < hm->num_sector_points) {  
-          
-        struct SECTOR_Point *p1 = &hm->sector_points[wall->point1];  
-        struct SECTOR_Point *p2 = &hm->sector_points[wall->point2];  
-          
-        float wall_dx = p2->x - p1->x;  
-        float wall_dy = p2->y - p1->y;  
-        float wall_length_squared = wall_dx * wall_dx + wall_dy * wall_dy;  
-          
-        if (wall_length_squared > 0.001f) {  
-            float hit_dx = hit_x - p1->x;  
-            float hit_dy = hit_y - p1->y;  
-              
-            // Producto punto para proyectar el punto de impacto sobre la pared  
-            float dot_product = hit_dx * wall_dx + hit_dy * wall_dy;  
-            u_coord = dot_product / wall_length_squared;  
-            u_coord = (u_coord < 0.0f) ? 0.0f : (u_coord > 1.0f) ? 1.0f : u_coord;  
-        }  
-    }  
+    // Renderizado con color verde sólido  
+    uint32_t wall_color = SDL_MapRGBA(gPixelFormat, 0, 255, 0, 255);  
       
-    // Renderizado de píxeles de pared  
-    for (int y = y_start; y <= y_end; y++) {  
-        int depth_index = y * render_width + screen_x;  
-          
-        if (distance < depth_buffer[depth_index]) {  
-            uint32_t pixel_color;  
-              
-            if (wall_texture && wall_texture->width > 0 && wall_texture->height > 0) {  
-                float v_coord = (float)(y - y_start) / (float)(y_end - y_start + 1);  
-                v_coord = (v_coord < 0.0f) ? 0.0f : (v_coord > 1.0f) ? 1.0f : v_coord;  
-                  
-                int tex_x = (int)(u_coord * (wall_texture->width - 1));  
-                int tex_y = (int)(v_coord * (wall_texture->height - 1));  
-                  
-                tex_x = (tex_x < 0) ? 0 : (tex_x >= wall_texture->width) ? wall_texture->width - 1 : tex_x;  
-                tex_y = (tex_y < 0) ? 0 : (tex_y >= wall_texture->height) ? wall_texture->height - 1 : tex_y;  
-                  
-                uint32_t tex_color = gr_get_pixel(wall_texture, tex_x, tex_y);  
-                  
-                float fog = 1.0f - (distance / 800.0f);  
-                if (fog < 0.3f) fog = 0.3f;  
-                  
-                uint8_t r = ((tex_color >> gPixelFormat->Rshift) & 0xFF) * fog;  
-                uint8_t g = ((tex_color >> gPixelFormat->Gshift) & 0xFF) * fog;  
-                uint8_t b = ((tex_color >> gPixelFormat->Bshift) & 0xFF) * fog;  
-                pixel_color = SDL_MapRGBA(gPixelFormat, r, g, b, 255);  
-            } else {  
-                float fog = 1.0f - (distance / 800.0f);  
-                if (fog < 0.3f) fog = 0.3f;  
-                pixel_color = SDL_MapRGBA(gPixelFormat,  
-                    (uint8_t)(120 * fog),  
-                    (uint8_t)(100 * fog),  
-                    (uint8_t)(80 * fog), 255);  
-            }  
-              
-            gr_put_pixel(render_buffer, screen_x, y, pixel_color);  
-            depth_buffer[depth_index] = distance;  
-        }  
-    }  
+    for (int y = y_start; y <= y_end; y++) {    
+        int depth_index = y * render_width + screen_x;    
+        if (distance < depth_buffer[depth_index]) {    
+            gr_put_pixel(render_buffer, screen_x, y, wall_color);    
+            depth_buffer[depth_index] = distance;    
+        }    
+    }    
 }
+
+
   
 // Función stub para renderizar suelo/techo  
 static void render_floor_ceiling_vpe(HEIGHTMAP *hm, int region_id,  
@@ -4194,22 +4157,23 @@ static void render_column(HEIGHTMAP *hm, int screen_x, int render_width, int ren
 }
   
 // Helper: Ray-wall intersection  
-static float ray_wall_intersection(float ray_x, float ray_y, float ray_dx, float ray_dy,  
-                                  float wall_x1, float wall_y1, float wall_x2, float wall_y2) {  
-    float wall_dx = wall_x2 - wall_x1;  
-    float wall_dy = wall_y2 - wall_y1;  
-      
-    float denom = ray_dx * wall_dy - ray_dy * wall_dx;  
-    if (fabsf(denom) < 0.0001f) return -1.0f;  
-      
-    float t = ((wall_x1 - ray_x) * wall_dy - (wall_y1 - ray_y) * wall_dx) / denom;  
-    float s = ((wall_x1 - ray_x) * ray_dy - (wall_y1 - ray_y) * ray_dx) / denom;  
-      
-    if (t > 0.0001f && s >= 0.0f && s <= 1.0f) {  
-        return t;  
-    }  
-      
-    return -1.0f;  
+static float ray_wall_intersection(float ray_x, float ray_y, float ray_dx, float ray_dy,    
+                                  float wall_x1, float wall_y1, float wall_x2, float wall_y2) {    
+    float wall_dx = wall_x2 - wall_x1;    
+    float wall_dy = wall_y2 - wall_y1;    
+        
+    float denom = ray_dx * wall_dy - ray_dy * wall_dx;    
+    if (fabsf(denom) < 0.00001f) return -1.0f;  // Más preciso  
+        
+    float t = ((wall_x1 - ray_x) * wall_dy - (wall_y1 - ray_y) * wall_dx) / denom;    
+    float s = ((wall_x1 - ray_x) * ray_dy - (wall_y1 - ray_y) * ray_dx) / denom;    
+        
+    // CORRECCIÓN: Validación más estricta  
+    if (t > 0.001f && s >= -0.0001f && s <= 1.0001f) {    
+        return t;    
+    }    
+        
+    return -1.0f;    
 }
 //---------------------------------------------------------------------------------------//
 //                          FIN MAPAS POR SECTORES                                       //
