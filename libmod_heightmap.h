@@ -23,9 +23,10 @@
 
 
     
-// ============================================================================      
-// FORMATO DMP2 - Nuevo formato de mapa sector-based limpio      
-// ============================================================================    
+#define MAX_POINTS  8192  
+#define MAX_WALLS   8192  
+#define MAX_REGIONS 4096  
+#define MAX_FLAGS   1000
     
     
 // ============================================================================      
@@ -54,6 +55,72 @@ typedef struct {
     char filename[256];      
     int graph_id;      
 } SECTOR_TEXTURE_ENTRY;      
+
+// Estructuras mínimas para WLD (añadir a libmod_heightmap.h)  
+typedef struct {  
+    int code;  
+    int Width, Height;  
+    int Width2, Height2;  
+    char *Raw;  
+    int Used;  
+} WLD_PicInfo;  
+  
+typedef struct {  
+    WLD_PicInfo *pPic;  
+    int code;  
+} WLD_TexCon;  
+
+#pragma pack(push, 1)  
+  
+typedef struct {  
+    int active;  
+    int x, y;  
+    int number;  
+} WLD_Flag;  // Total: 12 bytes  
+  
+typedef struct {  
+    int active;  
+    int x, y;  
+    int links;  
+} WLD_Point;  // Total: 16 bytes  
+  
+typedef struct {  
+    int active;  
+    int type;  
+    int p1, p2;  
+    int front_region, back_region;  
+    int texture;  
+    int texture_top;  
+    int texture_bot;  
+    int fade;  
+} WLD_Wall;  // Total: 36 bytes  
+  
+typedef struct {  
+    int active;  
+    int type;  
+    int floor_height, ceil_height;  
+    int floor_tex;  
+    int ceil_tex;  
+    int fade;  
+} WLD_Region;  // Total: 32 bytes  
+  
+#pragma pack(pop)
+  
+typedef struct {  
+    int num_points;  
+    WLD_Point **points;     // Array de punteros  
+    int num_walls;  
+    WLD_Wall **walls;       // Array de punteros  
+    int num_regions;  
+    WLD_Region **regions;   // Array de punteros  
+    int num_flags;  
+    WLD_Flag **flags;       // Array de punteros  
+    int loaded;  
+} WLD_Map;
+  
+// Variables globales para el sistema WLD  
+static WLD_PicInfo *wld_pics[1000];  
+static int wld_num_pics = 0;
       
 // Enumeración para tipos de mapa         
 typedef enum {                  
@@ -148,25 +215,7 @@ extern CAMERA_3D camera;
 extern int64_t next_heightmap_id;                
 
 // Añadir antes de las funciones existentes  
-static void drawalls_adapted(HEIGHTMAP *hm, long bunch,   
-                             GRAPH *target_buffer, float *depth_buffer,   
-                             int width, int height); 
-static void render_floor_ceiling_build(HEIGHTMAP *hm, short sectnum,  
-                                      GRAPH *target_buffer, float *depth_buffer,   
-                                      int width, int height);
-static void drawrooms_build_algorithm(HEIGHTMAP *hm, long posx, long posy, long posz,   
-                                     short ang, short horiz, short cursectnum,  
-                                     GRAPH *target_buffer, float *depth_buffer,   
-                                     int width, int height);  
-static void scansector_build_algorithm(HEIGHTMAP *hm, short sectnum,   
-                                      GRAPH *target_buffer, float *depth_buffer,   
-                                      int width, int height);  
-static void render_sector_walls_build(HEIGHTMAP *hm, short sectnum,  
-                                     GRAPH *target_buffer, float *depth_buffer,   
-                                     int width, int height);  
-static void render_floor_ceiling_build(HEIGHTMAP *hm, short sectnum,  
-                                      GRAPH *target_buffer, float *depth_buffer,   
-                                      int width, int height);
+
 
 /* Funciones principales */                
 extern int64_t libmod_heightmap_load(INSTANCE *my, int64_t *params);                
@@ -186,9 +235,9 @@ extern int64_t libmod_heightmap_update_billboard_graph(INSTANCE *my, int64_t *pa
 extern int64_t libmod_heightmap_render_voxelspace_gpu(INSTANCE *my, int64_t *params);              
       
 // Funciones para mapas DMP2        
-extern int64_t libmod_heightmap_load_dmp2(INSTANCE *my, int64_t *params);          
-extern int64_t libmod_heightmap_get_map_type(INSTANCE *my, int64_t *params);              
-extern int64_t libmod_heightmap_render_sector_cpu(INSTANCE *my, int64_t *params);            
+       
+          
+   
       
 // Funciones para sistema TEX    
 extern int64_t load_tex_file(INSTANCE *my, int64_t *params);    

@@ -11,6 +11,7 @@
 #include <GL/glew.h>
 #include <inttypes.h>  
 #include "tex_format.h"
+#include <limits.h> 
 
 #define max(a,b) ((a) > (b) ? (a) : (b))  
 #define min(a,b) ((a) < (b) ? (a) : (b))  
@@ -182,6 +183,7 @@ CAMERA_3D camera = {0, 0, 0, 0, 0, DEFAULT_FOV, DEFAULT_NEAR, DEFAULT_FAR};
 int64_t next_heightmap_id = 1;
 float water_level = -1.0f;
 int light_intensity = 255;
+static WLD_Map wld_map = {0};
 
 // Dimensiones configurables del render buffer  
 static int current_render_width = 320;  
@@ -208,6 +210,12 @@ static float convert_screen_to_world_coordinate(int heightmap_id, float screen_c
 static void collect_visible_billboards_from_array(VOXEL_BILLBOARD *billboard_array, int array_size,   
                                                   BILLBOARD_RENDER_DATA *visible_billboards,   
                                                   int *visible_count, float terrain_fov);
+extern int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params);
+extern int64_t libmod_heightmap_render_wld_2d(INSTANCE *my, int64_t *params);
+extern int64_t libmod_test_render_buffer(INSTANCE *my, int64_t *params);
+extern void wld_analyze_x_distribution(WLD_Map *map);  
+extern void wld_debug_walls_with_x_diff(WLD_Map *map);
+
 
 static void cleanup_gpu_resources(void) {  
     // Limpiar shader de BennuGD2  
@@ -3531,5 +3539,402 @@ void cleanup_tex_images() {
     }  
 }
 
+void wld_tex_alloc(WLD_TexCon *ptc, int texcode)  
+{  
+    WLD_PicInfo *pic;  
+    int i;  
+  
+    ptc->pPic = NULL;  
+    if (!texcode) return;  
+  
+    // Buscar si ya está cargada  
+    for(i = 0; i < wld_num_pics; i++) {  
+        pic = wld_pics[i];  
+        if (pic && texcode == pic->code) {  
+            ptc->pPic = pic;  
+            return;  
+        }  
+    }  
+  
+    // Cargar desde sistema TEX  
+    GRAPH *tex_graph = get_tex_image(texcode);  
+    if (!tex_graph) return;  
+  
+    // Crear nueva entrada  
+    pic = malloc(sizeof(WLD_PicInfo));  
+    if (!pic) return;  
+  
+    pic->code = texcode;  
+    pic->Width = tex_graph->width;  
+    pic->Height = tex_graph->height;  
+    pic->Width2 = 0;  
+    pic->Height2 = 0;  
+    pic->Raw = NULL;  
+    pic->Used = 0;  
+  
+    // Calcular Width2 (log2 del ancho)  
+    switch(pic->Width) {  
+        case   2: pic->Width2 = 1; break;  
+        case   4: pic->Width2 = 2; break;  
+        case   8: pic->Width2 = 3; break;  
+        case  16: pic->Width2 = 4; break;  
+        case  32: pic->Width2 = 5; break;  
+        case  64: pic->Width2 = 6; break;  
+        case 128: pic->Width2 = 7; break;  
+        case 256: pic->Width2 = 8; break;  
+        case 512: pic->Width2 = 9; break;  
+        case 1024: pic->Width2 = 10; break;  
+        case 2048: pic->Width2 = 11; break;  
+        default: free(pic); return;  
+    }  
+  
+    // Calcular Height2  
+    switch(pic->Height) {  
+        case   2: pic->Height2 = 1; break;  
+        case   4: pic->Height2 = 2; break;  
+        case   8: pic->Height2 = 3; break;  
+        case  16: pic->Height2 = 4; break;  
+        case  32: pic->Height2 = 5; break;  
+        case  64: pic->Height2 = 6; break;  
+        case 128: pic->Height2 = 7; break;  
+        case 256: pic->Height2 = 8; break;  
+        case 512: pic->Height2 = 9; break;  
+        case 1024: pic->Height2 = 10; break;  
+        case 2048: pic->Height2 = 11; break;  
+        default: free(pic); return;  
+    }  
+  
+    wld_pics[wld_num_pics++] = pic;  
+    ptc->pPic = pic;  
+}
+
+
+
+void wld_load_pic(WLD_PicInfo *pic)  
+{  
+    if (!pic || pic->Raw) return;  
+  
+    GRAPH *tex_graph = get_tex_image(pic->code);  
+    if (!tex_graph) return;  
+  
+    int size = pic->Width * pic->Height * 4; // 4 bytes por pixel (RGBA)  
+    pic->Raw = malloc(size);  
+    if (!pic->Raw) return;  
+  
+    // Copiar datos RGBA directamente sin conversión de paleta  
+    for (int y = 0; y < pic->Height; y++) {  
+        for (int x = 0; x < pic->Width; x++) {  
+            uint32_t pixel = gr_get_pixel(tex_graph, x, y);  
+            int idx = (y * pic->Width + x) * 4;  
+            pic->Raw[idx] = (pixel >> 16) & 0xFF;     // R  
+            pic->Raw[idx + 1] = (pixel >> 8) & 0xFF;  // G  
+            pic->Raw[idx + 2] = pixel & 0xFF;         // B  
+            pic->Raw[idx + 3] = (pixel >> 24) & 0xFF; // A  
+        }  
+    }  
+  
+    pic->Used++;  
+}
+
+int load_wld_standalone(const char *filename)  
+{  
+    FILE *f = fopen(filename, "rb");  
+    if (!f) return 0;  
+  
+    fseek(f, 0, SEEK_END);  
+    int size = ftell(f);  
+    fseek(f, 0, SEEK_SET);  
+  
+    char *buffer = malloc(size);  
+    if (!buffer) {  
+        fclose(f);  
+        return 0;  
+    }  
+  
+    fread(buffer, 1, size, f);  
+    fclose(f);  
+  
+    // Validar header WLD  
+    if (memcmp(buffer, "wld\x1a\x0d\x0a\x01", 8) != 0) {  
+        free(buffer);  
+        return 0;  
+    }  
+  
+    // Procesar geometría (adaptado de LoadZone)  
+    int pos = 8 + 4 + *(int*)&buffer[8];  
+      
+    // Leer header principal  
+    int num_points = *(int*)&buffer[pos + 8];  
+    int num_regions = *(int*)&buffer[pos + 12];  
+    int num_walls = *(int*)&buffer[pos + 16];  
+  
+    printf("WLD cargado: %d puntos, %d regiones, %d paredes\n",   
+           num_points, num_regions, num_walls);  
+  
+    // Aquí procesarías la geometría según tus necesidades  
+    // Por ahora solo cargamos las texturas referenciadas  
+  
+    free(buffer);  
+    return 1;  
+}
+
+int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params)  
+{  
+    const char *filename = string_get(params[0]);  
+      
+    // Verificar texturas  
+    if (!tex_images[1].loaded) {  
+        printf("ERROR: Carga primero el archivo .tex\n");  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    FILE *fichero = fopen(filename, "rb");  
+    if (!fichero) {  
+        printf("ERROR: No se puede abrir '%s'\n", filename);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    // INICIALIZAR MAPA ANTES DE USAR  
+    memset(&wld_map, 0, sizeof(WLD_Map));  
+      
+    // Asignar arrays de punteros  
+    wld_map.points = calloc(MAX_POINTS, sizeof(WLD_Point*));  
+    wld_map.walls = calloc(MAX_WALLS, sizeof(WLD_Wall*));  
+    wld_map.regions = calloc(MAX_REGIONS, sizeof(WLD_Region*));  
+    wld_map.flags = calloc(MAX_FLAGS, sizeof(WLD_Flag*));  
+      
+    // Procesar geometría  
+    if (!wld_process_geometry(fichero, &wld_map)) {  
+        printf("ERROR: Fallo al procesar geometría\n");  
+        fclose(fichero);  
+        string_discard(params[0]);  
+        return 0;  
+    }  
+      
+    fclose(fichero);  
+    wld_map.loaded = 1;  
+      
+    printf("WLD cargado exitosamente:\n");  
+    printf("  - Puntos: %d\n", wld_map.num_points);  
+    printf("  - Paredes: %d\n", wld_map.num_walls);  
+      
+    string_discard(params[0]);  
+    return 1;  
+}
+
+int wld_process_geometry(FILE *fichero, WLD_Map *map)  
+{  
+    int i;  
+    char cwork[9];  
+    int total;  
+      
+    // Leer y verificar magic header  
+    fread(cwork, 8, 1, fichero);  
+    if (strcmp(cwork, "wld\x1a\x0d\x0a\x01\x00")) {  
+        printf("ERROR: No es un archivo WLD válido\n");  
+        return 0;  
+    }  
+      
+    // Leer total size  
+    fread(&total, 4, 1, fichero);  
+      
+    // Saltar metadata del editor (548 bytes)  
+    fseek(fichero, 548, SEEK_CUR);  
+      
+    // Leer puntos  
+    fread(&map->num_points, 4, 1, fichero);  
+    printf("DEBUG: Leyendo %d puntos\n", map->num_points);  
+    for (i = 0; i < map->num_points; i++) {  
+        map->points[i] = malloc(sizeof(WLD_Point));  
+        fread(map->points[i], sizeof(WLD_Point), 1, fichero);  
+    }  
+      
+    // Leer paredes  
+    fread(&map->num_walls, 4, 1, fichero);  
+    printf("DEBUG: Leyendo %d paredes\n", map->num_walls);  
+    for (i = 0; i < map->num_walls; i++) {  
+        map->walls[i] = malloc(sizeof(WLD_Wall));  
+        fread(map->walls[i], sizeof(WLD_Wall), 1, fichero);  
+    }  
+      
+    // Leer regiones  
+    fread(&map->num_regions, 4, 1, fichero);  
+    printf("DEBUG: Leyendo %d regiones\n", map->num_regions);  
+    for (i = 0; i < map->num_regions; i++) {  
+        map->regions[i] = malloc(sizeof(WLD_Region));  
+        fread(map->regions[i], sizeof(WLD_Region), 1, fichero);  
+    }  
+      
+    // Leer flags  
+    fread(&map->num_flags, 4, 1, fichero);  
+    printf("DEBUG: Leyendo %d flags\n", map->num_flags);  
+    for (i = 0; i < map->num_flags; i++) {  
+        map->flags[i] = malloc(sizeof(WLD_Flag));  
+        fread(map->flags[i], sizeof(WLD_Flag), 1, fichero);  
+    }  
+      
+    printf("DEBUG: Geometría WLD procesada correctamente\n");  
+    return 1;  
+}
+
+
+void wld_debug_walls_with_x_diff(WLD_Map *map)  
+{  
+    int paredes_con_x_diferente = 0;  
+    int paredes_x_cero = 0;  
+      
+    printf("DEBUG: Analizando paredes que usan puntos X≠0\n");  
+      
+    for (int i = 0; i < map->num_walls; i++) {  
+        if (map->walls[i]->active != 0) {  
+            WLD_Point *p1 = map->points[map->walls[i]->p1];  
+            WLD_Point *p2 = map->points[map->walls[i]->p2];  
+              
+            if (p1->x != 0 || p2->x != 0) {  
+                paredes_con_x_diferente++;  
+                if (paredes_con_x_diferente <= 10) {  
+                    printf("DEBUG: pared X≠0[%d] - p1:%d(%d,%d), p2:%d(%d,%d)\n",   
+                           i, map->walls[i]->p1, p1->x, p1->y,  
+                           map->walls[i]->p2, p2->x, p2->y);  
+                }  
+            } else {  
+                paredes_x_cero++;  
+            }  
+        }  
+    }  
+      
+    printf("DEBUG: Total paredes X≠0: %d, paredes X=0: %d\n",   
+           paredes_con_x_diferente, paredes_x_cero);  
+}  
+  
+void wld_analyze_x_distribution(WLD_Map *map)  
+{  
+    int min_x = INT_MAX, max_x = INT_MIN;  
+    int puntos_con_x_cero = 0;  
+    int puntos_con_x_diferente = 0;  
+      
+    printf("DEBUG: Analizando distribución de coordenadas X\n");  
+      
+    for (int i = 0; i < map->num_points; i++) {  
+        if (map->points[i]->active != 0) {  // Usar -> en lugar de .  
+            if (map->points[i]->x < min_x) min_x = map->points[i]->x;  // Usar ->  
+            if (map->points[i]->x > max_x) max_x = map->points[i]->x;  // Usar ->  
+              
+            if (map->points[i]->x == 0) {  // Usar ->  
+                puntos_con_x_cero++;  
+            } else {  
+                puntos_con_x_diferente++;  
+                if (puntos_con_x_diferente <= 10) {  
+                    printf("DEBUG: punto con X≠0 [%d]: x=%d, y=%d\n",   
+                           i, map->points[i]->x, map->points[i]->y);  // Usar ->  
+                }  
+            }  
+        }  
+    }  
+      
+    printf("DEBUG: Estadísticas X - min:%d, max:%d\n", min_x, max_x);  
+    printf("DEBUG: Puntos con X=0: %d, con X≠0: %d\n", puntos_con_x_cero, puntos_con_x_diferente);  
+}
+
+
+void wld_render_2d(WLD_Map *map, int screen_w, int screen_h)  
+{  
+    if (!map || !map->loaded) return;  
+      
+    // Usar el render_buffer global  
+    if (!render_buffer || render_buffer->width != screen_w || render_buffer->height != screen_h) {  
+        if (render_buffer) bitmap_destroy(render_buffer);  
+        render_buffer = bitmap_new_syslib(screen_w, screen_h);  
+        if (!render_buffer) return;  
+    }  
+      
+    gr_clear_as(render_buffer, 0x404040);  
+      
+    // Rangos fijos basados en coordenadas reales  
+    int min_x = 0, max_x = 1000;  
+    int min_y = 5200, max_y = 5450;  
+      
+    float scale = 0.1f;  
+    int offset_x = screen_w / 2;  
+    int offset_y = screen_h / 2 - (min_y + max_y) * scale / 2;  
+      
+    printf("DEBUG: Escala fija: %f, Offset - X:%d, Y:%d\n", scale, offset_x, offset_y);  
+      
+    int paredes_dibujadas = 0;  
+      
+    for (int i = 0; i < map->num_walls; i++) {  
+        if (map->walls[i]->active != 0) {  
+            if (map->walls[i]->p1 < 0 || map->walls[i]->p1 >= map->num_points ||  
+                map->walls[i]->p2 < 0 || map->walls[i]->p2 >= map->num_points) {  
+                printf("DEBUG: Pared %d con índices inválidos - p1:%d, p2:%d\n",   
+                       i, map->walls[i]->p1, map->walls[i]->p2);  
+                continue;  
+            }  
+              
+            WLD_Point *p1 = map->points[map->walls[i]->p1];  
+            WLD_Point *p2 = map->points[map->walls[i]->p2];  
+              
+            int x1 = (int)(p1->x * scale) + offset_x;  
+            int y1 = (int)(p1->y * scale) + offset_y;  
+            int x2 = (int)(p2->x * scale) + offset_x;  
+            int y2 = (int)(p2->y * scale) + offset_y;  
+              
+            if (i < 10) {  
+                printf("DEBUG: Pared %d: [%d,%d]->[%d,%d] a pantalla [%d,%d]->[%d,%d]\n",  
+                       i, p1->x, p1->y, p2->x, p2->y, x1, y1, x2, y2);  
+            }  
+              
+            if (x1 >= 0 && x1 < screen_w && y1 >= 0 && y1 < screen_h &&  
+                x2 >= 0 && x2 < screen_w && y2 >= 0 && y2 < screen_h) {  
+                draw_line(render_buffer, x1, y1, x2, y2, 0xFFFFFF);  
+                paredes_dibujadas++;  
+            }  
+        }  
+    }  
+      
+    printf("DEBUG: Paredes dibujadas: %d\n", paredes_dibujadas);  
+}
+  
+// Función de renderizado 2D  
+int64_t libmod_heightmap_render_wld_2d(INSTANCE *my, int64_t *params)  
+{  
+    int width = params[0];  
+    int height = params[1];  
+      
+    if (!wld_map.loaded) {  
+        printf("ERROR: No hay mapa WLD cargado\n");  
+        return 0;  
+    }  
+      
+    wld_render_2d(&wld_map, width, height);  
+      
+    // Devolver el código del render_buffer global  
+    return render_buffer ? render_buffer->code : 0;  
+}
+
+int64_t libmod_heightmap_test_render_buffer(INSTANCE *my, int64_t *params)  
+{  
+    int width = params[0];  
+    int height = params[1];  
+      
+    if (!render_buffer || render_buffer->width != width || render_buffer->height != height) {  
+        if (render_buffer) bitmap_destroy(render_buffer);  
+        render_buffer = bitmap_new_syslib(width, height);  
+        if (!render_buffer) return 0;  
+    }  
+      
+    // Dibujar patrón de prueba  
+    for (int y = 0; y < height; y++) {  
+        for (int x = 0; x < width; x++) {  
+            uint32_t color = ((x * 255) / width) | (((y * 255) / height) << 8);  
+            gr_put_pixel(render_buffer, x, y, color);  
+        }  
+    }  
+      
+    printf("DEBUG: Patrón de prueba dibujado en %dx%d\n", width, height);  
+    return render_buffer->code;  
+}
 
 #include "libmod_heightmap_exports.h"
