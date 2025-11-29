@@ -3841,7 +3841,12 @@ void wld_analyze_x_distribution(WLD_Map *map)
 
 void wld_render_2d(WLD_Map *map, int screen_w, int screen_h)  
 {  
-    if (!map || !map->loaded) return;  
+    if (!map || !map->loaded) {  
+        printf("DEBUG: wld_render_2d - mapa no cargado o nulo\n");  
+        return;  
+    }  
+      
+    printf("DEBUG: Iniciando renderizado 2D - pantalla: %dx%d\n", screen_w, screen_h);  
       
     // Usar el render_buffer global  
     if (!render_buffer || render_buffer->width != screen_w || render_buffer->height != screen_h) {  
@@ -3850,51 +3855,62 @@ void wld_render_2d(WLD_Map *map, int screen_w, int screen_h)
         if (!render_buffer) return;  
     }  
       
+    // Limpiar pantalla  
     gr_clear_as(render_buffer, 0x404040);  
       
-    // Rangos fijos basados en coordenadas reales  
-    int min_x = 0, max_x = 1000;  
-    int min_y = 5200, max_y = 5450;  
-      
-    float scale = 0.1f;  
+    // ESCALA MÁS GRANDE para hacer visible el mapa  
+    float scale = 0.2f;  // Aumentado de 0.050 a 0.2  
     int offset_x = screen_w / 2;  
-    int offset_y = screen_h / 2 - (min_y + max_y) * scale / 2;  
+    int offset_y = screen_h / 2;  
       
-    printf("DEBUG: Escala fija: %f, Offset - X:%d, Y:%d\n", scale, offset_x, offset_y);  
+    printf("DEBUG: Usando escala: %.3f, offset X:%d, Y:%d\n", scale, offset_x, offset_y);  
       
     int paredes_dibujadas = 0;  
+    int fuera_de_pantalla = 0;  
+    int indices_invalidos = 0;  
       
+    // Dibujar paredes  
     for (int i = 0; i < map->num_walls; i++) {  
         if (map->walls[i]->active != 0) {  
-            if (map->walls[i]->p1 < 0 || map->walls[i]->p1 >= map->num_points ||  
-                map->walls[i]->p2 < 0 || map->walls[i]->p2 >= map->num_points) {  
-                printf("DEBUG: Pared %d con índices inválidos - p1:%d, p2:%d\n",   
-                       i, map->walls[i]->p1, map->walls[i]->p2);  
+            int p1 = map->walls[i]->p1;  
+            int p2 = map->walls[i]->p2;  
+              
+            // Validar índices  
+            if (p1 < 0 || p1 >= map->num_points || p2 < 0 || p2 >= map->num_points) {  
+                indices_invalidos++;  
                 continue;  
             }  
               
-            WLD_Point *p1 = map->points[map->walls[i]->p1];  
-            WLD_Point *p2 = map->points[map->walls[i]->p2];  
+            // Transformar coordenadas  
+            int x1 = (int)(map->points[p1]->x * scale) + offset_x;  
+            int y1 = (int)(map->points[p1]->y * scale) + offset_y;  
+            int x2 = (int)(map->points[p2]->x * scale) + offset_x;  
+            int y2 = (int)(map->points[p2]->y * scale) + offset_y;  
               
-            int x1 = (int)(p1->x * scale) + offset_x;  
-            int y1 = (int)(p1->y * scale) + offset_y;  
-            int x2 = (int)(p2->x * scale) + offset_x;  
-            int y2 = (int)(p2->y * scale) + offset_y;  
-              
-            if (i < 10) {  
-                printf("DEBUG: Pared %d: [%d,%d]->[%d,%d] a pantalla [%d,%d]->[%d,%d]\n",  
-                       i, p1->x, p1->y, p2->x, p2->y, x1, y1, x2, y2);  
+            // LÍMITES MÁS AMPLIOS para permitir dibujado  
+            int margin = 100;  
+            if ((x1 < -margin || x1 > screen_w + margin || y1 < -margin || y1 > screen_h + margin) &&  
+                (x2 < -margin || x2 > screen_w + margin || y2 < -margin || y2 > screen_h + margin)) {  
+                fuera_de_pantalla++;  
+                continue;  
             }  
               
-            if (x1 >= 0 && x1 < screen_w && y1 >= 0 && y1 < screen_h &&  
-                x2 >= 0 && x2 < screen_w && y2 >= 0 && y2 < screen_h) {  
-                draw_line(render_buffer, x1, y1, x2, y2, 0xFFFFFF);  
-                paredes_dibujadas++;  
+            // Dibujar línea blanca  
+            draw_line(render_buffer, x1, y1, x2, y2, 0xFFFFFF);  
+            paredes_dibujadas++;  
+              
+            // Mostrar primeras paredes para depuración  
+            if (paredes_dibujadas <= 5) {  
+                printf("DEBUG: pared[%d] [%d,%d]->[%d,%d] -> pantalla [%d,%d]->[%d,%d]\n",  
+                       i, map->points[p1]->x, map->points[p1]->y,   
+                       map->points[p2]->x, map->points[p2]->y,  
+                       x1, y1, x2, y2);  
             }  
         }  
     }  
       
-    printf("DEBUG: Paredes dibujadas: %d\n", paredes_dibujadas);  
+    printf("DEBUG: Paredes dibujadas: %d, fuera de pantalla: %d, índices inválidos: %d\n",   
+           paredes_dibujadas, fuera_de_pantalla, indices_invalidos);  
 }
   
 // Función de renderizado 2D  
