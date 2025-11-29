@@ -19,47 +19,14 @@
 #include "g_grlib.h"                
 #include "xstrings.h"                
 #include "m_map.h"                
-#include <GL/glew.h>              
+#include <GL/glew.h>     
+
+
     
 // ============================================================================      
 // FORMATO DMP2 - Nuevo formato de mapa sector-based limpio      
 // ============================================================================    
     
-#pragma pack(push, 1)  
-  
-typedef struct {  
-    char magic[4];  
-    uint32_t version;  
-    uint32_t num_points;  
-    uint32_t num_regions;  
-    uint32_t num_walls;  
-    uint32_t num_textures;  
-} DMP2_HEADER;  
-  
-typedef struct {  
-    int16_t x, y;  
-    int16_t Type;  
-    int32_t link;  
-} DMP2_POINT;  
-  
-typedef struct {  
-    int16_t floor_height;  
-    int16_t ceiling_height;  
-    int16_t floor_texture;  
-    int16_t ceiling_texture;  
-    int16_t light_level;  
-    int16_t flags;  
-} DMP2_REGION;  
-  
-typedef struct {  
-    int16_t point1, point2;  
-    int16_t region1, region2;  
-    int16_t texture;  
-    int16_t flags;  
-    uint16_t x_offset, y_offset;  
-} DMP2_WALL;  
-  
-#pragma pack(pop)
     
 // ============================================================================      
 // FORMATO TEX - Sistema de texturas simple      
@@ -81,47 +48,6 @@ typedef struct {
     uint8_t reserved[250];    
 } TEX_ENTRY;    
     
-// ============================================================================      
-// ESTRUCTURAS INTERNAS SECTOR (renombradas de WLD)      
-// ============================================================================    
-    
-struct SECTOR_Point {      
-    int16_t x, y;      
-    int16_t Type;      
-    int32_t link;      
-};      
-      
-struct SECTOR_Region {      
-    int16_t floor_height;      
-    int16_t ceiling_height;      
-    int16_t floor_texture;      
-    int16_t ceiling_texture;      
-    int16_t light_level;      
-    int16_t flags;      
-};      
-      
-struct SECTOR_Wall {      
-    int16_t point1, point2;      
-    int16_t region1, region2;      
-    int16_t texture;      
-    int16_t flags;      
-    uint16_t x_offset, y_offset;      
-};      
-      
-struct SECTOR_Thing {      
-    float x, y, z;      
-    float angle;      
-    uint32_t type;      
-    uint32_t flags;      
-};      
-      
-struct SECTOR_Header {      
-    int32_t NumPoints;      
-    int32_t NumRegions;      
-    int32_t NumWalls;      
-    int32_t NumThings;      
-    int32_t NumTextures;      
-};      
       
 // Estructura de textura para SECTOR      
 typedef struct {      
@@ -131,8 +57,7 @@ typedef struct {
       
 // Enumeración para tipos de mapa         
 typedef enum {                  
-    MAP_TYPE_HEIGHTMAP = 0,  // Terreno exterior voxelspace          
-    MAP_TYPE_SECTOR = 1,     // Interior estilo VPE (DMP2)        
+    MAP_TYPE_HEIGHTMAP = 0,  // Terreno exterior voxelspace               
 } MAP_TYPE;      
                
 typedef struct {                        
@@ -147,24 +72,18 @@ typedef struct {
     float *height_cache;                  
     int cache_valid;                      
                       
-    // Datos para modo SECTOR (interiores)      
-    struct SECTOR_Point *sector_points;      
-    struct SECTOR_Region *sector_regions;      
-    struct SECTOR_Wall *sector_walls;      
-    int num_sector_points;      
-    int num_sector_regions;      
-    int num_sector_walls;          
-          
-    SECTOR_TEXTURE_ENTRY *textures;      
-    int num_textures;      
 } HEIGHTMAP;        
     
-// Estructura de clip buffer por columna          
-typedef struct {          
-    int top;     // Límite superior de píxel visible          
-    int bottom;  // Límite inferior de píxel visible          
-} COLUMN_CLIP;          
-              
+        
+
+// Mover estas líneas al principio del archivo (después de los #include)  
+#define MAXSECTORS 1024  
+#define MAXWALLS 8192  
+#define MAXSPRITES 4096  
+#define MAXTILES 9216  
+  
+// Variables globales del Build Engine (AÑADIDAS)  
+
 // Constantes de conversión de coordenadas                
 #define WORLD_TO_SPRITE_SCALE 10.0f                
 #define SPRITE_TO_WORLD_SCALE 0.1f                
@@ -212,7 +131,10 @@ typedef struct {
     uint8_t alpha;                  
     int valid;                  
     float fog_tint_factor;              
-} BILLBOARD_PROJECTION;              
+} BILLBOARD_PROJECTION;     
+
+
+  
       
 /* Constantes */                
 #define MAX_HEIGHTMAPS 512                
@@ -224,7 +146,28 @@ typedef struct {
 extern HEIGHTMAP heightmaps[MAX_HEIGHTMAPS];                
 extern CAMERA_3D camera;                
 extern int64_t next_heightmap_id;                
-      
+
+// Añadir antes de las funciones existentes  
+static void drawalls_adapted(HEIGHTMAP *hm, long bunch,   
+                             GRAPH *target_buffer, float *depth_buffer,   
+                             int width, int height); 
+static void render_floor_ceiling_build(HEIGHTMAP *hm, short sectnum,  
+                                      GRAPH *target_buffer, float *depth_buffer,   
+                                      int width, int height);
+static void drawrooms_build_algorithm(HEIGHTMAP *hm, long posx, long posy, long posz,   
+                                     short ang, short horiz, short cursectnum,  
+                                     GRAPH *target_buffer, float *depth_buffer,   
+                                     int width, int height);  
+static void scansector_build_algorithm(HEIGHTMAP *hm, short sectnum,   
+                                      GRAPH *target_buffer, float *depth_buffer,   
+                                      int width, int height);  
+static void render_sector_walls_build(HEIGHTMAP *hm, short sectnum,  
+                                     GRAPH *target_buffer, float *depth_buffer,   
+                                     int width, int height);  
+static void render_floor_ceiling_build(HEIGHTMAP *hm, short sectnum,  
+                                      GRAPH *target_buffer, float *depth_buffer,   
+                                      int width, int height);
+
 /* Funciones principales */                
 extern int64_t libmod_heightmap_load(INSTANCE *my, int64_t *params);                
 extern int64_t libmod_heightmap_create(INSTANCE *my, int64_t *params);                
@@ -262,6 +205,6 @@ static float calculate_volumetric_fog(float world_z, float distance);
       
 /* Funciones internas */                
 extern float get_height_at(HEIGHTMAP *hm, float x, float y);                
-extern void build_height_cache(HEIGHTMAP *hm);            
-            
+extern void build_height_cache(HEIGHTMAP *hm);    
+         
 #endif
