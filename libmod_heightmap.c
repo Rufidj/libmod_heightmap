@@ -46,7 +46,64 @@ enum {
 #define MAX_BILLBOARDS 1000  
 #define MAX_STATIC_BILLBOARDS 500  
 #define MAX_DYNAMIC_BILLBOARDS 500  
+
+// Atributos para VDraws  
+#define VD_OBJECT 0x10000000  
+#define VD_COMPLEX 0x20000000  
+#define VD_WALLBACK 0x40000000
   
+// Para clipping por columna  
+typedef struct {  
+    short Top, Bot;  
+} VLine;  
+  
+// Para líneas de piso  
+typedef struct {  
+    unsigned char *RawPtr, *PalPtr, *PixPtr;  
+    unsigned int Coord, Delta;  
+    short LeftCol, Count, Width2;  
+    void *pRegion;  
+} FLine;  
+  
+// Para líneas con texturas (paredes/máscaras)  
+typedef struct {  
+    unsigned char *RawPtr, *PalPtr, *PixPtr;  
+    int Coord, Delta;  
+    short BufWidth, Count, Mask;  
+    unsigned char IsTrans, IsTile;  
+} WLine;  
+  
+// Elemento a renderizar  
+typedef struct {  
+    unsigned int Type;  
+    void *ptr;  
+    struct VDraw *Prev, *Next;  
+    short LeftCol, RightCol;  
+    int LD, RD, dLD, dRD;  
+    int XStart, XLen;  
+    int px1, px2;  
+} VDraw;  
+  
+// Nivel de renderizado  
+typedef struct {  
+    void *Start;  
+    void *From;  
+    VLine *Clip;  
+    int ClipCount;  
+    int MinDist;  
+} Level;
+
+// Arrays para el sistema de renderizado  
+VDraw *VDraws;  
+WLine *MLines;  
+FLine *FLines;  
+VLine *VLines;  
+Level Levels[64];  
+Level *CurLevel;  
+VDraw LeftVDraw, RightVDraw;  
+  
+int NumVDraws, NumMLines, NumLevels;
+
 typedef struct {    
     int active;    
     float world_x, world_y, world_z;    
@@ -212,7 +269,7 @@ static void collect_visible_billboards_from_array(VOXEL_BILLBOARD *billboard_arr
                                                   int *visible_count, float terrain_fov);
 extern int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params);
 extern int64_t libmod_heightmap_render_wld_2d(INSTANCE *my, int64_t *params);
-extern int64_t libmod_test_render_buffer(INSTANCE *my, int64_t *params);
+extern int64_t libmod_heightmap_test_render_buffer(INSTANCE *my, int64_t *params);
 extern void wld_analyze_x_distribution(WLD_Map *map);  
 extern void wld_debug_walls_with_x_diff(WLD_Map *map);
 // Funciones 3D WLD (renderizado VPE sin dependencias externas)  
@@ -224,8 +281,8 @@ extern void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, fl
 extern void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,   
                               int col, int screen_w, int screen_h,  
                               float cam_x, float cam_y, float cam_z, float distance);  
-extern float intersect_ray_segment(float ray_x, float ray_y, float seg_x1, float seg_y1,  
-                                   float seg_x2, float seg_y2);  
+extern float intersect_ray_segment(float ray_dir_x, float ray_dir_y, float cam_x, float cam_y,  
+                                   float seg_x1, float seg_y1, float seg_x2, float seg_y2);
   
 // Función exportada para BennuGD2  
 extern int64_t libmod_heightmap_render_wld_3d(INSTANCE *my, int64_t *params);
@@ -4041,76 +4098,68 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
 {  
     if (!map || !map->loaded) return;  
       
-    // Crear/validar render_buffer  
+    // Crear buffer si es necesario  
     if (!render_buffer || render_buffer->width != screen_w || render_buffer->height != screen_h) {  
         if (render_buffer) bitmap_destroy(render_buffer);  
         render_buffer = bitmap_new_syslib(screen_w, screen_h);  
         if (!render_buffer) return;  
     }  
       
-    // Limpiar con color de cielo  
+    // Limpiar con cielo  
     gr_clear_as(render_buffer, 0x87CEEB);  
       
     // Encontrar región actual de la cámara  
     int current_region = -1;  
     for (int i = 0; i < map->num_regions; i++) {  
-        if (point_in_region(camera.x, camera.y, i, map)) {  
+        if (map->regions[i] && point_in_region(camera.x, camera.y, i, map)) {  
             current_region = i;  
             break;  
         }  
     }  
       
     if (current_region < 0) {  
-        // Dibujar indicador si cámara está fuera de regiones  
-        for (int x = screen_w/2 - 50; x < screen_w/2 + 50; x++) {  
-            for (int y = screen_h/2 - 50; y < screen_h/2 + 50; y++) {  
-                gr_put_pixel(render_buffer, x, y, 0xFF0000);  
-            }  
-        }  
+        printf("DEBUG: Cámara fuera de todas las regiones\n");  
         return;  
     }  
       
-    // Loop principal de raycasting por columna  
-    int walls_hit = 0;  
+    printf("DEBUG: Cámara en región %d - iniciando raycasting\n", current_region);  
+      
+    int walls_found = 0;  
+      
+    // Renderizar cada columna con raycasting  
     for (int col = 0; col < screen_w; col++) {  
-        // Calcular ángulo del rayo para esta columna  
-        float ray_angle = camera.angle - (camera.fov * 0.5f) +   
-                         (col * camera.fov / screen_w);  
+        // Calcular dirección del rayo  
+        float angle_offset = ((float)col - screen_w/2.0f) * 0.003f;  
+        float ray_dir_x = cos(camera.angle + angle_offset);  
+        float ray_dir_y = sin(camera.angle + angle_offset);  
           
-        float ray_dir_x = cos(ray_angle);  
-        float ray_dir_y = sin(ray_angle);  
-          
-        // Encontrar pared impactada  
         float hit_distance = 999999.0f;  
         WLD_Wall *hit_wall = NULL;  
         int hit_region = current_region;  
           
+        // Escanear paredes visibles  
         scan_walls_from_region(map, current_region, camera.x, camera.y,  
-                              ray_dir_x, ray_dir_y, &hit_distance, &hit_wall, &hit_region);  
+                              ray_dir_x, ray_dir_y, &hit_distance,  
+                              &hit_wall, &hit_region);  
           
-        // Renderizar columna si hay impacto  
+        // Renderizar pared golpeada  
         if (hit_wall && hit_distance < 999999.0f) {  
-            render_wall_column(map, hit_wall, hit_region, col, screen_w, screen_h,  
-                             camera.x, camera.y, camera.z, hit_distance);  
-            walls_hit++;  
-        } else {  
-            // Dibujar piso/techo por defecto para columnas sin impacto  
-            for (int y = 0; y < screen_h/2; y++) {  
-                gr_put_pixel(render_buffer, col, y, 0x696969);  
-            }  
-            for (int y = screen_h/2; y < screen_h; y++) {  
-                gr_put_pixel(render_buffer, col, y, 0x8B4513);  
-            }  
+            render_wall_column(map, hit_wall, hit_region, col,  
+                              screen_w, screen_h, camera.x, camera.y,  
+                              camera.z, hit_distance);  
+            walls_found++;  
         }  
     }  
       
-    printf("DEBUG: render_wld() completado - %d paredes renderizadas\n", walls_hit);  
+    printf("DEBUG: Raycasting completado - paredes encontradas: %d\n", walls_found);  
 }
   
 // Función auxiliar para verificar si punto está en región  
 int point_in_region(float x, float y, int region_idx, WLD_Map *map)  
 {  
-    if (region_idx < 0 || region_idx >= map->num_regions) return 0;  
+    if (!map || region_idx < 0 || region_idx >= map->num_regions) {  
+        return 0;  
+    }  
       
     int inside = 0;  
     for (int i = 0; i < map->num_walls; i++) {  
@@ -4134,155 +4183,178 @@ int point_in_region(float x, float y, int region_idx, WLD_Map *map)
         }  
     }  
     return inside;  
-}  
+}
   
 // Función para escanear paredes visibles (similar a ScanRegion de VPE)  
 void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam_y,  
                            float ray_dir_x, float ray_dir_y, float *hit_distance,  
                            WLD_Wall **hit_wall, int *hit_region)  
 {  
-    // Inicializar con distancia infinita  
+    int visited_regions[256];  
+    int num_visited = 0;  
+    int regions_to_visit[256];  
+    regions_to_visit[0] = region_idx;  
+    int num_to_visit = 1;  
+      
     *hit_distance = 999999.0f;  
     *hit_wall = NULL;  
     *hit_region = region_idx;  
       
-    // DEBUG: Track wall consistency  
-    static int last_wall_id = -1;  
-    static int consistency_errors = 0;  
-      
-    // Solo escanear paredes de la región actual (como VPE)  
-    for (int i = 0; i < map->num_walls; i++) {  
-        WLD_Wall *wall = map->walls[i];  
-        if (!wall) continue;  
+    while (num_to_visit > 0) {  
+        int current = regions_to_visit[--num_to_visit];  
           
-        // Verificar que la pared pertenezca a esta región  
-        if (wall->front_region != region_idx && wall->back_region != region_idx) continue;  
-          
-        int p1 = wall->p1;  
-        int p2 = wall->p2;  
-        if (p1 < 0 || p1 >= map->num_points || p2 < 0 || p2 >= map->num_points) continue;  
-        if (!map->points[p1] || !map->points[p2]) continue;  
-          
-        // Transformar coordenadas relativas a la cámara  
-        float x1 = map->points[p1]->x - cam_x;  
-        float y1 = map->points[p1]->y - cam_y;  
-        float x2 = map->points[p2]->x - cam_x;  
-        float y2 = map->points[p2]->y - cam_y;  
-          
-        // Usar el mismo algoritmo de intersección que VPE  
-        float t = intersect_ray_segment(ray_dir_x, ray_dir_y, x1, y1, x2, y2);  
-          
-        if (t > 0.1f && t < *hit_distance) {  
-            *hit_distance = t;  
-            *hit_wall = wall;  
-              
-            // DEBUG: Check consistency  
-            if (last_wall_id != -1 && wall->type != last_wall_id && consistency_errors < 10) {  
-                printf("DEBUG: Inconsistencia de pared - era %d, ahora %d\n",   
-                       last_wall_id, wall->type);  
-                consistency_errors++;  
+        int already_visited = 0;  
+        for (int i = 0; i < num_visited; i++) {  
+            if (visited_regions[i] == current) {  
+                already_visited = 1;  
+                break;  
             }  
-            last_wall_id = wall->type;  
+        }  
+          
+        if (already_visited) continue;  
+        visited_regions[num_visited++] = current;  
+          
+        for (int i = 0; i < map->num_walls; i++) {  
+            if (!map->walls[i]) continue;  
+              
+            int front = map->walls[i]->front_region;  
+            int back = map->walls[i]->back_region;  
+              
+            if (front != current && back != current) continue;  
+              
+            int p1 = map->walls[i]->p1;  
+            int p2 = map->walls[i]->p2;  
+            if (p1 < 0 || p1 >= map->num_points || p2 < 0 || p2 >= map->num_points) continue;  
+            if (!map->points[p1] || !map->points[p2]) continue;  
+              
+            // CORRECCIÓN: Usar coordenadas absolutas y transformar en intersect_ray_segment  
+            float x1 = map->points[p1]->x;  
+            float y1 = map->points[p1]->y;  
+            float x2 = map->points[p2]->x;  
+            float y2 = map->points[p2]->y;  
+              
+            float t = intersect_ray_segment(ray_dir_x, ray_dir_y, cam_x, cam_y,  
+                                           x1, y1, x2, y2);  
+              
+            if (t > 0.1f && t < *hit_distance) {  
+                *hit_distance = t;  
+                *hit_wall = map->walls[i];  
+                int adjacent = (front == current) ? back : front;  
+                  
+                if (adjacent >= 0 && adjacent < map->num_regions) {  
+                    *hit_region = adjacent;  
+                } else {  
+                    *hit_region = current;  
+                }  
+            }  
+              
+            int adjacent = (front == current) ? back : front;  
+            if (adjacent >= 0 && adjacent < map->num_regions && num_to_visit < 256) {  
+                int already_queued = 0;  
+                for (int j = 0; j < num_to_visit; j++) {  
+                    if (regions_to_visit[j] == adjacent) {  
+                        already_queued = 1;  
+                        break;  
+                    }  
+                }  
+                if (!already_queued) {  
+                    regions_to_visit[num_to_visit++] = adjacent;  
+                }  
+            }  
         }  
     }  
 }
 
   
 // Función para renderizar columna de pared (similar a DrawSimpleWall)  
-void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,     
-                       int col, int screen_w, int screen_h,    
-                       float cam_x, float cam_y, float cam_z, float distance)    
-{    
-    if (!wall || region_idx < 0 || region_idx >= map->num_regions) {    
-        return;    
-    }    
-        
-    WLD_Region *region = map->regions[region_idx];    
-    if (!region) {    
-        return;    
-    }    
-        
-    if (region->ceil_height <= region->floor_height) {    
-        return;    
-    }    
-        
-    if (distance < 0.1f || distance > 10000.0f) {    
-        return;    
-    }    
-        
-    // Factor de escala consistente para eliminar ondas  
-    float perspective_scale = 20.0f;  
+void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,       
+                       int col, int screen_w, int screen_h,      
+                       float cam_x, float cam_y, float cam_z, float distance)      
+{      
+    if (!wall || region_idx < 0 || region_idx >= map->num_regions) {      
+        return;      
+    }          
+    WLD_Region *region = map->regions[region_idx];      
+    if (!region) {      
+        return;      
+    }          
+    if (region->ceil_height <= region->floor_height) {      
+        return;      
+    }          
+    if (distance < 0.1f || distance > 10000.0f) {      
+        return;      
+    }          
+    // CORREGIDO: Usar fórmula VPE original en lugar de perspective_scale arbitrario [19-cite-0](#19-cite-0)   
+    float t1 = 300.0f / distance;  // ConstVDist = 300  
+    float t = (cam_z - region->floor_height) * 0.25f;  // >> 2 = /4  
+    float wall_bottom = screen_h/2.0f - t * t1 + 120.0f * 16384.0f / 65536.0f;  // Horizon << 14  
       
-    float wall_top = screen_h/2.0f - ((cam_z - region->ceil_height) / distance * perspective_scale);    
-    float wall_bottom = screen_h/2.0f - ((cam_z - region->floor_height) / distance * perspective_scale);    
+    t = (cam_z - region->ceil_height) * 0.25f;  
+    float wall_top = screen_h/2.0f - t * t1 + 120.0f * 16384.0f / 65536.0f;  
       
-    if (wall_top > wall_bottom) {    
-        float temp = wall_top;    
-        wall_top = wall_bottom;    
-        wall_bottom = temp;    
-    }    
-      
-    if (wall_top < 0) wall_top = 0;    
-    if (wall_bottom >= screen_h) wall_bottom = screen_h - 1;    
-      
-    int y_start = (int)wall_top;    
-    int y_end = (int)wall_bottom;    
-      
-    if (y_start < 0) y_start = 0;    
-    if (y_end >= screen_h) y_end = screen_h - 1;    
-      
-    if (y_start > y_end) {    
-        return;    
-    }    
-      
-    // Shading basado en distancia  
-    float fog_factor = 1.0f - (distance / 2000.0f);  
-    if (fog_factor < 0.3f) fog_factor = 0.3f;  
-    if (fog_factor > 1.0f) fog_factor = 1.0f;  
-      
-    // Colores sólidos: paredes rojas, techo blanco, suelo blanco  
-    Uint8 wall_r = (Uint8)(255 * fog_factor);  
-    Uint8 wall_g = 0;    
-    Uint8 wall_b = 0;    
-    uint32_t wall_color = SDL_MapRGB(gPixelFormat, wall_r, wall_g, wall_b);  
-      
-    Uint8 white_val = (Uint8)(255 * fog_factor);  
-    uint32_t white_color = SDL_MapRGB(gPixelFormat, white_val, white_val, white_val);  
-      
-    // Dibujar pared roja  
-    for (int y = y_start; y <= y_end; y++) {    
-        gr_put_pixel(render_buffer, col, y, wall_color);    
-    }    
-      
-    // Dibujar suelo blanco  
-    for (int y = y_end + 1; y < screen_h; y++) {    
-        gr_put_pixel(render_buffer, col, y, white_color);    
-    }    
-      
-    // Dibujar techo blanco  
-    for (int y = 0; y < y_start; y++) {    
-        gr_put_pixel(render_buffer, col, y, white_color);    
-    }    
+    if (wall_top > wall_bottom) {      
+        float temp = wall_top;      
+        wall_top = wall_bottom;      
+        wall_bottom = temp;      
+    }          
+    if (wall_top < 0) wall_top = 0;      
+    if (wall_bottom >= screen_h) wall_bottom = screen_h - 1;          
+    int y_start = (int)wall_top;      
+    int y_end = (int)wall_bottom;          
+    if (y_start < 0) y_start = 0;      
+    if (y_end >= screen_h) y_end = screen_h - 1;          
+    if (y_start > y_end) {      
+        return;      
+    }          
+    // Shading basado en distancia    
+    float fog_factor = 1.0f - (distance / 2000.0f);    
+    if (fog_factor < 0.3f) fog_factor = 0.3f;    
+    if (fog_factor > 1.0f) fog_factor = 1.0f;        
+    // Colores sólidos: paredes rojas, techo blanco, suelo blanco    
+    Uint8 wall_r = (Uint8)(255 * fog_factor);    
+    Uint8 wall_g = 0;      
+    Uint8 wall_b = 0;      
+    uint32_t wall_color = SDL_MapRGB(gPixelFormat, wall_r, wall_g, wall_b);        
+    Uint8 white_val = (Uint8)(255 * fog_factor);    
+    uint32_t white_color = SDL_MapRGB(gPixelFormat, white_val, white_val, white_val);        
+    // Dibujar pared roja    
+    for (int y = y_start; y <= y_end; y++) {      
+        gr_put_pixel(render_buffer, col, y, wall_color);      
+    }          
+    // Dibujar suelo blanco    
+    for (int y = y_end + 1; y < screen_h; y++) {      
+        gr_put_pixel(render_buffer, col, y, white_color);      
+    }          
+    // Dibujar techo blanco    
+    for (int y = 0; y < y_start; y++) {      
+        gr_put_pixel(render_buffer, col, y, white_color);      
+    }      
 }
   
 // Función de intersección rayo-segmento  
-float intersect_ray_segment(float ray_x, float ray_y, float seg_x1, float seg_y1,  
-                           float seg_x2, float seg_y2)  
+float intersect_ray_segment(float ray_dir_x, float ray_dir_y, float cam_x, float cam_y,  
+                           float seg_x1, float seg_y1, float seg_x2, float seg_y2)  
 {  
-    float seg_dx = seg_x2 - seg_x1;  
-    float seg_dy = seg_y2 - seg_y1;  
+    // Transformar segmento a coordenadas relativas a la cámara  
+    float x1 = seg_x1 - cam_x;  
+    float y1 = seg_y1 - cam_y;  
+    float x2 = seg_x2 - cam_x;  
+    float y2 = seg_y2 - cam_y;  
       
-    float denominator = ray_x * seg_dy - ray_y * seg_dx;  
+    float seg_dx = x2 - x1;  
+    float seg_dy = y2 - y1;  
+      
+    float denominator = ray_dir_x * seg_dy - ray_dir_y * seg_dx;  
     if (fabs(denominator) < 0.0001f) return -1;  
       
-    float t = (seg_x1 * seg_dy - seg_y1 * seg_dx) / denominator;  
-    float s = (seg_x1 * ray_y - seg_y1 * ray_x) / denominator;  
+    float t = (x1 * seg_dy - y1 * seg_dx) / denominator;  
+    float s = (x1 * ray_dir_y - y1 * ray_dir_x) / denominator;  
       
     if (t > 0 && s >= 0 && s <= 1) {  
         return t;  
     }  
     return -1;  
-}  
+}
 
 // Función exportada para BennuGD2 - similar a libmod_heightmap_render_wld_2d()  
 int64_t libmod_heightmap_render_wld_3d(INSTANCE *my, int64_t *params)  
