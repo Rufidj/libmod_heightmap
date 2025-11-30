@@ -4039,33 +4039,34 @@ int64_t libmod_heightmap_test_render_buffer(INSTANCE *my, int64_t *params)
 
 void render_wld(WLD_Map *map, int screen_w, int screen_h)  
 {  
-    if (!map || !map->loaded) return;  
+    // DEBUG: Solo un mensaje al inicio  
+    printf("DEBUG: render_wld() iniciando - pantalla: %dx%d\n", screen_w, screen_h);  
       
-    // DEBUG: Mostrar posición actual de la cámara  
-    printf("DEBUG: Antes - cámara(%.1f,%.1f,%.1f)\n", camera.x, camera.y, camera.z);  
-    fflush(stdout);  
+    if (!map || !map->loaded) {  
+        printf("ERROR: render_wld() - mapa inválido\n");  
+        return;  
+    }  
       
-    // FORZAR posición de cámara para prueba  
-    camera.x = 5938.0f;  
-    camera.y = 5236.0f;   
-    camera.z = 1100.0f;  
-    camera.angle = 0.0f;  
-    camera.fov = 60.0f;  
+    // Validar dimensiones del mapa  
+    if (map->num_points <= 0 || map->num_walls <= 0 || map->num_regions <= 0) {  
+        printf("ERROR: render_wld() - dimensiones inválidas\n");  
+        return;  
+    }  
       
-    printf("DEBUG: Después - cámara(%.1f,%.1f,%.1f)\n", camera.x, camera.y, camera.z);  
-    fflush(stdout);  
-      
-    // Crear buffer y renderizar cielo  
+    // Crear/validar render_buffer  
     if (!render_buffer || render_buffer->width != screen_w || render_buffer->height != screen_h) {  
         if (render_buffer) bitmap_destroy(render_buffer);  
         render_buffer = bitmap_new_syslib(screen_w, screen_h);  
-        if (!render_buffer) return;  
+        if (!render_buffer) {  
+            printf("ERROR: No se pudo crear render_buffer\n");  
+            return;  
+        }  
     }  
       
-    // Cielo azul  
+    // Limpiar con color de cielo  
     gr_clear_as(render_buffer, 0x87CEEB);  
       
-    // Encontrar región  
+    // Encontrar región actual de la cámara  
     int current_region = -1;  
     for (int i = 0; i < map->num_regions; i++) {  
         if (point_in_region(camera.x, camera.y, i, map)) {  
@@ -4074,41 +4075,52 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         }  
     }  
       
-    printf("DEBUG: Región encontrada: %d\n", current_region);  
-    fflush(stdout);  
-      
-    // Si encontramos región, dibujar líneas de prueba visibles  
-    if (current_region >= 0) {  
-        printf("DEBUG: Dibujando líneas de prueba visibles\n");  
-        fflush(stdout);  
-          
-        // Línea horizontal roja gruesa en el centro  
-        for (int x = 100; x < 500; x++) {  
-            for (int y = 238; y <= 242; y++) {  // 5 píxeles de grosor  
-                gr_put_pixel(render_buffer, x, y, 0xFF0000);  
-            }  
-        }  
-          
-        // Línea vertical verde gruesa en el centro  
-        for (int y = 100; y < 380; y++) {  
-            for (int x = 318; x <= 322; x++) {  // 5 píxeles de grosor  
-                gr_put_pixel(render_buffer, x, y, 0x00FF00);  
-            }  
-        }  
-          
-        // Rectángulo amarillo grande  
-        for (int x = 200; x < 400; x++) {  
-            for (int y = 150; y < 200; y++) {  
-                gr_put_pixel(render_buffer, x, y, 0xFFFF00);  
-            }  
-        }  
-          
-        printf("DEBUG: Líneas de prueba dibujadas\n");  
-        fflush(stdout);  
+    if (current_region < 0) {  
+        printf("ERROR: Cámara fuera de todas las regiones\n");  
+        return;  
     }  
       
-    printf("DEBUG: render_wld() completado\n");  
-    fflush(stdout);  
+    printf("DEBUG: Región encontrada: %d, iniciando raycasting\n", current_region);  
+      
+    // LOOP PRINCIPAL: Renderizar cada columna (SIN DEBUGS POR COLUMNA)  
+    float fov_rad = camera.fov * (M_PI / 180.0f);  
+    float angle_step = fov_rad / (float)screen_w;  
+      
+    int walls_hit = 0;  
+      
+    for (int col = 0; col < screen_w; col++) {  
+        // Calcular ángulo del rayo para esta columna  
+        float ray_angle = camera.angle - (fov_rad * 0.5f) + (col * angle_step);  
+        float ray_dir_x = cos(ray_angle);  
+        float ray_dir_y = sin(ray_angle);  
+          
+        // Buscar intersección con paredes  
+        float hit_distance = 999999.0f;  
+        WLD_Wall *hit_wall = NULL;  
+        int hit_region = current_region;  
+          
+        scan_walls_from_region(map, current_region, camera.x, camera.y,  
+                              ray_dir_x, ray_dir_y, &hit_distance,  
+                              &hit_wall, &hit_region);  
+          
+        // Renderizar columna si hay impacto  
+        if (hit_wall && hit_distance < 999999.0f) {  
+            render_wall_column(map, hit_wall, hit_region, col, screen_w, screen_h,  
+                             camera.x, camera.y, camera.z, hit_distance);  
+            walls_hit++;  
+        } else {  
+            // Dibujar piso/techo por defecto  
+            for (int y = 0; y < screen_h/2; y++) {  
+                gr_put_pixel(render_buffer, col, y, 0x696969);  
+            }  
+            for (int y = screen_h/2; y < screen_h; y++) {  
+                gr_put_pixel(render_buffer, col, y, 0x8B4513);  
+            }  
+        }  
+    }  
+      
+    // DEBUG: Solo estadísticas finales  
+    printf("DEBUG: render_wld() completado - %d paredes renderizadas\n", walls_hit);  
 }
   
 // Función auxiliar para verificar si punto está en región  
@@ -4141,191 +4153,168 @@ int point_in_region(float x, float y, int region_idx, WLD_Map *map)
 }  
   
 // Función para escanear paredes visibles (similar a ScanRegion de VPE)  
-void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam_y,  
-                           float ray_dir_x, float ray_dir_y, float *hit_distance,  
-                           WLD_Wall **hit_wall, int *hit_region)  
-{  
-    int visited_regions[256];  
-    int num_visited = 0;  
-    int regions_to_visit[256];  
-    regions_to_visit[0] = region_idx;  
-    int num_to_visit = 1;  
-      
-    printf("DEBUG: scan_walls_from_region() iniciando desde región %d\n", region_idx);  
-    fflush(stdout);  
-      
-    while (num_to_visit > 0) {  
-        int current = regions_to_visit[--num_to_visit];  
-          
-        int already_visited = 0;  
-        for (int i = 0; i < num_visited; i++) {  
-            if (visited_regions[i] == current) {  
-                already_visited = 1;  
-                break;  
-            }  
-        }  
-          
-        if (already_visited) continue;  
-        visited_regions[num_visited++] = current;  
-          
-        printf("DEBUG: Visitando región %d (%d paredes)\n", current, map->num_walls);  
-        fflush(stdout);  
-          
-        for (int i = 0; i < map->num_walls; i++) {  
-            if (!map->walls[i]) continue;  
-              
-            int front = map->walls[i]->front_region;  
-            int back = map->walls[i]->back_region;  
-              
-            if (front != current && back != current) continue;  
-              
-            int p1 = map->walls[i]->p1;  
-            int p2 = map->walls[i]->p2;  
-            if (p1 < 0 || p1 >= map->num_points || p2 < 0 || p2 >= map->num_points) continue;  
-            if (!map->points[p1] || !map->points[p2]) continue;  
-              
-            float x1 = map->points[p1]->x - cam_x;  
-            float y1 = map->points[p1]->y - cam_y;  
-            float x2 = map->points[p2]->x - cam_x;  
-            float y2 = map->points[p2]->y - cam_y;  
-              
-            float t = intersect_ray_segment(ray_dir_x, ray_dir_y, x1, y1, x2, y2);  
-              
-            if (t > 0.1f && t < *hit_distance) {  
-                *hit_distance = t;  
-                *hit_wall = map->walls[i];  
-                int adjacent = (front == current) ? back : front;  
-                  
-                // VALIDACIÓN: solo asignar si es región válida  
-                if (adjacent >= 0 && adjacent < map->num_regions) {  
-                    *hit_region = adjacent;  
-                } else {  
-                    // Para paredes sólidas (back_region = -1), usar la región actual  
-                    *hit_region = current;  
-                }  
-                  
-                printf("DEBUG: Pared %d golpeada a distancia %.1f (región %d -> %d)\n",   
-                       i, t, current, *hit_region);  
-                fflush(stdout);  
-            }  
-              
-            int adjacent = (front == current) ? back : front;  
-            if (adjacent >= 0 && adjacent < map->num_regions && num_to_visit < 256) {  
-                int already_queued = 0;  
-                for (int j = 0; j < num_to_visit; j++) {  
-                    if (regions_to_visit[j] == adjacent) {  
-                        already_queued = 1;  
-                        break;  
-                    }  
-                }  
-                if (!already_queued) {  
-                    regions_to_visit[num_to_visit++] = adjacent;  
-                    printf("DEBUG: Agregando región adyacente %d a la cola\n", adjacent);  
-                    fflush(stdout);  
-                }  
-            }  
-        }  
-    }  
-      
-    if (*hit_distance < 999999) {  
-        printf("DEBUG: scan_walls_from_region() encontró pared a distancia %.1f\n", *hit_distance);  
-    } else {  
-        printf("DEBUG: scan_walls_from_region() NO encontró paredes\n");  
-    }  
-    fflush(stdout);  
+void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam_y,    
+                           float ray_dir_x, float ray_dir_y, float *hit_distance,    
+                           WLD_Wall **hit_wall, int *hit_region)    
+{    
+    int visited_regions[256];    
+    int num_visited = 0;    
+    int regions_to_visit[256];    
+    regions_to_visit[0] = region_idx;    
+    int num_to_visit = 1;    
+        
+    while (num_to_visit > 0) {    
+        int current = regions_to_visit[--num_to_visit];    
+            
+        int already_visited = 0;    
+        for (int i = 0; i < num_visited; i++) {    
+            if (visited_regions[i] == current) {    
+                already_visited = 1;    
+                break;    
+            }    
+        }    
+            
+        if (already_visited) continue;    
+        visited_regions[num_visited++] = current;    
+            
+        for (int i = 0; i < map->num_walls; i++) {    
+            if (!map->walls[i]) continue;    
+                
+            int front = map->walls[i]->front_region;    
+            int back = map->walls[i]->back_region;    
+                
+            if (front != current && back != current) continue;    
+                
+            int p1 = map->walls[i]->p1;    
+            int p2 = map->walls[i]->p2;    
+            if (p1 < 0 || p1 >= map->num_points || p2 < 0 || p2 >= map->num_points) continue;    
+            if (!map->points[p1] || !map->points[p2]) continue;    
+                
+            float x1 = map->points[p1]->x - cam_x;    
+            float y1 = map->points[p1]->y - cam_y;    
+            float x2 = map->points[p2]->x - cam_x;    
+            float y2 = map->points[p2]->y - cam_y;    
+                
+            float t = intersect_ray_segment(ray_dir_x, ray_dir_y, x1, y1, x2, y2);    
+                
+            if (t > 0.1f && t < *hit_distance) {    
+                *hit_distance = t;    
+                *hit_wall = map->walls[i];    
+                int adjacent = (front == current) ? back : front;    
+                    
+                if (adjacent >= 0 && adjacent < map->num_regions) {    
+                    *hit_region = adjacent;    
+                } else {    
+                    *hit_region = current;    
+                }    
+            }    
+                
+            int adjacent = (front == current) ? back : front;    
+            if (adjacent >= 0 && adjacent < map->num_regions && num_to_visit < 256) {    
+                int already_queued = 0;    
+                for (int j = 0; j < num_to_visit; j++) {    
+                    if (regions_to_visit[j] == adjacent) {    
+                        already_queued = 1;    
+                        break;    
+                    }    
+                }    
+                if (!already_queued) {    
+                    regions_to_visit[num_to_visit++] = adjacent;    
+                }    
+            }    
+        }    
+    }    
 }
   
 // Función para renderizar columna de pared (similar a DrawSimpleWall)  
-void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,   
-                       int col, int screen_w, int screen_h,  
-                       float cam_x, float cam_y, float cam_z, float distance)  
-{  
-    // VALIDACIÓN CRÍTICA: region_idx debe ser válido  
-    if (!wall || region_idx < 0 || region_idx >= map->num_regions) {  
-        printf("DEBUG: render_wall_column() - región inválida: %d\n", region_idx);  
-        fflush(stdout);  
-        return;  
-    }  
+void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,     
+                       int col, int screen_w, int screen_h,    
+                       float cam_x, float cam_y, float cam_z, float distance)    
+{    
+    // VALIDACIÓN CRÍTICA: region_idx debe ser válido    
+    if (!wall || region_idx < 0 || region_idx >= map->num_regions) {    
+        return;    
+    }    
+        
+    WLD_Region *region = map->regions[region_idx];    
+    if (!region) {    
+        return;    
+    }    
+        
+    // VALIDACIÓN: Verificar que las alturas sean sensatas    
+    if (region->ceil_height <= region->floor_height) {    
+        return;    
+    }    
+        
+    // VALIDACIÓN: Evitar valores extremos de distancia    
+    if (distance < 0.1f || distance > 10000.0f) {    
+        return;    
+    }    
+        
+    // Forzar altura de cámara válida si está fuera de rango    
+    if (cam_z < region->floor_height) {    
+        cam_z = region->floor_height + 50;    
+    }    
+    if (cam_z > region->ceil_height) {    
+        cam_z = region->ceil_height - 50;    
+    }    
+        
+    // Calcular altura proyectada con fórmulas corregidas    
+    float effective_ceil = region->ceil_height;    
+    float effective_floor = region->floor_height;    
       
-    WLD_Region *region = map->regions[region_idx];  
-    if (!region) {  
-        printf("DEBUG: render_wall_column() - región %d es NULL\n", region_idx);  
-        fflush(stdout);  
-        return;  
-    }  
+    if (effective_ceil <= effective_floor) {    
+        effective_floor = region->floor_height;    
+        effective_ceil = region->floor_height + 100;    
+    }    
       
-    // VALIDACIÓN: Verificar que las alturas sean sensatas  
-    if (region->ceil_height <= region->floor_height) {  
-        printf("DEBUG: render_wall_column() - alturas inválidas: floor=%d, ceil=%d\n",   
-               region->floor_height, region->ceil_height);  
-        fflush(stdout);  
-        return;  
-    }  
+    // Fórmulas corregidas para evitar inversión    
+    float wall_top = screen_h/2.0f - ((cam_z - effective_ceil) / distance * 150.0f);    
+    float wall_bottom = screen_h/2.0f - ((cam_z - effective_floor) / distance * 150.0f);    
       
-    // VALIDACIÓN: Evitar valores extremos de distancia  
-    if (distance < 0.1f || distance > 10000.0f) {  
-        printf("DEBUG: render_wall_column() - distancia extrema ignorada: %.1f\n", distance);  
-        fflush(stdout);  
-        return;  
-    }  
+    // VALIDACIÓN CRÍTICA: Detectar y corregir rangos invertidos    
+    if (wall_top > wall_bottom) {    
+        // Intercambiar valores si están invertidos    
+        float temp = wall_top;    
+        wall_top = wall_bottom;    
+        wall_bottom = temp;    
+    }    
       
-    // Forzar altura de cámara válida si está fuera de rango  
-    if (cam_z < region->floor_height) {  
-        cam_z = region->floor_height + 50;  
-    }  
-    if (cam_z > region->ceil_height) {  
-        cam_z = region->ceil_height - 50;  
-    }  
+    // Clipping robusto    
+    if (wall_top < 0) wall_top = 0;    
+    if (wall_bottom >= screen_h) wall_bottom = screen_h - 1;    
       
-    // Calcular altura proyectada con factor reducido  
-    float wall_height = region->ceil_height - region->floor_height;  
-    float wall_top = screen_h/2.0f - ((cam_z - region->ceil_height) / distance * 200.0f);  
-    float wall_bottom = screen_h/2.0f - ((cam_z - region->floor_height) / distance * 200.0f);  
+    int y_start = (int)wall_top;    
+    int y_end = (int)wall_bottom;    
       
-    // Clipping robusto  
-    if (wall_top < -screen_h) wall_top = -screen_h;  
-    if (wall_bottom > screen_h * 2) wall_bottom = screen_h * 2;  
+    // Validar rango después de clipping    
+    if (y_start < 0) y_start = 0;    
+    if (y_end >= screen_h) y_end = screen_h - 1;    
       
-    int y_start = (int)wall_top;  
-    int y_end = (int)wall_bottom;  
+    if (y_start > y_end) {    
+        return;    
+    }    
       
-    // Validar rango después de clipping  
-    if (y_start < 0) y_start = 0;  
-    if (y_end >= screen_h) y_end = screen_h - 1;  
+    // Calcular shading basado en distancia    
+    int shade = 255 - (int)(distance / 40.0f);    
+    if (shade < 50) shade = 50;    
+    if (shade > 255) shade = 255;    
       
-    if (y_start > y_end) {  
-        printf("DEBUG: render_wall_column() - rango inválido después de clipping: %d-%d\n",   
-               y_start, y_end);  
-        fflush(stdout);  
-        return;  
-    }  
+    uint32_t wall_color = (shade << 16) | (shade << 8) | shade;    
       
-    // Calcular shading basado en distancia  
-    int shade = 255 - (int)(distance / 40.0f);  
-    if (shade < 50) shade = 50;  
-    if (shade > 255) shade = 255;  
+    // Dibujar columna de pared (SIN DEBUG)    
+    for (int y = y_start; y <= y_end; y++) {    
+        gr_put_pixel(render_buffer, col, y, wall_color);    
+    }    
       
-    uint32_t wall_color = (shade << 16) | (shade << 8) | shade;  
+    // Dibujar piso y techo    
+    for (int y = y_end + 1; y < screen_h; y++) {    
+        gr_put_pixel(render_buffer, col, y, 0x8B4513);    
+    }    
       
-    // Dibujar columna de pared  
-    int pixels_drawn = 0;  
-    for (int y = y_start; y <= y_end; y++) {  
-        gr_put_pixel(render_buffer, col, y, wall_color);  
-        pixels_drawn++;  
-    }  
-      
-    printf("DEBUG: render_wall_column() - dibujados %d píxeles en columna %d\n",   
-           pixels_drawn, col);  
-    fflush(stdout);  
-      
-    // Dibujar piso y techo  
-    for (int y = y_end + 1; y < screen_h; y++) {  
-        gr_put_pixel(render_buffer, col, y, 0x8B4513);  
-    }  
-      
-    for (int y = 0; y < y_start; y++) {  
-        gr_put_pixel(render_buffer, col, y, 0x696969);  
-    }  
+    for (int y = 0; y < y_start; y++) {    
+        gr_put_pixel(render_buffer, col, y, 0x696969);    
+    }    
 }
   
 // Función de intersección rayo-segmento  
