@@ -4039,28 +4039,13 @@ int64_t libmod_heightmap_test_render_buffer(INSTANCE *my, int64_t *params)
 
 void render_wld(WLD_Map *map, int screen_w, int screen_h)  
 {  
-    // DEBUG: Solo un mensaje al inicio  
-    printf("DEBUG: render_wld() iniciando - pantalla: %dx%d\n", screen_w, screen_h);  
-      
-    if (!map || !map->loaded) {  
-        printf("ERROR: render_wld() - mapa inválido\n");  
-        return;  
-    }  
-      
-    // Validar dimensiones del mapa  
-    if (map->num_points <= 0 || map->num_walls <= 0 || map->num_regions <= 0) {  
-        printf("ERROR: render_wld() - dimensiones inválidas\n");  
-        return;  
-    }  
+    if (!map || !map->loaded) return;  
       
     // Crear/validar render_buffer  
     if (!render_buffer || render_buffer->width != screen_w || render_buffer->height != screen_h) {  
         if (render_buffer) bitmap_destroy(render_buffer);  
         render_buffer = bitmap_new_syslib(screen_w, screen_h);  
-        if (!render_buffer) {  
-            printf("ERROR: No se pudo crear render_buffer\n");  
-            return;  
-        }  
+        if (!render_buffer) return;  
     }  
       
     // Limpiar con color de cielo  
@@ -4076,32 +4061,32 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
     }  
       
     if (current_region < 0) {  
-        printf("ERROR: Cámara fuera de todas las regiones\n");  
+        // Dibujar indicador si cámara está fuera de regiones  
+        for (int x = screen_w/2 - 50; x < screen_w/2 + 50; x++) {  
+            for (int y = screen_h/2 - 50; y < screen_h/2 + 50; y++) {  
+                gr_put_pixel(render_buffer, x, y, 0xFF0000);  
+            }  
+        }  
         return;  
     }  
       
-    printf("DEBUG: Región encontrada: %d, iniciando raycasting\n", current_region);  
-      
-    // LOOP PRINCIPAL: Renderizar cada columna (SIN DEBUGS POR COLUMNA)  
-    float fov_rad = camera.fov * (M_PI / 180.0f);  
-    float angle_step = fov_rad / (float)screen_w;  
-      
+    // Loop principal de raycasting por columna  
     int walls_hit = 0;  
-      
     for (int col = 0; col < screen_w; col++) {  
         // Calcular ángulo del rayo para esta columna  
-        float ray_angle = camera.angle - (fov_rad * 0.5f) + (col * angle_step);  
+        float ray_angle = camera.angle - (camera.fov * 0.5f) +   
+                         (col * camera.fov / screen_w);  
+          
         float ray_dir_x = cos(ray_angle);  
         float ray_dir_y = sin(ray_angle);  
           
-        // Buscar intersección con paredes  
+        // Encontrar pared impactada  
         float hit_distance = 999999.0f;  
         WLD_Wall *hit_wall = NULL;  
         int hit_region = current_region;  
           
         scan_walls_from_region(map, current_region, camera.x, camera.y,  
-                              ray_dir_x, ray_dir_y, &hit_distance,  
-                              &hit_wall, &hit_region);  
+                              ray_dir_x, ray_dir_y, &hit_distance, &hit_wall, &hit_region);  
           
         // Renderizar columna si hay impacto  
         if (hit_wall && hit_distance < 999999.0f) {  
@@ -4109,7 +4094,7 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
                              camera.x, camera.y, camera.z, hit_distance);  
             walls_hit++;  
         } else {  
-            // Dibujar piso/techo por defecto  
+            // Dibujar piso/techo por defecto para columnas sin impacto  
             for (int y = 0; y < screen_h/2; y++) {  
                 gr_put_pixel(render_buffer, col, y, 0x696969);  
             }  
@@ -4119,7 +4104,6 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         }  
     }  
       
-    // DEBUG: Solo estadísticas finales  
     printf("DEBUG: render_wld() completado - %d paredes renderizadas\n", walls_hit);  
 }
   
@@ -4153,78 +4137,56 @@ int point_in_region(float x, float y, int region_idx, WLD_Map *map)
 }  
   
 // Función para escanear paredes visibles (similar a ScanRegion de VPE)  
-void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam_y,    
-                           float ray_dir_x, float ray_dir_y, float *hit_distance,    
-                           WLD_Wall **hit_wall, int *hit_region)    
-{    
-    int visited_regions[256];    
-    int num_visited = 0;    
-    int regions_to_visit[256];    
-    regions_to_visit[0] = region_idx;    
-    int num_to_visit = 1;    
-        
-    while (num_to_visit > 0) {    
-        int current = regions_to_visit[--num_to_visit];    
-            
-        int already_visited = 0;    
-        for (int i = 0; i < num_visited; i++) {    
-            if (visited_regions[i] == current) {    
-                already_visited = 1;    
-                break;    
-            }    
-        }    
-            
-        if (already_visited) continue;    
-        visited_regions[num_visited++] = current;    
-            
-        for (int i = 0; i < map->num_walls; i++) {    
-            if (!map->walls[i]) continue;    
-                
-            int front = map->walls[i]->front_region;    
-            int back = map->walls[i]->back_region;    
-                
-            if (front != current && back != current) continue;    
-                
-            int p1 = map->walls[i]->p1;    
-            int p2 = map->walls[i]->p2;    
-            if (p1 < 0 || p1 >= map->num_points || p2 < 0 || p2 >= map->num_points) continue;    
-            if (!map->points[p1] || !map->points[p2]) continue;    
-                
-            float x1 = map->points[p1]->x - cam_x;    
-            float y1 = map->points[p1]->y - cam_y;    
-            float x2 = map->points[p2]->x - cam_x;    
-            float y2 = map->points[p2]->y - cam_y;    
-                
-            float t = intersect_ray_segment(ray_dir_x, ray_dir_y, x1, y1, x2, y2);    
-                
-            if (t > 0.1f && t < *hit_distance) {    
-                *hit_distance = t;    
-                *hit_wall = map->walls[i];    
-                int adjacent = (front == current) ? back : front;    
-                    
-                if (adjacent >= 0 && adjacent < map->num_regions) {    
-                    *hit_region = adjacent;    
-                } else {    
-                    *hit_region = current;    
-                }    
-            }    
-                
-            int adjacent = (front == current) ? back : front;    
-            if (adjacent >= 0 && adjacent < map->num_regions && num_to_visit < 256) {    
-                int already_queued = 0;    
-                for (int j = 0; j < num_to_visit; j++) {    
-                    if (regions_to_visit[j] == adjacent) {    
-                        already_queued = 1;    
-                        break;    
-                    }    
-                }    
-                if (!already_queued) {    
-                    regions_to_visit[num_to_visit++] = adjacent;    
-                }    
-            }    
-        }    
-    }    
+void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam_y,  
+                           float ray_dir_x, float ray_dir_y, float *hit_distance,  
+                           WLD_Wall **hit_wall, int *hit_region)  
+{  
+    // Inicializar con distancia infinita  
+    *hit_distance = 999999.0f;  
+    *hit_wall = NULL;  
+    *hit_region = region_idx;  
+      
+    // DEBUG: Track wall consistency  
+    static int last_wall_id = -1;  
+    static int consistency_errors = 0;  
+      
+    // Solo escanear paredes de la región actual (como VPE)  
+    for (int i = 0; i < map->num_walls; i++) {  
+        WLD_Wall *wall = map->walls[i];  
+        if (!wall) continue;  
+          
+        // Verificar que la pared pertenezca a esta región  
+        if (wall->front_region != region_idx && wall->back_region != region_idx) continue;  
+          
+        int p1 = wall->p1;  
+        int p2 = wall->p2;  
+        if (p1 < 0 || p1 >= map->num_points || p2 < 0 || p2 >= map->num_points) continue;  
+        if (!map->points[p1] || !map->points[p2]) continue;  
+          
+        // Transformar coordenadas relativas a la cámara  
+        float x1 = map->points[p1]->x - cam_x;  
+        float y1 = map->points[p1]->y - cam_y;  
+        float x2 = map->points[p2]->x - cam_x;  
+        float y2 = map->points[p2]->y - cam_y;  
+          
+        // Usar el mismo algoritmo de intersección que VPE  
+        float t = intersect_ray_segment(ray_dir_x, ray_dir_y, x1, y1, x2, y2);  
+          
+        if (t > 0.1f && t < *hit_distance) {  
+            *hit_distance = t;  
+            *hit_wall = wall;  
+              
+            // DEBUG: Check consistency  
+            if (last_wall_id != -1 && wall->type != last_wall_id && consistency_errors < 10) {  
+                printf("DEBUG: Inconsistencia de pared - era %d, ahora %d\n",   
+                       last_wall_id, wall->type);  
+                consistency_errors++;  
+            }  
+            last_wall_id = wall->type;  
+        }  
+    }  
 }
+
   
 // Función para renderizar columna de pared (similar a DrawSimpleWall)  
 void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,     
