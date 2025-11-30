@@ -4231,7 +4231,6 @@ void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,
                        int col, int screen_w, int screen_h,    
                        float cam_x, float cam_y, float cam_z, float distance)    
 {    
-    // VALIDACIÓN CRÍTICA: region_idx debe ser válido    
     if (!wall || region_idx < 0 || region_idx >= map->num_regions) {    
         return;    
     }    
@@ -4241,53 +4240,32 @@ void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,
         return;    
     }    
         
-    // VALIDACIÓN: Verificar que las alturas sean sensatas    
     if (region->ceil_height <= region->floor_height) {    
         return;    
     }    
         
-    // VALIDACIÓN: Evitar valores extremos de distancia    
     if (distance < 0.1f || distance > 10000.0f) {    
         return;    
     }    
         
-    // Forzar altura de cámara válida si está fuera de rango    
-    if (cam_z < region->floor_height) {    
-        cam_z = region->floor_height + 50;    
-    }    
-    if (cam_z > region->ceil_height) {    
-        cam_z = region->ceil_height - 50;    
-    }    
-        
-    // Calcular altura proyectada con fórmulas corregidas    
-    float effective_ceil = region->ceil_height;    
-    float effective_floor = region->floor_height;    
+    // Factor de escala consistente para eliminar ondas  
+    float perspective_scale = 20.0f;  
       
-    if (effective_ceil <= effective_floor) {    
-        effective_floor = region->floor_height;    
-        effective_ceil = region->floor_height + 100;    
-    }    
+    float wall_top = screen_h/2.0f - ((cam_z - region->ceil_height) / distance * perspective_scale);    
+    float wall_bottom = screen_h/2.0f - ((cam_z - region->floor_height) / distance * perspective_scale);    
       
-    // Fórmulas corregidas para evitar inversión    
-    float wall_top = screen_h/2.0f - ((cam_z - effective_ceil) / distance * 150.0f);    
-    float wall_bottom = screen_h/2.0f - ((cam_z - effective_floor) / distance * 150.0f);    
-      
-    // VALIDACIÓN CRÍTICA: Detectar y corregir rangos invertidos    
     if (wall_top > wall_bottom) {    
-        // Intercambiar valores si están invertidos    
         float temp = wall_top;    
         wall_top = wall_bottom;    
         wall_bottom = temp;    
     }    
       
-    // Clipping robusto    
     if (wall_top < 0) wall_top = 0;    
     if (wall_bottom >= screen_h) wall_bottom = screen_h - 1;    
       
     int y_start = (int)wall_top;    
     int y_end = (int)wall_bottom;    
       
-    // Validar rango después de clipping    
     if (y_start < 0) y_start = 0;    
     if (y_end >= screen_h) y_end = screen_h - 1;    
       
@@ -4295,25 +4273,33 @@ void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,
         return;    
     }    
       
-    // Calcular shading basado en distancia    
-    int shade = 255 - (int)(distance / 40.0f);    
-    if (shade < 50) shade = 50;    
-    if (shade > 255) shade = 255;    
+    // Shading basado en distancia  
+    float fog_factor = 1.0f - (distance / 2000.0f);  
+    if (fog_factor < 0.3f) fog_factor = 0.3f;  
+    if (fog_factor > 1.0f) fog_factor = 1.0f;  
       
-    uint32_t wall_color = (shade << 16) | (shade << 8) | shade;    
+    // Colores sólidos: paredes rojas, techo blanco, suelo blanco  
+    Uint8 wall_r = (Uint8)(255 * fog_factor);  
+    Uint8 wall_g = 0;    
+    Uint8 wall_b = 0;    
+    uint32_t wall_color = SDL_MapRGB(gPixelFormat, wall_r, wall_g, wall_b);  
       
-    // Dibujar columna de pared (SIN DEBUG)    
+    Uint8 white_val = (Uint8)(255 * fog_factor);  
+    uint32_t white_color = SDL_MapRGB(gPixelFormat, white_val, white_val, white_val);  
+      
+    // Dibujar pared roja  
     for (int y = y_start; y <= y_end; y++) {    
         gr_put_pixel(render_buffer, col, y, wall_color);    
     }    
       
-    // Dibujar piso y techo    
+    // Dibujar suelo blanco  
     for (int y = y_end + 1; y < screen_h; y++) {    
-        gr_put_pixel(render_buffer, col, y, 0x8B4513);    
+        gr_put_pixel(render_buffer, col, y, white_color);    
     }    
       
+    // Dibujar techo blanco  
     for (int y = 0; y < y_start; y++) {    
-        gr_put_pixel(render_buffer, col, y, 0x696969);    
+        gr_put_pixel(render_buffer, col, y, white_color);    
     }    
 }
   
