@@ -41,13 +41,13 @@ typedef struct {
     uint8_t reserved[6];    
 } TEX_HEADER;    
     
-typedef struct {    
-    uint16_t index;    
-    uint16_t width;    
-    uint16_t height;    
-    uint16_t format;    
-    uint8_t reserved[250];    
-} TEX_ENTRY;    
+typedef struct {      
+    uint32_t fpg_code;    // Cambiar de uint16_t index a uint32_t fpg_code  
+    uint16_t width;      
+    uint16_t height;      
+    uint16_t format;      
+    uint8_t reserved[246];      
+} TEX_ENTRY;
     
       
 // Estructura de textura para SECTOR      
@@ -108,15 +108,17 @@ typedef struct {
   
 typedef struct {  
     int num_points;  
-    WLD_Point **points;     // Array de punteros  
+    WLD_Point **points;  
     int num_walls;  
-    WLD_Wall **walls;       // Array de punteros  
+    WLD_Wall **walls;  
     int num_regions;  
-    WLD_Region **regions;   // Array de punteros  
+    WLD_Region **regions;  
     int num_flags;  
-    WLD_Flag **flags;       // Array de punteros  
+    WLD_Flag **flags;  
     int loaded;  
+    int back_tex;  // Índice de textura de fondo (BackTex de ZF_General)  
 } WLD_Map;
+
   
 // Variables globales para el sistema WLD  
 static WLD_PicInfo *wld_pics[1000];  
