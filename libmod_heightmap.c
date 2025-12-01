@@ -3668,7 +3668,8 @@ int wld_process_geometry(FILE *fichero, WLD_Map *map)
       
     // Leer y verificar magic header  
     fread(cwork, 8, 1, fichero);  
-    if (strcmp(cwork, "wld\x1a\x0d\x0a\x01\x00")) {  
+    if (strcmp(cwork, "wld\x1a\x0d\x0a\x01\x00"))  
+    {  
         printf("ERROR: No es un archivo WLD válido\n");  
         return 0;  
     }  
@@ -3710,6 +3711,14 @@ int wld_process_geometry(FILE *fichero, WLD_Map *map)
         map->flags[i] = malloc(sizeof(WLD_Flag));  
         fread(map->flags[i], sizeof(WLD_Flag), 1, fichero);  
     }  
+      
+    // NUEVO: Leer skybox desde el campo fondo (formato real del WLD)  
+    fread(&map->skybox_angle, 4, 1, fichero);  // En realidad es el índice de textura  
+    sprintf(map->skybox_texture, "%d", map->skybox_angle);  
+    map->skybox_angle = 120;  // Ángulo por defecto  
+      
+    printf("DEBUG: Skybox WLD - texture: %s, angle: %d\n",   
+           map->skybox_texture, map->skybox_angle);  
       
     printf("DEBUG: Geometría WLD procesada correctamente\n");  
     return 1;  
@@ -3970,8 +3979,34 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         if (!render_buffer) return;  
     }  
       
-    // Limpiar con cielo  
-    gr_clear_as(render_buffer, 0x87CEEB);  
+    // NUEVO: Usar skybox del WLD si está disponible  
+    if (map->skybox_texture[0] != '\0') {  
+        // Cargar textura del skybox desde el FPG usando el índice  
+        int skybox_index = atoi(map->skybox_texture);  
+        GRAPH *skybox_graph = get_tex_image(skybox_index);  
+          
+        if (skybox_graph) {  
+            // Renderizar skybox plano (simple stretch)  
+            for (int y = 0; y < screen_h; y++) {  
+                for (int x = 0; x < screen_w; x++) {  
+                    int tex_x = (x * skybox_graph->width) / screen_w;  
+                    int tex_y = (y * skybox_graph->height) / screen_h;  
+                    uint32_t pixel = gr_get_pixel(skybox_graph, tex_x, tex_y);  
+                    gr_put_pixel(render_buffer, x, y, pixel);  
+                }  
+            }  
+            printf("DEBUG: Skybox renderizado - índice: %d\n", skybox_index);  
+        } else {  
+            printf("DEBUG: No se pudo cargar skybox índice %d\n", skybox_index);  
+            // Fallback: color sólido  
+            uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);  
+            gr_clear_as(render_buffer, sky_color);  
+        }  
+    } else {  
+        // Fallback: usar color de cielo configurado  
+        uint32_t sky_color = SDL_MapRGBA(gPixelFormat, sky_color_r, sky_color_g, sky_color_b, sky_color_a);  
+        gr_clear_as(render_buffer, sky_color);  
+    }  
       
     // Encontrar región actual de la cámara  
     int current_region = -1;  
@@ -4150,8 +4185,6 @@ void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,
         return;        
     }            
       
-    
-      
     // Calcular proyección VPE  
     float t1 = 300.0f / distance;  
     float t = (cam_z - region->floor_height) * 0.25f;  
@@ -4180,24 +4213,36 @@ void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,
     if (fog_factor < 0.3f) fog_factor = 0.3f;  
     if (fog_factor > 1.0f) fog_factor = 1.0f;  
       
-    // DEBUG: Obtener textura del FPG con verificación  
+    // Calcular punto exacto de impacto del rayo  
+    float angle_offset = ((float)col - screen_w/2.0f) * 0.003f;  
+    float ray_dir_x = cos(camera.angle + angle_offset);  
+    float ray_dir_y = sin(camera.angle + angle_offset);  
+      
+    // Punto de impacto en el mundo  
+    float hit_x = cam_x + ray_dir_x * distance;  
+    float hit_y = cam_y + ray_dir_y * distance;  
+      
+    // Coordenadas de los puntos de la pared  
+    int p1 = wall->p1;  
+    int p2 = wall->p2;  
+    float x1 = map->points[p1]->x;  
+    float y1 = map->points[p1]->y;  
+    float x2 = map->points[p2]->x;  
+    float y2 = map->points[p2]->y;  
+      
+    // Calcular longitud de la pared  
+    float wall_length = sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));  
+      
+    // Calcular distancia desde p1 hasta el punto de impacto  
+    float dist_from_p1 = sqrtf((hit_x - x1) * (hit_x - x1) + (hit_y - y1) * (hit_y - y1));  
+      
+    // Coordenada U correcta (0.0 a 1.0)  
+    float wall_u = dist_from_p1 / wall_length;  
+      
+    // Obtener textura del FPG  
     GRAPH *tex_graph = get_tex_image(wall->texture);  
       
     if (tex_graph) {  
-
-          
-        // Calcular coordenada U (horizontal) de la textura  
-        int p1 = wall->p1;  
-        int p2 = wall->p2;  
-        float wall_length = sqrtf(  
-            (map->points[p2]->x - map->points[p1]->x) *   
-            (map->points[p2]->x - map->points[p1]->x) +  
-            (map->points[p2]->y - map->points[p1]->y) *   
-            (map->points[p2]->y - map->points[p1]->y)  
-        );  
-          
-        // DEBUG: Verificar cálculo de coordenadas  
-        float wall_u = fmodf(distance * 0.5f, wall_length) / wall_length;  
         int tex_x = (int)(wall_u * tex_graph->width) % tex_graph->width;  
           
         // Dibujar columna con textura  
@@ -4207,17 +4252,13 @@ void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,
             float v = (float)(y - y_start) / wall_height;  
             int tex_y = (int)(v * tex_graph->height) % tex_graph->height;  
               
-        
-              
-            // Obtener pixel del GRAPH directamente  
+            // Obtener pixel del GRAPH  
             uint32_t pixel = gr_get_pixel(tex_graph, tex_x, tex_y);  
               
-            // Extraer componentes RGB  
-           uint8_t r = (pixel >> gPixelFormat->Rshift) & 0xFF;  
-           uint8_t g = (pixel >> gPixelFormat->Gshift) & 0xFF;  
-           uint8_t b = (pixel >> gPixelFormat->Bshift) & 0xFF;
-              
-        
+            // Extraer componentes RGB usando gPixelFormat  
+            uint8_t r = (pixel >> gPixelFormat->Rshift) & 0xFF;  
+            uint8_t g = (pixel >> gPixelFormat->Gshift) & 0xFF;  
+            uint8_t b = (pixel >> gPixelFormat->Bshift) & 0xFF;  
               
             // Aplicar fog  
             r = (uint8_t)(r * fog_factor);  
@@ -4228,9 +4269,6 @@ void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,
             gr_put_pixel(render_buffer, col, y, color);  
         }  
     } else {  
-        printf("DEBUG: No se pudo cargar textura %d del FPG %d\n",   
-               wall->texture, wld_fpg_id);  
-          
         // Fallback: color sólido si no hay textura  
         uint8_t wall_r = (uint8_t)(255 * fog_factor);  
         uint32_t wall_color = SDL_MapRGB(gPixelFormat, wall_r, 0, 0);  
