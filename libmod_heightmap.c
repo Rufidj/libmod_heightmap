@@ -51,6 +51,10 @@ enum {
 #define VD_OBJECT 0x10000000  
 #define VD_COMPLEX 0x20000000  
 #define VD_WALLBACK 0x40000000
+
+// Variable global para almacenar gráficos FPG cargados  
+static GRAPH **wld_fpg_graphics = NULL;  
+static int wld_fpg_count = 0;  
   
 // Para clipping por columna  
 typedef struct {  
@@ -3446,169 +3450,19 @@ int64_t libmod_heightmap_get_map_type(INSTANCE *my, int64_t *params) {
     }  
 }
 
-static TEX_IMAGE tex_images[1000]; // índices 1-999  
-  
-int64_t load_tex_file(INSTANCE *my, int64_t *params) {  
-    const char *filename = string_get(params[0]);  
-    int64_t color_space_mode = params[1]; // 0 = auto-detect, 1 = sRGB, 2 = linear  
-      
-    FILE *file = fopen(filename, "rb");  
-    if (!file) {  
-        printf("Error: No se pudo abrir archivo TEX: %s\n", filename);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
-      
-    // Leer header TEX  
-    TEX_HEADER header;  
-    if (fread(&header, sizeof(TEX_HEADER), 1, file) != 1) {  
-        printf("Error: No se pudo leer header TEX\n");  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
-      
-    // Validar magic number  
-    if (memcmp(header.magic, "TEX", 3) != 0) {  
-        printf("Error: Archivo no es formato TEX válido\n");  
-        fclose(file);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
-      
-    printf("DEBUG: TEX válido - versión %d, %d imágenes\n", header.version, header.num_images);  
-      
-    // Detectar orden de canales RGB/BDR del formato de píxeles  
-    int is_bgr_format = 0;  
-    if (gPixelFormat->Rmask > gPixelFormat->Bmask) {  
-        printf("DEBUG: Formato de píxeles detectado: RGB\n");  
-        is_bgr_format = 0;  
-    } else {  
-        printf("DEBUG: Formato de píxeles detectado: BGR (corrigiendo)\n");  
-        is_bgr_format = 1;  
-    }  
-      
-    // Limpiar imágenes anteriores  
-    for (int i = 1; i < 1000; i++) {  
-        if (tex_images[i].loaded) {  
-            bitmap_destroy(tex_images[i].graph);  
-            tex_images[i].loaded = 0;  
-        }  
-    }  
-      
-    // Cargar cada imagen  
-    for (int i = 0; i < header.num_images; i++) {  
-        TEX_ENTRY entry;  
-        if (fread(&entry, sizeof(TEX_ENTRY), 1, file) != 1) {  
-            printf("Error: No se pudo leer entry %d\n", i);  
-            break;  
-        }  
-          
-        printf("DEBUG: Imagen %d - índice: %d, tamaño: %dx%d\n",   
-               i, entry.index, entry.width, entry.height);  
-          
-        if (entry.index < 1 || entry.index > 999) continue;  
-          
-        // Crear GRAPH  
-        GRAPH *graph = bitmap_new_syslib(entry.width, entry.height);  
-        if (!graph) continue;  
-          
-        // Leer datos a buffer temporal  
-        size_t data_size = entry.width * entry.height * 4;  
-        uint8_t *temp_data = malloc(data_size);  
-        if (!temp_data) {  
-            bitmap_destroy(graph);  
-            continue;  
-        }  
-          
-        if (fread(temp_data, 1, data_size, file) == data_size) {  
-            // Convertir datos RGBA al formato de BennuGD2 con corrección de canales  
-            for (int y = 0; y < entry.height; y++) {  
-                for (int x = 0; x < entry.width; x++) {  
-                    int pixel_index = (y * entry.width + x) * 4;  
-                    uint8_t r = temp_data[pixel_index];  
-                    uint8_t g = temp_data[pixel_index + 1];  
-                    uint8_t b = temp_data[pixel_index + 2];  
-                    uint8_t a = temp_data[pixel_index + 3];  
-                      
-                    // CORRECCIÓN DE CANALES: Ajustar RGB/BGR según el formato  
-                    uint8_t final_r, final_g, final_b;  
-                    if (is_bgr_format) {  
-                        // Formato BGR: intercambiar R y B  
-                        final_r = b;  
-                        final_g = g;  
-                        final_b = r;  
-                    } else {  
-                        // Formato RGB: mantener como está  
-                        final_r = r;  
-                        final_g = g;  
-                        final_b = b;  
-                    }  
-                      
-                    // Aplicar corrección de espacio de color si es necesario  
-                    if (color_space_mode == 1) {  
-                        // Modo sRGB: mantener valores originales (ya están en sRGB)  
-                        // No aplicar conversión gamma para mantener colores originales  
-                    } else if (color_space_mode == 2) {  
-                        // Modo linear: convertir sRGB a linear (opcional, usualmente no necesario)  
-                        float r_linear = final_r / 255.0f;  
-                        float g_linear = final_g / 255.0f;  
-                        float b_linear = final_b / 255.0f;  
-                          
-                        if (r_linear <= 0.04045f) r_linear /= 12.92f;  
-                        else r_linear = powf((r_linear + 0.055f) / 1.055f, 2.4f);  
-                        if (g_linear <= 0.04045f) g_linear /= 12.92f;  
-                        else g_linear = powf((g_linear + 0.055f) / 1.055f, 2.4f);  
-                        if (b_linear <= 0.04045f) b_linear /= 12.92f;  
-                        else b_linear = powf((b_linear + 0.055f) / 1.055f, 2.4f);  
-                          
-                        final_r = (uint8_t)(r_linear * 255.0f);  
-                        final_g = (uint8_t)(g_linear * 255.0f);  
-                        final_b = (uint8_t)(b_linear * 255.0f);  
-                    }  
-                      
-                    uint32_t color = SDL_MapRGBA(gPixelFormat, final_r, final_g, final_b, a);  
-                    gr_put_pixel(graph, x, y, color);  
-                }  
-            }  
-              
-            tex_images[entry.index].graph = graph;  
-            tex_images[entry.index].loaded = 1;  
-            printf("DEBUG: Textura %d cargada (canales corregidos)\n", entry.index);  
-        } else {  
-            printf("Error: No se pudieron leer datos de imagen %d\n", i);  
-            bitmap_destroy(graph);  
-        }  
-          
-        free(temp_data);  
-    }  
-      
-    fclose(file);  
-    printf("DEBUG: Archivo TEX cargado exitosamente\n");  
-    string_discard(params[0]);  
-    return 1;  
-}
 
-GRAPH *get_tex_image(int index) {  
-      
-    if (index < 1 || index >= 1000) {   
-        return NULL;  
-    }  
-    if (!tex_images[index].loaded) {  
+GRAPH *get_tex_image(int index)     
+{    
+    // CAMBIAR: Permitir ID 0 como válido en BennuGD2  
+    if (index < 1) {    
+        return NULL;    
+    }    
         
-        return NULL;  
-    }   
-    return tex_images[index].graph;  
+    // Obtener textura del FPG usando bitmap_get    
+    GRAPH *graph = bitmap_get(wld_fpg_id, index);    
+    return graph;    
 }
   
-void cleanup_tex_images() {  
-    for (int i = 1; i < 1000; i++) {  
-        if (tex_images[i].loaded) {  
-            bitmap_destroy(tex_images[i].graph);  
-            tex_images[i].loaded = 0;  
-        }  
-    }  
-}
 
 void wld_tex_alloc(WLD_TexCon *ptc, int texcode)  
 {  
@@ -3749,50 +3603,61 @@ int load_wld_standalone(const char *filename)
     return 1;  
 }
 
-int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params)  
-{  
-    const char *filename = string_get(params[0]);  
+int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params)    
+{    
+    const char *filename = string_get(params[0]);    
+    int fpg_id = params[1];    
       
-    // Verificar texturas  
-    if (!tex_images[1].loaded) {  
-        printf("ERROR: Carga primero el archivo .tex\n");  
-        string_discard(params[0]);  
-        return 0;  
+    // Verificar solo error real (-1)  
+    if (fpg_id == -1) {    
+        printf("ERROR: No se pudo cargar el FPG\n");    
+        string_discard(params[0]);    
+        return 0;    
+    }    
+      
+    // Verificar si el FPG existe usando grlib_get (API C interna)  
+    if (!grlib_get(fpg_id)) {  
+        printf("ERROR: El fpg_id %d no existe\n", fpg_id);    
+        string_discard(params[0]);    
+        return 0;    
     }  
       
-    FILE *fichero = fopen(filename, "rb");  
-    if (!fichero) {  
-        printf("ERROR: No se puede abrir '%s'\n", filename);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
+    // Guardar fpg_id para uso en get_tex_image    
+    wld_fpg_id = fpg_id;    
       
-    // INICIALIZAR MAPA ANTES DE USAR  
-    memset(&wld_map, 0, sizeof(WLD_Map));  
+    FILE *fichero = fopen(filename, "rb");    
+    if (!fichero) {    
+        printf("ERROR: No se puede abrir '%s'\n", filename);    
+        string_discard(params[0]);    
+        return 0;    
+    }    
       
-    // Asignar arrays de punteros  
-    wld_map.points = calloc(MAX_POINTS, sizeof(WLD_Point*));  
-    wld_map.walls = calloc(MAX_WALLS, sizeof(WLD_Wall*));  
-    wld_map.regions = calloc(MAX_REGIONS, sizeof(WLD_Region*));  
-    wld_map.flags = calloc(MAX_FLAGS, sizeof(WLD_Flag*));  
+    // INICIALIZAR MAPA ANTES DE USAR    
+    memset(&wld_map, 0, sizeof(WLD_Map));    
       
-    // Procesar geometría  
-    if (!wld_process_geometry(fichero, &wld_map)) {  
-        printf("ERROR: Fallo al procesar geometría\n");  
-        fclose(fichero);  
-        string_discard(params[0]);  
-        return 0;  
-    }  
+    // Asignar arrays de punteros    
+    wld_map.points = calloc(MAX_POINTS, sizeof(WLD_Point*));    
+    wld_map.walls = calloc(MAX_WALLS, sizeof(WLD_Wall*));    
+    wld_map.regions = calloc(MAX_REGIONS, sizeof(WLD_Region*));    
+    wld_map.flags = calloc(MAX_FLAGS, sizeof(WLD_Flag*));    
       
-    fclose(fichero);  
-    wld_map.loaded = 1;  
+    // Procesar geometría    
+    if (!wld_process_geometry(fichero, &wld_map)) {    
+        printf("ERROR: Fallo al procesar geometría\n");    
+        fclose(fichero);    
+        string_discard(params[0]);    
+        return 0;    
+    }    
       
-    printf("WLD cargado exitosamente:\n");  
-    printf("  - Puntos: %d\n", wld_map.num_points);  
-    printf("  - Paredes: %d\n", wld_map.num_walls);  
+    fclose(fichero);    
+    wld_map.loaded = 1;    
       
-    string_discard(params[0]);  
-    return 1;  
+    printf("WLD cargado exitosamente:\n");    
+    printf("  - Puntos: %d\n", wld_map.num_points);    
+    printf("  - Paredes: %d\n", wld_map.num_walls);    
+      
+    string_discard(params[0]);    
+    return 1;    
 }
 
 int wld_process_geometry(FILE *fichero, WLD_Map *map)  
@@ -4267,70 +4132,146 @@ void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam
 
   
 // Función para renderizar columna de pared (similar a DrawSimpleWall)  
-void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,       
-                       int col, int screen_w, int screen_h,      
-                       float cam_x, float cam_y, float cam_z, float distance)      
-{      
-    if (!wall || region_idx < 0 || region_idx >= map->num_regions) {      
-        return;      
-    }          
-    WLD_Region *region = map->regions[region_idx];      
-    if (!region) {      
-        return;      
-    }          
-    if (region->ceil_height <= region->floor_height) {      
-        return;      
-    }          
-    if (distance < 0.1f || distance > 10000.0f) {      
-        return;      
-    }          
-    // CORREGIDO: Usar fórmula VPE original en lugar de perspective_scale arbitrario [19-cite-0](#19-cite-0)   
-    float t1 = 300.0f / distance;  // ConstVDist = 300  
-    float t = (cam_z - region->floor_height) * 0.25f;  // >> 2 = /4  
-    float wall_bottom = screen_h/2.0f - t * t1 + 120.0f * 16384.0f / 65536.0f;  // Horizon << 14  
+void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,         
+                       int col, int screen_w, int screen_h,        
+                       float cam_x, float cam_y, float cam_z, float distance)        
+{        
+    if (!wall || region_idx < 0 || region_idx >= map->num_regions) {        
+        return;        
+    }            
+    WLD_Region *region = map->regions[region_idx];        
+    if (!region) {        
+        return;        
+    }            
+    if (region->ceil_height <= region->floor_height) {        
+        return;        
+    }            
+    if (distance < 0.1f || distance > 10000.0f) {        
+        return;        
+    }            
       
+    
+      
+    // Calcular proyección VPE  
+    float t1 = 300.0f / distance;  
+    float t = (cam_z - region->floor_height) * 0.25f;  
+    float wall_bottom = screen_h/2.0f - t * t1 + 120.0f * 16384.0f / 65536.0f;  
+        
     t = (cam_z - region->ceil_height) * 0.25f;  
     float wall_top = screen_h/2.0f - t * t1 + 120.0f * 16384.0f / 65536.0f;  
+        
+    if (wall_top > wall_bottom) {        
+        float temp = wall_top;        
+        wall_top = wall_bottom;        
+        wall_bottom = temp;        
+    }            
+    if (wall_top < 0) wall_top = 0;        
+    if (wall_bottom >= screen_h) wall_bottom = screen_h - 1;            
+    int y_start = (int)wall_top;        
+    int y_end = (int)wall_bottom;            
+    if (y_start < 0) y_start = 0;        
+    if (y_end >= screen_h) y_end = screen_h - 1;            
+    if (y_start > y_end) {        
+        return;        
+    }            
       
-    if (wall_top > wall_bottom) {      
-        float temp = wall_top;      
-        wall_top = wall_bottom;      
-        wall_bottom = temp;      
-    }          
-    if (wall_top < 0) wall_top = 0;      
-    if (wall_bottom >= screen_h) wall_bottom = screen_h - 1;          
-    int y_start = (int)wall_top;      
-    int y_end = (int)wall_bottom;          
-    if (y_start < 0) y_start = 0;      
-    if (y_end >= screen_h) y_end = screen_h - 1;          
-    if (y_start > y_end) {      
-        return;      
-    }          
-    // Shading basado en distancia    
-    float fog_factor = 1.0f - (distance / 2000.0f);    
-    if (fog_factor < 0.3f) fog_factor = 0.3f;    
-    if (fog_factor > 1.0f) fog_factor = 1.0f;        
-    // Colores sólidos: paredes rojas, techo blanco, suelo blanco    
-    Uint8 wall_r = (Uint8)(255 * fog_factor);    
-    Uint8 wall_g = 0;      
-    Uint8 wall_b = 0;      
-    uint32_t wall_color = SDL_MapRGB(gPixelFormat, wall_r, wall_g, wall_b);        
-    Uint8 white_val = (Uint8)(255 * fog_factor);    
-    uint32_t white_color = SDL_MapRGB(gPixelFormat, white_val, white_val, white_val);        
-    // Dibujar pared roja    
-    for (int y = y_start; y <= y_end; y++) {      
-        gr_put_pixel(render_buffer, col, y, wall_color);      
-    }          
-    // Dibujar suelo blanco    
-    for (int y = y_end + 1; y < screen_h; y++) {      
-        gr_put_pixel(render_buffer, col, y, white_color);      
-    }          
-    // Dibujar techo blanco    
-    for (int y = 0; y < y_start; y++) {      
-        gr_put_pixel(render_buffer, col, y, white_color);      
-    }      
+    // Shading basado en distancia  
+    float fog_factor = 1.0f - (distance / 2000.0f);  
+    if (fog_factor < 0.3f) fog_factor = 0.3f;  
+    if (fog_factor > 1.0f) fog_factor = 1.0f;  
+      
+    // DEBUG: Obtener textura del FPG con verificación  
+    GRAPH *tex_graph = get_tex_image(wall->texture);  
+      
+    if (tex_graph) {  
+
+          
+        // Calcular coordenada U (horizontal) de la textura  
+        int p1 = wall->p1;  
+        int p2 = wall->p2;  
+        float wall_length = sqrtf(  
+            (map->points[p2]->x - map->points[p1]->x) *   
+            (map->points[p2]->x - map->points[p1]->x) +  
+            (map->points[p2]->y - map->points[p1]->y) *   
+            (map->points[p2]->y - map->points[p1]->y)  
+        );  
+          
+        // DEBUG: Verificar cálculo de coordenadas  
+        float wall_u = fmodf(distance * 0.5f, wall_length) / wall_length;  
+        int tex_x = (int)(wall_u * tex_graph->width) % tex_graph->width;  
+          
+        // Dibujar columna con textura  
+        float wall_height = wall_bottom - wall_top;  
+        for (int y = y_start; y <= y_end; y++) {  
+            // Coordenada V (vertical) de la textura  
+            float v = (float)(y - y_start) / wall_height;  
+            int tex_y = (int)(v * tex_graph->height) % tex_graph->height;  
+              
+        
+              
+            // Obtener pixel del GRAPH directamente  
+            uint32_t pixel = gr_get_pixel(tex_graph, tex_x, tex_y);  
+              
+            // Extraer componentes RGB  
+           uint8_t r = (pixel >> gPixelFormat->Rshift) & 0xFF;  
+           uint8_t g = (pixel >> gPixelFormat->Gshift) & 0xFF;  
+           uint8_t b = (pixel >> gPixelFormat->Bshift) & 0xFF;
+              
+        
+              
+            // Aplicar fog  
+            r = (uint8_t)(r * fog_factor);  
+            g = (uint8_t)(g * fog_factor);  
+            b = (uint8_t)(b * fog_factor);  
+              
+            uint32_t color = SDL_MapRGB(gPixelFormat, r, g, b);  
+            gr_put_pixel(render_buffer, col, y, color);  
+        }  
+    } else {  
+        printf("DEBUG: No se pudo cargar textura %d del FPG %d\n",   
+               wall->texture, wld_fpg_id);  
+          
+        // Fallback: color sólido si no hay textura  
+        uint8_t wall_r = (uint8_t)(255 * fog_factor);  
+        uint32_t wall_color = SDL_MapRGB(gPixelFormat, wall_r, 0, 0);  
+        for (int y = y_start; y <= y_end; y++) {  
+            gr_put_pixel(render_buffer, col, y, wall_color);  
+        }  
+    }  
+      
+    // Dibujar suelo  
+    uint8_t white_val = (uint8_t)(255 * fog_factor);  
+    uint32_t white_color = SDL_MapRGB(gPixelFormat, white_val, white_val, white_val);  
+    for (int y = y_end + 1; y < screen_h; y++) {  
+        gr_put_pixel(render_buffer, col, y, white_color);  
+    }  
+      
+    // Dibujar techo  
+    for (int y = 0; y < y_start; y++) {  
+        gr_put_pixel(render_buffer, col, y, white_color);  
+    }  
 }
-  
+
+void debug_fpg_status() {  
+    printf("=== DEBUG FPG STATUS ===\n");  
+    printf("wld_fpg_id: %d\n", wld_fpg_id);  
+    printf("wld_fpg_grf: %p\n", wld_fpg_grf);  
+      
+    if (wld_fpg_id > 0) {  
+        // Probar cargar algunas texturas comunes  
+        for (int i = 1; i <= 10; i++) {  
+            GRAPH *test = get_tex_image(i);  
+            if (test) {  
+                printf("Textura %d: OK (width=%d, height=%d)\n",   
+                       i, test->width, test->height);  
+            } else {  
+                printf("Textura %d: FALLÓ\n", i);  
+            }  
+        }  
+    }  
+    printf("========================\n");  
+}
+
 // Función de intersección rayo-segmento  
 float intersect_ray_segment(float ray_dir_x, float ray_dir_y, float cam_x, float cam_y,  
                            float seg_x1, float seg_y1, float seg_x2, float seg_y2)  
@@ -4366,7 +4307,7 @@ int64_t libmod_heightmap_render_wld_3d(INSTANCE *my, int64_t *params)
         printf("ERROR: No hay mapa WLD cargado\n");  
         return 0;  
     }  
-      
+    debug_fpg_status();  
     // Llamar a render_wld sin parámetros de cámara (usa cámara global)  
     render_wld(&wld_map, width, height);  
       
