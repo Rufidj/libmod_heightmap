@@ -3696,9 +3696,16 @@ int wld_process_geometry(FILE *fichero, WLD_Map *map)
     for (i = 0; i < map->num_walls; i++) {  
         map->walls[i] = malloc(sizeof(WLD_Wall));  
         fread(map->walls[i], sizeof(WLD_Wall), 1, fichero);  
+          
+        // DEBUG: Imprimir primeras paredes  
+        if (i < 5) {  
+            printf("DEBUG Pared[%d]: p1=%d, p2=%d, front_region=%d, back_region=%d\n",  
+                   i, map->walls[i]->p1, map->walls[i]->p2,  
+                   map->walls[i]->front_region, map->walls[i]->back_region);  
+        }  
     }  
       
-    // Leer regiones  
+    // Leer regiones - ORDEN CORRECTO  
     fread(&map->num_regions, 4, 1, fichero);  
     printf("DEBUG: Leyendo %d regiones\n", map->num_regions);  
     for (i = 0; i < map->num_regions; i++) {  
@@ -3714,12 +3721,12 @@ int wld_process_geometry(FILE *fichero, WLD_Map *map)
         fread(map->flags[i], sizeof(WLD_Flag), 1, fichero);  
     }  
       
-    // NUEVO: Leer skybox desde el campo fondo (formato real del WLD)  
-    fread(&map->skybox_angle, 4, 1, fichero);  // En realidad es el índice de textura  
+    // Leer skybox (campo fondo)  
+    fread(&map->skybox_angle, 4, 1, fichero);  
     sprintf(map->skybox_texture, "%d", map->skybox_angle);  
-    map->skybox_angle = 120;  // Ángulo por defecto  
+    map->skybox_angle = 120;  
       
-    printf("DEBUG: Skybox WLD - texture: %s, angle: %d\n",   
+    printf("DEBUG: Skybox WLD - texture: %s, angle: %d\n",  
            map->skybox_texture, map->skybox_angle);  
       
     printf("DEBUG: Geometría WLD procesada correctamente\n");  
@@ -3986,7 +3993,7 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         // Cargar textura del skybox desde el FPG usando el índice  
         int skybox_index = atoi(map->skybox_texture);  
         GRAPH *skybox_graph = get_tex_image(skybox_index);  
-          
+            
         if (skybox_graph) {  
             // Renderizar skybox plano (simple stretch)  
             for (int y = 0; y < screen_h; y++) {  
@@ -4027,6 +4034,7 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
     printf("DEBUG: Cámara en región %d - iniciando raycasting\n", current_region);  
       
     int walls_found = 0;  
+    int complex_walls = 0;  
       
     // Renderizar cada columna con raycasting  
     for (int col = 0; col < screen_w; col++) {  
@@ -4034,26 +4042,113 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         float angle_offset = ((float)col - screen_w/2.0f) * 0.003f;  
         float ray_dir_x = cos(camera.angle + angle_offset);  
         float ray_dir_y = sin(camera.angle + angle_offset);  
-          
+            
         float hit_distance = 999999.0f;  
         WLD_Wall *hit_wall = NULL;  
         int hit_region = current_region;  
-          
+            
         // Escanear paredes visibles  
         scan_walls_from_region(map, current_region, camera.x, camera.y,  
                               ray_dir_x, ray_dir_y, &hit_distance,  
                               &hit_wall, &hit_region);  
-          
+            
         // Renderizar pared golpeada  
         if (hit_wall && hit_distance < 999999.0f) {  
-            render_wall_column(map, hit_wall, hit_region, col,  
-                              screen_w, screen_h, camera.x, camera.y,  
-                              camera.z, hit_distance);  
+            // NUEVO: Detectar si es pared compleja  
+            int adjacent_region = -1;  
+            if (hit_wall->front_region == hit_region && hit_wall->back_region >= 0) {  
+                adjacent_region = hit_wall->back_region;  
+            } else if (hit_wall->back_region == hit_region && hit_wall->front_region >= 0) {  
+                adjacent_region = hit_wall->front_region;  
+            }  
+              
+            // Verificar si hay diferencia de altura para geometría compleja  
+            int is_complex = 0;  
+            if (adjacent_region >= 0 && adjacent_region < map->num_regions) {  
+                WLD_Region *current = map->regions[hit_region];  
+                WLD_Region *adjacent = map->regions[adjacent_region];  
+                  
+                if (current && adjacent) {  
+                    // Diferencia de altura en suelo o techo  
+                    if (current->floor_height != adjacent->floor_height ||  
+                        current->ceil_height != adjacent->ceil_height) {  
+                        is_complex = 1;  
+                        complex_walls++;  
+                    }  
+                }  
+            }  
+              
+            if (is_complex) {  
+                // Usar renderizado complejo  
+                printf("DEBUG: Pared compleja detectada - regiones %d <-> %d\n",   
+                       hit_region, adjacent_region);  
+                  
+                // Calcular proyección básica para pasar a render_complex_wall_section  
+                float t1 = 300.0f / hit_distance;  
+                float t = (camera.z - map->regions[hit_region]->floor_height) * 0.25f;  
+                float FBS = (screen_h/2.0f) - t * t1 + 120.0f * 16384.0f / 65536.0f;  
+                  
+                t = (camera.z - map->regions[hit_region]->ceil_height) * 0.25f;  
+                float FTS = (screen_h/2.0f) - t * t1 + 120.0f * 16384.0f / 65536.0f;  
+                  
+                if (FTS > FBS) {  
+                    float temp = FTS;  
+                    FTS = FBS;  
+                    FBS = temp;  
+                }  
+                  
+                if (FTS < 0) FTS = 0;  
+                if (FBS >= screen_h) FBS = screen_h - 1;  
+                  
+                int y_start = (int)FTS;  
+                int y_end = (int)FBS;  
+                  
+                // Calcular wall_u  
+                int p1 = hit_wall->p1;  
+                int p2 = hit_wall->p2;  
+                if (p1 >= 0 && p1 < map->num_points && p2 >= 0 && p2 < map->num_points) {  
+                    float x1 = map->points[p1]->x;  
+                    float y1 = map->points[p1]->y;  
+                    float x2 = map->points[p2]->x;  
+                    float y2 = map->points[p2]->y;  
+                      
+                    float hit_x = camera.x + ray_dir_x * hit_distance;  
+                    float hit_y = camera.y + ray_dir_y * hit_distance;  
+                      
+                    float wall_dx = x2 - x1;  
+                    float wall_dy = y2 - y1;  
+                    float wall_length = sqrtf(wall_dx * wall_dx + wall_dy * wall_dy);  
+                      
+                    if (wall_length > 0.001f) {  
+                        float to_hit_x = hit_x - x1;  
+                        float to_hit_y = hit_y - y1;  
+                        float dist_along_wall = (to_hit_x * wall_dx + to_hit_y * wall_dy) / (wall_length * wall_length);  
+                          
+                        if (dist_along_wall < 0.0f) dist_along_wall = 0.0f;  
+                        if (dist_along_wall > 1.0f) dist_along_wall = 1.0f;  
+                          
+                        float wall_u = dist_along_wall;  
+                        float fog_factor = 1.0f - (hit_distance / 2000.0f);  
+                        if (fog_factor < 0.3f) fog_factor = 0.3f;  
+                        if (fog_factor > 1.0f) fog_factor = 1.0f;  
+                          
+                        render_complex_wall_section(map, hit_wall, map->regions[hit_region],  
+                                                   hit_region, col, screen_w, screen_h,  
+                                                   y_start, y_end, wall_u, fog_factor,  
+                                                   camera.x, camera.y, camera.z, hit_distance);  
+                    }  
+                }  
+            } else {  
+                // Usar renderizado simple  
+                render_wall_column(map, hit_wall, hit_region, col,  
+                                  screen_w, screen_h, camera.x, camera.y,  
+                                  camera.z, hit_distance);  
+            }  
             walls_found++;  
         }  
     }  
       
-    printf("DEBUG: Raycasting completado - paredes encontradas: %d\n", walls_found);  
+    printf("DEBUG: Raycasting completado - paredes encontradas: %d, complejas: %d\n", walls_found, complex_walls);  
 }
   
 // Función auxiliar para verificar si punto está en región  
@@ -4280,69 +4375,9 @@ void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,
         }  
     }  
       
-    // Renderizar suelo  
-    if (region->floor_tex > 0) {  
-        GRAPH *floor_tex = get_tex_image(region->floor_tex);  
-        if (floor_tex) {  
-            for (int y = FBot + 1; y < screen_h; y++) {  
-                float u = wall_u;  
-                float v = (float)(y - FBot) / (float)(screen_h - FBot);  
-                  
-                int tex_x = (int)(u * floor_tex->width) % floor_tex->width;  
-                int tex_y = (int)(v * floor_tex->height) % floor_tex->height;  
-                  
-                if (tex_x < 0) tex_x = 0;  
-                if (tex_x >= floor_tex->width) tex_x = floor_tex->width - 1;  
-                if (tex_y < 0) tex_y = 0;  
-                if (tex_y >= floor_tex->height) tex_y = floor_tex->height - 1;  
-                  
-                uint32_t pixel = gr_get_pixel(floor_tex, tex_x, tex_y);  
-                  
-                uint8_t r = (pixel >> gPixelFormat->Rshift) & 0xFF;  
-                uint8_t g = (pixel >> gPixelFormat->Gshift) & 0xFF;  
-                uint8_t b = (pixel >> gPixelFormat->Bshift) & 0xFF;  
-                  
-                r = (uint8_t)(r * fog_factor * 0.7f);  
-                g = (uint8_t)(g * fog_factor * 0.7f);  
-                b = (uint8_t)(b * fog_factor * 0.7f);  
-                  
-                uint32_t color = SDL_MapRGB(gPixelFormat, r, g, b);  
-                gr_put_pixel(render_buffer, col, y, color);  
-            }  
-        }  
-    }  
-      
-    // Renderizar techo  
-    if (region->ceil_tex > 0) {  
-        GRAPH *ceil_tex = get_tex_image(region->ceil_tex);  
-        if (ceil_tex) {  
-            for (int y = 0; y < FTop; y++) {  
-                float u = wall_u;  
-                float v = (float)(FTop - y) / (float)FTop;  
-                  
-                int tex_x = (int)(u * ceil_tex->width) % ceil_tex->width;  
-                int tex_y = (int)(v * ceil_tex->height) % ceil_tex->height;  
-                  
-                if (tex_x < 0) tex_x = 0;  
-                if (tex_x >= ceil_tex->width) tex_x = ceil_tex->width - 1;  
-                if (tex_y < 0) tex_y = 0;  
-                if (tex_y >= ceil_tex->height) tex_y = ceil_tex->height - 1;  
-                  
-                uint32_t pixel = gr_get_pixel(ceil_tex, tex_x, tex_y);  
-                  
-                uint8_t r = (pixel >> gPixelFormat->Rshift) & 0xFF;  
-                uint8_t g = (pixel >> gPixelFormat->Gshift) & 0xFF;  
-                uint8_t b = (pixel >> gPixelFormat->Bshift) & 0xFF;  
-                  
-                r = (uint8_t)(r * fog_factor * 0.7f);  
-                g = (uint8_t)(g * fog_factor * 0.7f);  
-                b = (uint8_t)(b * fog_factor * 0.7f);  
-                  
-                uint32_t color = SDL_MapRGB(gPixelFormat, r, g, b);  
-                gr_put_pixel(render_buffer, col, y, color);  
-            }  
-        }  
-    }  
+   render_floor_and_ceiling(map, region, col, screen_w, screen_h,   
+                        FTop, FBot, cam_x, cam_y, cam_z,   
+                        distance, fog_factor);
 }
 
 
@@ -4514,9 +4549,9 @@ void render_wall_texture(WLD_Map *map, int texture_index, int col,
     }  
 }  
   
-void render_floor_and_ceiling(WLD_Map *map, WLD_Region *region, int col,  
-                             int screen_w, int screen_h, int wall_top, int wall_bottom,  
-                             float cam_x, float cam_y, float cam_z, float distance,  
+void render_floor_and_ceiling(WLD_Map *map, WLD_Region *region, int col,   
+                             int screen_w, int screen_h, int wall_top, int wall_bottom,   
+                             float cam_x, float cam_y, float cam_z, float distance,   
                              float fog_factor)  
 {  
     // Calcular dirección del rayo para esta columna  
@@ -4526,69 +4561,36 @@ void render_floor_and_ceiling(WLD_Map *map, WLD_Region *region, int col,
       
     float horizon = screen_h / 2.0f;  
       
-    // Renderizar suelo (debajo de la pared)  
-    if (wall_bottom < screen_h - 1) {  
-        GRAPH *floor_tex = get_tex_image(region->floor_tex);  
-        if (floor_tex) {  
-            for (int y = wall_bottom + 1; y < screen_h; y++) {  
-                // Fórmula VPE inversa: calcular distancia real en el mundo  
-                float y_diff = (float)y - horizon;  
-                if (fabs(y_diff) < 0.1f) continue;  // Evitar división por cero  
-                  
-                float floor_distance = ((cam_z - region->floor_height) * 0.25f) * (300.0f / y_diff);  
-                  
-                if (floor_distance < 0.1f) continue;  
-                  
-                // Punto de impacto en el mundo  
-                float hit_x = cam_x + ray_dir_x * floor_distance;  
-                float hit_y = cam_y + ray_dir_y * floor_distance;  
-                  
-                // Coordenadas UV en el mundo (escala simple)  
-                int tex_x = ((int)(hit_x * 0.1f)) % floor_tex->width;  
-                int tex_y = ((int)(hit_y * 0.1f)) % floor_tex->height;  
-                  
-                if (tex_x < 0) tex_x += floor_tex->width;  
-                if (tex_y < 0) tex_y += floor_tex->height;  
-                  
-                uint32_t pixel = gr_get_pixel(floor_tex, tex_x, tex_y);  
-                  
-                uint8_t r = (pixel >> gPixelFormat->Rshift) & 0xFF;  
-                uint8_t g = (pixel >> gPixelFormat->Gshift) & 0xFF;  
-                uint8_t b = (pixel >> gPixelFormat->Bshift) & 0xFF;  
-                  
-                r = (uint8_t)(r * fog_factor * 0.8f);  
-                g = (uint8_t)(g * fog_factor * 0.8f);  
-                b = (uint8_t)(b * fog_factor * 0.8f);  
-                  
-                uint32_t color = SDL_MapRGB(gPixelFormat, r, g, b);  
-                gr_put_pixel(render_buffer, col, y, color);  
-            }  
-        }  
-    }  
+    // CORREGIDO: Calcular altura real del techo usando misma fórmula que paredes  
+    float t1 = 300.0f / distance;  
+    float t = (cam_z - region->ceil_height) * 0.25f;  
+    float actual_ceil_top = (screen_h/2.0f) - t * t1 + 120.0f * 16384.0f / 65536.0f;  
       
-    // Renderizar techo (encima de la pared)  
-    if (wall_top > 0) {  
+    // Limitar al wall_top para evitar sobreposición  
+    if (actual_ceil_top > wall_top) actual_ceil_top = wall_top;  
+    if (actual_ceil_top < 0) actual_ceil_top = 0;  
+      
+    // Renderizar techo (encima de la pared) - CORREGIDO con altura real  
+    if (actual_ceil_top > 0) {  
         GRAPH *ceil_tex = get_tex_image(region->ceil_tex);  
         if (ceil_tex) {  
-            for (int y = 0; y < wall_top; y++) {  
-                // Fórmula VPE inversa para techo  
+            for (int y = 0; y < actual_ceil_top; y++) {  
+                // Fórmula VPE inversa para techo - CORREGIDO para parallax activo  
                 float y_diff = horizon - (float)y;  
-                if (fabs(y_diff) < 0.1f) continue;  
+                if (fabs(y_diff) < 1.0f) continue;  
                   
-                float ceil_distance = ((region->ceil_height - cam_z) * 0.25f) * (300.0f / y_diff);  
+                // CORREGIDO: Usar fórmula que responde al movimiento  
+                float ceil_distance = ((region->ceil_height - cam_z) * 200.0f) / y_diff;  
                   
-                if (ceil_distance < 0.1f) continue;  
+                if (ceil_distance < 0.1f || ceil_distance > 5000.0f) continue;  
                   
                 // Punto de impacto en el mundo  
                 float hit_x = cam_x + ray_dir_x * ceil_distance;  
                 float hit_y = cam_y + ray_dir_y * ceil_distance;  
                   
-                // Coordenadas UV en el mundo  
-                int tex_x = ((int)(hit_x * 0.1f)) % ceil_tex->width;  
-                int tex_y = ((int)(hit_y * 0.1f)) % ceil_tex->height;  
-                  
-                if (tex_x < 0) tex_x += ceil_tex->width;  
-                if (tex_y < 0) tex_y += ceil_tex->height;  
+                // Coordenadas UV en el mundo (optimizado con bitwise)  
+                int tex_x = ((int)(hit_x * 0.1f)) & (ceil_tex->width - 1);  
+                int tex_y = ((int)(hit_y * 0.1f)) & (ceil_tex->height - 1);  
                   
                 uint32_t pixel = gr_get_pixel(ceil_tex, tex_x, tex_y);  
                   
@@ -4596,9 +4598,56 @@ void render_floor_and_ceiling(WLD_Map *map, WLD_Region *region, int col,
                 uint8_t g = (pixel >> gPixelFormat->Gshift) & 0xFF;  
                 uint8_t b = (pixel >> gPixelFormat->Bshift) & 0xFF;  
                   
-                r = (uint8_t)(r * fog_factor * 0.7f);  
-                g = (uint8_t)(g * fog_factor * 0.7f);  
-                b = (uint8_t)(b * fog_factor * 0.7f);  
+                // CORREGIDO: Fog por distancia individual  
+                float ceil_fog = 1.0f - (ceil_distance / 2000.0f);  
+                if (ceil_fog < 0.3f) ceil_fog = 0.3f;  
+                if (ceil_fog > 1.0f) ceil_fog = 1.0f;  
+                  
+                r = (uint8_t)(r * ceil_fog * 0.7f);  
+                g = (uint8_t)(g * ceil_fog * 0.7f);  
+                b = (uint8_t)(b * ceil_fog * 0.7f);  
+                  
+                uint32_t color = SDL_MapRGB(gPixelFormat, r, g, b);  
+                gr_put_pixel(render_buffer, col, y, color);  
+            }  
+        }  
+    }  
+      
+    // Renderizar suelo (debajo de la pared)  
+    if (wall_bottom < screen_h - 1) {  
+        GRAPH *floor_tex = get_tex_image(region->floor_tex);  
+        if (floor_tex) {  
+            for (int y = wall_bottom + 1; y < screen_h; y++) {  
+                // Fórmula VPE inversa: calcular distancia real en el mundo  
+                float y_diff = (float)y - horizon;  
+                if (fabs(y_diff) < 1.0f) continue;  
+                  
+                float floor_distance = ((cam_z - region->floor_height) * 200.0f) / y_diff;  
+                  
+                if (floor_distance < 0.1f || floor_distance > 5000.0f) continue;  
+                  
+                // Punto de impacto en el mundo  
+                float hit_x = cam_x + ray_dir_x * floor_distance;  
+                float hit_y = cam_y + ray_dir_y * floor_distance;  
+                  
+                // Coordenadas UV en el mundo (optimizado con bitwise)  
+                int tex_x = ((int)(hit_x * 0.1f)) & (floor_tex->width - 1);  
+                int tex_y = ((int)(hit_y * 0.1f)) & (floor_tex->height - 1);  
+                  
+                uint32_t pixel = gr_get_pixel(floor_tex, tex_x, tex_y);  
+                  
+                uint8_t r = (pixel >> gPixelFormat->Rshift) & 0xFF;  
+                uint8_t g = (pixel >> gPixelFormat->Gshift) & 0xFF;  
+                uint8_t b = (pixel >> gPixelFormat->Bshift) & 0xFF;  
+                  
+                // Fog por distancia individual  
+                float floor_fog = 1.0f - (floor_distance / 2000.0f);  
+                if (floor_fog < 0.3f) floor_fog = 0.3f;  
+                if (floor_fog > 1.0f) floor_fog = 1.0f;  
+                  
+                r = (uint8_t)(r * floor_fog * 0.8f);  
+                g = (uint8_t)(g * floor_fog * 0.8f);  
+                b = (uint8_t)(b * floor_fog * 0.8f);  
                   
                 uint32_t color = SDL_MapRGB(gPixelFormat, r, g, b);  
                 gr_put_pixel(render_buffer, col, y, color);  
@@ -4606,7 +4655,6 @@ void render_floor_and_ceiling(WLD_Map *map, WLD_Region *region, int col,
         }  
     }  
 }
-
 void wld_assign_regions(WLD_Map *map)  
 {  
     int i;  

@@ -79,21 +79,21 @@ typedef struct {
 } WLD_Flag;  // Total: 12 bytes  
   
 typedef struct {  
-    int active;  
-    int x, y;  
-    int links;  
-} WLD_Point;  // Total: 16 bytes  
+    int32_t active;  
+    int32_t x, y;  
+    int32_t links;  
+} WLD_Point;  // Compatible con tpoint  
   
 typedef struct {  
-    int active;  
-    int type;  
-    int p1, p2;  
-    int front_region, back_region;  
-    int texture;  
-    int texture_top;  
-    int texture_bot;  
-    int fade;  
-} WLD_Wall;  // Total: 36 bytes  
+    int32_t active;  
+    int32_t type;  
+    int32_t p1, p2;  
+    int32_t front_region, back_region;  
+    int32_t texture;  
+    int32_t texture_top;  
+    int32_t texture_bot;  
+    int32_t fade;  
+} WLD_Wall;  // Compatible con twall
   
 typedef struct {  
     int active;  
@@ -116,6 +116,8 @@ typedef struct {
     int num_flags;  
     WLD_Flag **flags;       // Array de punteros  
     int loaded;  
+    int skybox_angle;  
+    char skybox_texture[32]; 
 } WLD_Map;
   
 // Variables globales para el sistema WLD  
