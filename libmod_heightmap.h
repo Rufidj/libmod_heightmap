@@ -103,6 +103,12 @@ typedef struct {
     int ceil_tex;  
     int fade;  
 } WLD_Region;  // Total: 32 bytes  
+
+typedef struct {  
+    WLD_Region *original_region;  
+    WLD_Wall **wall_ptrs;  
+    int num_wall_ptrs;  
+} WLD_Region_Optimized;
   
 #pragma pack(pop)
   

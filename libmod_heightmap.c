@@ -15,7 +15,9 @@
 
 #define max(a,b) ((a) > (b) ? (a) : (b))  
 #define min(a,b) ((a) < (b) ? (a) : (b))  
-static WLD_Region_Optimized optimized_regions[MAX_REGIONS];
+// Agregar después de las variables globales WLD (línea ~125)  
+static WLD_Region_Optimized optimized_regions[MAX_REGIONS];  
+static WLD_Wall *wall_ptrs[MAX_WALLS];
 // Caché espacial para point_in_region()  
 #define CACHE_SIZE 1024  
 #define CACHE_SCALE 0.1f  // 1 unidad = 10 unidades del mundo  
@@ -300,6 +302,16 @@ extern float intersect_ray_segment(float ray_dir_x, float ray_dir_y, float cam_x
 extern int wld_find_region(WLD_Map *map, float x, float y, int discard_region);
 // Función exportada para BennuGD2  
 extern int64_t libmod_heightmap_render_wld_3d(INSTANCE *my, int64_t *params);
+extern void render_floor_and_ceiling(WLD_Map *map, WLD_Region *region, int col,  
+                                     int screen_w, int screen_h, int wall_top, int wall_bottom,  
+                                     float cam_x, float cam_y, float cam_z, float distance,  
+                                     float fog_factor); 
+extern void render_complex_wall_section(WLD_Map *map, WLD_Wall *wall, WLD_Region *region,  
+                                        int region_idx, int col, int screen_w, int screen_h,  
+                                        int y_start, int y_end, float wall_u, float fog_factor,  
+                                        float camera_x, float camera_y, float camera_z,   
+                                        float hit_distance);  
+extern void wld_build_wall_ptrs(WLD_Map *map);
 
 
 static void cleanup_gpu_resources(void) {  
@@ -4641,7 +4653,8 @@ void render_floor_and_ceiling(WLD_Map *map, WLD_Region *region, int col,
                 float y_diff = (float)y - horizon;  
                 if (fabs(y_diff) < 0.1f) continue;  
                   
-                float floor_distance = ((cam_z - region->floor_height) * 0.25f) * (300.0f / y_diff);  
+                float height_diff = cam_z - region->floor_height;  
+                float floor_distance = (height_diff * 300.0f) / y_diff;
                   
                 if (floor_distance < 0.1f) continue;  
                   
