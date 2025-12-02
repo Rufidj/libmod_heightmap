@@ -4603,7 +4603,7 @@ void render_floor_and_ceiling(WLD_Map *map, WLD_Region *region, int col,
                 if (fabs(y_diff) < 0.1f) continue;  
                   
                 float height_diff = region->ceil_height - cam_z;  
-                float ceil_distance = (height_diff * 500.0f) / y_diff;  
+                float ceil_distance = (height_diff * 300.0f) / y_diff;  
                   
                 if (ceil_distance < 0.1f || ceil_distance > 5000.0f) continue;  
                   
