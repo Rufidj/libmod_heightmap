@@ -291,9 +291,9 @@ extern void wld_debug_walls_with_x_diff(WLD_Map *map);
 // Funciones 3D WLD (renderizado VPE sin dependencias externas)  
 extern void render_wld(WLD_Map *map, int screen_w, int screen_h);
 extern int point_in_region(float x, float y, int region_idx, WLD_Map *map);
-extern void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam_y,  
-                                  float ray_dir_x, float ray_dir_y, float *hit_distance,  
-                                  WLD_Wall **hit_wall, int *hit_region);  
+extern void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam_y,    
+                                  float ray_dir_x, float ray_dir_y, float *hit_distance,    
+                                  WLD_Wall **hit_wall, int *hit_region, int *adjacent_region);  
 extern void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,   
                               int col, int screen_w, int screen_h,  
                               float cam_x, float cam_y, float cam_z, float distance);  
@@ -4010,7 +4010,7 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         // Cargar textura del skybox desde el FPG usando el índice  
         int skybox_index = atoi(map->skybox_texture);  
         GRAPH *skybox_graph = get_tex_image(skybox_index);  
-              
+          
         if (skybox_graph) {  
             // Renderizar skybox plano (simple stretch)  
             for (int y = 0; y < screen_h; y++) {  
@@ -4034,21 +4034,17 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         gr_clear_as(render_buffer, sky_color);  
     }  
       
-    // DEBUG: Verificar qué pasa después del skybox  
-    printf("DEBUG: Después de skybox - buscando región de cámara\n");  
-      
     // Encontrar región actual de la cámara  
     int current_region = -1;  
     for (int i = 0; i < map->num_regions; i++) {  
         if (map->regions[i] && point_in_region(camera.x, camera.y, i, map)) {  
             current_region = i;  
-            printf("DEBUG: Cámara encontrada en región %d\n", current_region);  
             break;  
         }  
     }  
       
     if (current_region < 0) {  
-        printf("DEBUG: Cámara fuera de todas las regiones - saliendo\n");  
+        printf("DEBUG: Cámara fuera de todas las regiones\n");  
         return;  
     }  
       
@@ -4063,67 +4059,62 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         float angle_offset = ((float)col - screen_w/2.0f) * 0.003f;  
         float ray_dir_x = cos(camera.angle + angle_offset);  
         float ray_dir_y = sin(camera.angle + angle_offset);  
-              
+          
         float hit_distance = 999999.0f;  
         WLD_Wall *hit_wall = NULL;  
         int hit_region = current_region;  
-              
-        // Escanear paredes visibles  
+          
+        // NUEVO: Obtener región adyacente sin modificar hit_region  
+        int adjacent_region = -1;  
         scan_walls_from_region(map, current_region, camera.x, camera.y,  
                               ray_dir_x, ray_dir_y, &hit_distance,  
-                              &hit_wall, &hit_region);  
-              
+                              &hit_wall, &hit_region, &adjacent_region);  
+          
         // Renderizar pared golpeada  
         if (hit_wall && hit_distance < 999999.0f) {  
-            // NUEVO: Detectar si es pared compleja  
-            int adjacent_region = -1;  
-            if (hit_wall->front_region == hit_region && hit_wall->back_region >= 0) {  
-                adjacent_region = hit_wall->back_region;  
-            } else if (hit_wall->back_region == hit_region && hit_wall->front_region >= 0) {  
-                adjacent_region = hit_wall->front_region;  
-            }  
-                
-            // Verificar si hay diferencia de altura para geometría compleja  
+            // CORRECCIÓN: Usar current_region y adjacent_region para detección  
             int is_complex = 0;  
             if (adjacent_region >= 0 && adjacent_region < map->num_regions) {  
-                WLD_Region *current = map->regions[hit_region];  
+                WLD_Region *current = map->regions[current_region];  
                 WLD_Region *adjacent = map->regions[adjacent_region];  
-                    
+                  
                 if (current && adjacent) {  
                     // Diferencia de altura en suelo o techo  
                     if (current->floor_height != adjacent->floor_height ||  
                         current->ceil_height != adjacent->ceil_height) {  
                         is_complex = 1;  
                         complex_walls++;  
+                        printf("DEBUG: Pared compleja detectada - regiones %d <-> %d\n",   
+                               current_region, adjacent_region);  
                     }  
                 }  
             }  
-                
+              
             if (is_complex) {  
                 // Usar renderizado complejo  
-                printf("DEBUG: Pared compleja detectada - regiones %d <-> %d\n",     
-                       hit_region, adjacent_region);  
-                    
+                printf("DEBUG: Pared compleja detectada - regiones %d <-> %d\n",   
+                       current_region, adjacent_region);  
+                  
                 // Calcular proyección básica para pasar a render_complex_wall_section  
                 float t1 = 300.0f / hit_distance;  
-                float t = (camera.z - map->regions[hit_region]->floor_height) * 0.25f;  
+                float t = (camera.z - map->regions[current_region]->floor_height) * 0.25f;  
                 float FBS = (screen_h/2.0f) - t * t1 + 120.0f * 16384.0f / 65536.0f;  
-                    
-                t = (camera.z - map->regions[hit_region]->ceil_height) * 0.25f;  
+                  
+                t = (camera.z - map->regions[current_region]->ceil_height) * 0.25f;  
                 float FTS = (screen_h/2.0f) - t * t1 + 120.0f * 16384.0f / 65536.0f;  
-                    
+                  
                 if (FTS > FBS) {  
                     float temp = FTS;  
                     FTS = FBS;  
                     FBS = temp;  
                 }  
-                    
+                  
                 if (FTS < 0) FTS = 0;  
                 if (FBS >= screen_h) FBS = screen_h - 1;  
-                    
+                  
                 int y_start = (int)FTS;  
                 int y_end = (int)FBS;  
-                    
+                  
                 // Calcular wall_u  
                 int p1 = hit_wall->p1;  
                 int p2 = hit_wall->p2;  
@@ -4132,36 +4123,36 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
                     float y1 = map->points[p1]->y;  
                     float x2 = map->points[p2]->x;  
                     float y2 = map->points[p2]->y;  
-                        
+                      
                     float hit_x = camera.x + ray_dir_x * hit_distance;  
                     float hit_y = camera.y + ray_dir_y * hit_distance;  
-                        
+                      
                     float wall_dx = x2 - x1;  
                     float wall_dy = y2 - y1;  
                     float wall_length = sqrtf(wall_dx * wall_dx + wall_dy * wall_dy);  
-                        
+                      
                     if (wall_length > 0.001f) {  
                         float to_hit_x = hit_x - x1;  
                         float to_hit_y = hit_y - y1;  
                         float dist_along_wall = (to_hit_x * wall_dx + to_hit_y * wall_dy) / (wall_length * wall_length);  
-                            
+                          
                         if (dist_along_wall < 0.0f) dist_along_wall = 0.0f;  
                         if (dist_along_wall > 1.0f) dist_along_wall = 1.0f;  
-                            
+                          
                         float wall_u = dist_along_wall;  
                         float fog_factor = 1.0f - (hit_distance / 2000.0f);  
                         if (fog_factor < 0.3f) fog_factor = 0.3f;  
                         if (fog_factor > 1.0f) fog_factor = 1.0f;  
-                            
-                        render_complex_wall_section(map, hit_wall, map->regions[hit_region],  
-                                                   hit_region, col, screen_w, screen_h,  
+                          
+                        render_complex_wall_section(map, hit_wall, map->regions[current_region],  
+                                                   current_region, col, screen_w, screen_h,  
                                                    y_start, y_end, wall_u, fog_factor,  
                                                    camera.x, camera.y, camera.z, hit_distance);  
                     }  
                 }  
             } else {  
                 // Usar renderizado simple  
-                render_wall_column(map, hit_wall, hit_region, col,  
+                render_wall_column(map, hit_wall, current_region, col,  
                                   screen_w, screen_h, camera.x, camera.y,  
                                   camera.z, hit_distance);  
             }  
@@ -4169,8 +4160,8 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         }  
     }  
       
-    // DEBUG: Contador final de paredes renderizadas  
-    printf("DEBUG: Raycasting completado - paredes renderizadas: %d\n", walls_found);  
+    printf("DEBUG: Renderizado completado - paredes encontradas: %d, paredes complejas: %d\n",   
+           walls_found, complex_walls);  
 }
   
 // Función auxiliar para verificar si punto está en región  
@@ -4210,9 +4201,9 @@ int point_in_region(float x, float y, int region_idx, WLD_Map *map)
 }
   
 // Función para escanear paredes visibles (similar a ScanRegion de VPE)  
-void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam_y,  
-                           float ray_dir_x, float ray_dir_y, float *hit_distance,  
-                           WLD_Wall **hit_wall, int *hit_region)  
+void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam_y,   
+                           float ray_dir_x, float ray_dir_y, float *hit_distance,   
+                           WLD_Wall **hit_wall, int *hit_region, int *adjacent_region)  
 {  
     int visited_regions[256];  
     int num_visited = 0;  
@@ -4222,13 +4213,11 @@ void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam
       
     *hit_distance = 999999.0f;  
     *hit_wall = NULL;  
-    *hit_region = region_idx;  
+    *hit_region = region_idx;  // Mantener la región actual  
+    *adjacent_region = -1;     // Nuevo parámetro de salida  
       
     while (num_to_visit > 0) {  
         int current = regions_to_visit[--num_to_visit];  
-          
-        // OPTIMIZACIÓN: Early exit si la distancia es muy pequeña  
-        if (*hit_distance < 10.0f) break;  
           
         int already_visited = 0;  
         for (int i = 0; i < num_visited; i++) {  
@@ -4265,13 +4254,10 @@ void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam
             if (t > 0.1f && t < *hit_distance) {  
                 *hit_distance = t;  
                 *hit_wall = map->walls[i];  
+                // CORRECCIÓN: No modificar hit_region, guardar en adjacent_region  
                 int adjacent = (front == current) ? back : front;  
-                  
-                if (adjacent >= 0 && adjacent < map->num_regions) {  
-                    *hit_region = adjacent;  
-                } else {  
-                    *hit_region = current;  
-                }  
+                *adjacent_region = adjacent;  
+                *hit_region = current;  // Mantener la región actual  
             }  
               
             int adjacent = (front == current) ? back : front;  
@@ -4291,7 +4277,6 @@ void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam
     }  
 }
 
-  
 // Función para renderizar columna de pared (similar a DrawSimpleWall)  
 void render_wall_column(WLD_Map *map, WLD_Wall *wall, int region_idx,           
                        int col, int screen_w, int screen_h,          
