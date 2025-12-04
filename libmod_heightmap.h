@@ -125,6 +125,16 @@ typedef struct {
     int skybox_angle;  
     char skybox_texture[32]; 
 } WLD_Map;
+
+typedef struct {  
+    int floor_height, ceil_height;  
+    int floor_tex, ceil_tex;  
+    int num_walls;  
+    WLD_Wall **walls;  
+    int *neighbors;  // Regiones adyacentes (portales)  
+} WLD_Sector;  
+  
+static WLD_Sector *sectors = NULL;
   
 // Variables globales para el sistema WLD  
 static WLD_PicInfo *wld_pics[1000];  

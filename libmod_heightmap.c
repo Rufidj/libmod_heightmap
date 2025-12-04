@@ -3679,11 +3679,13 @@ int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params)
     printf("  - Paredes: %d\n", wld_map.num_walls);        
       
     // SOLO construir punteros optimizados - SIN asignación de regiones estática  
-    wld_build_wall_ptrs(&wld_map);     
+    wld_build_wall_ptrs(&wld_map); 
+    wld_build_sectors(&wld_map);
+    debug_current_portals(&wld_map);
     printf("DEBUG: Mapa cargado - asignación de regiones será dinámica\n");      
-    debug_missing_textures(&wld_map); 
-    debug_wall_types(&wld_map);    
-    debug_find_portal_regions(&wld_map);    
+    // debug_missing_textures(&wld_map); 
+    // debug_wall_types(&wld_map);    
+    // debug_find_portal_regions(&wld_map);    
     string_discard(params[0]);        
     return 1;        
 }
@@ -4935,6 +4937,111 @@ void debug_missing_textures(WLD_Map *map)
                    i, region->floor_tex, region->ceil_tex);  
         }  
     }  
+}
+
+
+void debug_current_portals(WLD_Map *map)  
+{  
+    printf("DEBUG: Portales en mapa cargado (mostrando primeros 20):\n");  
+    int count = 0;  
+      
+    for (int i = 0; i < map->num_walls && count < 20; i++) {  
+        WLD_Wall *wall = map->walls[i];  
+        if (!wall) continue;  
+          
+        // Mostrar paredes que tienen back_region asignado (portales)  
+        if (wall->front_region >= 0 && wall->back_region >= 0) {  
+            printf("  Pared[%d]: región %d -> %d (type=%d)\n",   
+                   i, wall->front_region, wall->back_region, wall->type);  
+            count++;  
+        }  
+    }  
+      
+    if (count >= 20) {  
+        printf("  ... y más portales\n");  
+    }  
+      
+    // Contar totales  
+    int portals = 0, solids = 0;  
+    for (int i = 0; i < map->num_walls; i++) {  
+        if (map->walls[i]) {  
+            if (map->walls[i]->front_region >= 0 && map->walls[i]->back_region >= 0) {  
+                portals++;  
+            } else {  
+                solids++;  
+            }  
+        }  
+    }  
+      
+    printf("DEBUG: Total - %d portales, %d paredes sólidas\n", portals, solids);  
+}
+
+void wld_build_sectors(WLD_Map *map)  
+{  
+    printf("DEBUG: Calculando back_region para todas las paredes...\n");  
+      
+    // 1. Normalizar orientación de paredes (opcional, pero ayuda)  
+    for (int i = 0; i < map->num_walls; i++) {  
+        WLD_Wall *wall = map->walls[i];  
+        if (!wall) continue;  
+          
+        if (wall->p1 > wall->p2) {  
+            int aux = wall->p1;  
+            wall->p1 = wall->p2;  
+            wall->p2 = aux;  
+        }  
+        wall->back_region = -1;  
+    }  
+      
+    // 2. Buscar portales por vértices compartidos  
+    for (int i = 0; i < map->num_walls; i++) {  
+        WLD_Wall *wall1 = map->walls[i];  
+        if (!wall1) continue;  
+          
+        for (int j = i+1; j < map->num_walls; j++) {  
+            WLD_Wall *wall2 = map->walls[j];  
+            if (!wall2) continue;  
+              
+            // MISMA PARED, ORIENTACIÓN OPUESTA = PORTAL  
+            if (wall1->p1 == wall2->p2 && wall1->p2 == wall2->p1) {  
+                if (wall1->front_region != wall2->front_region) {  
+                    wall1->back_region = wall2->front_region;  
+                    wall2->back_region = wall1->front_region;  
+                    wall1->type = 1;  
+                    wall2->type = 1;  
+                }  
+            }  
+        }  
+    }  
+      
+    // 3. Para paredes sin back_region, buscar región adyacente  
+    for (int i = 0; i < map->num_walls; i++) {  
+        WLD_Wall *wall = map->walls[i];  
+        if (!wall) continue;  
+          
+        if (wall->back_region == -1 && wall->front_region >= 0) {  
+            // Calcular punto medio de la pared  
+            int xm = (map->points[wall->p1]->x + map->points[wall->p2]->x) / 2;  
+            int ym = (map->points[wall->p1]->y + map->points[wall->p2]->y) / 2;  
+              
+            // Buscar región que contiene este punto  
+            int region_back = wld_find_region(map, xm, ym, wall->front_region);  
+            if (region_back != -1) {  
+                wall->back_region = region_back;  
+                wall->type = 1;  
+            }  
+        }  
+    }  
+      
+    // 4. Contar portales  
+    int portals = 0;  
+    for (int i = 0; i < map->num_walls; i++) {  
+        if (map->walls[i] && map->walls[i]->back_region >= 0) {  
+            portals++;  
+        }  
+    }  
+      
+    printf("DEBUG: back_region calculado - %d portales encontrados\n", portals);  
 }
 
 
