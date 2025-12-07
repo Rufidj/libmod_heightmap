@@ -15,6 +15,7 @@
 
 #define max(a,b) ((a) > (b) ? (a) : (b))  
 #define min(a,b) ((a) < (b) ? (a) : (b))  
+#define VERTEX_TOLERANCE 0.001f 
 // Agregar después de las variables globales WLD (línea ~125)  
 static WLD_Region_Optimized optimized_regions[MAX_REGIONS];  
 static WLD_Wall *wall_ptrs[MAX_WALLS];
@@ -316,7 +317,9 @@ extern void render_complex_wall_section(WLD_Map *map, WLD_Wall *wall, WLD_Region
                                         float camera_x, float camera_y, float camera_z,   
                                         float hit_distance);  
 extern void wld_build_wall_ptrs(WLD_Map *map);
-
+static bool vertices_equal(int32_t x1, int32_t y1, int32_t x2, int32_t y2) {  
+    return x1 == x2 && y1 == y2;  
+}
 
 
 
@@ -3689,6 +3692,8 @@ int64_t libmod_heightmap_load_wld(INSTANCE *my, int64_t *params)
     wld_assign_regions_simple(&wld_map, -1); 
     wld_build_sectors(&wld_map);
     debug_current_portals(&wld_map);
+    analyze_wall_coordinates(&wld_map);  
+    export_map_to_text(&wld_map, "map_debug.txt"); 
     printf("DEBUG: Mapa cargado - asignación de regiones será dinámica\n");      
     // debug_missing_textures(&wld_map); 
     // debug_wall_types(&wld_map);    
@@ -4031,7 +4036,7 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
     // Encontrar región actual  
     int current_region = -1;  
     for (int i = 0; i < map->num_regions; i++) {  
-        if (map->regions[i] && map->regions[i]->active &&      
+        if (map->regions[i] && map->regions[i]->active &&        
             point_in_region(camera.x, camera.y, i, map)) {  
             current_region = i;  
             break;  
@@ -4045,7 +4050,7 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
       
     // Renderizar cada columna con raycasting continuo  
     for (int col = 0; col < screen_w; col++) {  
-        float angle_offset = ((float)col - screen_w/2.0f) * 0.003f;  
+        float angle_offset = ((float)col - screen_w/2.0f) * wld_angle_step;  // Usar wld_angle_step  
         float ray_dir_x = cos(camera.angle + angle_offset);  
         float ray_dir_y = sin(camera.angle + angle_offset);  
           
@@ -4060,7 +4065,7 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
             int hit_region, adjacent_region;  
             float hit_distance;  
               
-            scan_walls_from_region(map, current_sector,   
+            scan_walls_from_region(map, current_sector,     
                                   camera.x + ray_dir_x * total_distance,  
                                   camera.y + ray_dir_y * total_distance,  
                                   ray_dir_x, ray_dir_y, &hit_distance,  
@@ -4083,14 +4088,14 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
                     WLD_Region *adjacent = map->regions[adjacent_region];  
                       
                     if (current && adjacent && current->active && adjacent->active) {  
-                        if (current->floor_height != adjacent->floor_height ||      
+                        if (current->floor_height != adjacent->floor_height ||        
                             current->ceil_height != adjacent->ceil_height) {  
                             is_complex = true;  
                         }  
                     }  
                 }  
                   
-                // Renderizar portal complejo o continuar  
+                // Renderizar portal complejo Y CONTINUAR  
                 if (is_complex) {  
                     // Calcular wall_u y fog  
                     int p1 = hit_wall->p1;  
@@ -4119,11 +4124,15 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
                     if (fog_factor < 0.3f) fog_factor = 0.3f;  
                     if (fog_factor > 1.0f) fog_factor = 1.0f;  
                       
-                    render_complex_wall_section(map, hit_wall, map->regions[hit_region],     
+                    // Renderizar solo las secciones superior e inferior del portal complejo  
+                    render_complex_wall_section(map, hit_wall, map->regions[hit_region],       
                                                hit_region, col, screen_w, screen_h,  
                                                0, screen_h, wall_u, fog_factor,  
                                                camera.x, camera.y, camera.z, total_distance);  
-                    break;  
+                      
+                    // CORRECCIÓN: Continuar al siguiente sector en lugar de hacer break  
+                    current_sector = adjacent_region;  
+                    depth++;  
                 } else {  
                     // Portal simple - continuar al siguiente sector  
                     current_sector = adjacent_region;  
@@ -4134,9 +4143,8 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
             }  
         }  
     }  
-
 }
- 
+
 // Función auxiliar para verificar si punto está en región  
 static int last_region_x = -999999, last_region_y = -999999;  
 static int last_region_result = -1;  
@@ -5010,24 +5018,18 @@ void wld_build_sectors(WLD_Map *map)
                     wall1->type = 1; // Portal  
                     wall2->type = 1; // Portal  
                       
-                    // CORRECCIÓN: Portal transparente en medio  
-                    wall1->texture = 0; // Sin textura en sección media (transparente)  
-                    wall2->texture = 0; // Sin textura en sección media (transparente)  
+                    // Portal transparente en medio  
+                    wall1->texture = 0;  
+                    wall2->texture = 0;  
                       
                     if (map->regions[wall1->front_region]) {  
                         wall1->texture_top = map->regions[wall1->front_region]->ceil_tex;  
                         wall1->texture_bot = map->regions[wall1->front_region]->floor_tex;  
-                    } else {  
-                        printf("DEBUG: Región front %d no encontrada para pared %d\n",     
-                               wall1->front_region, i);  
                     }  
                       
                     if (map->regions[wall2->front_region]) {  
                         wall2->texture_top = map->regions[wall2->front_region]->ceil_tex;  
                         wall2->texture_bot = map->regions[wall2->front_region]->floor_tex;  
-                    } else {  
-                        printf("DEBUG: Región front %d no encontrada para pared %d\n",     
-                               wall2->front_region, j);  
                     }  
                 }  
             }  
@@ -5038,63 +5040,24 @@ void wld_build_sectors(WLD_Map *map)
     for (int i = 0; i < map->num_walls; i++) {  
         WLD_Wall *wall = map->walls[i];  
         if (wall->back_region == -1 && wall->front_region >= 0) {  
-            // Calcular punto medio de la pared  
             int xm = (map->points[wall->p1]->x + map->points[wall->p2]->x) / 2;  
             int ym = (map->points[wall->p1]->y + map->points[wall->p2]->y) / 2;  
               
-            // Buscar región que contiene este punto  
             int region_back = wld_find_region(map, xm, ym, wall->front_region);  
             if (region_back != -1) {  
                 wall->back_region = region_back;  
                 wall->type = 1; // Portal  
-                  
-                // CORRECCIÓN: Portal transparente en medio  
-                wall->texture = 0; // Sin textura en sección media (transparente)  
+                wall->texture = 0; // Transparente  
                   
                 if (map->regions[wall->front_region]) {  
                     wall->texture_top = map->regions[wall->front_region]->ceil_tex;  
                     wall->texture_bot = map->regions[wall->front_region]->floor_tex;  
-                } else {  
-                    printf("DEBUG: Región front %d no encontrada para pared %d\n",     
-                           wall->front_region, i);  
                 }  
             }  
         }  
     }  
       
-    // 4. Validar asignación de texturas para portales  
-    int portals_validos = 0;  
-    int portals_invalidos = 0;  
-      
-    for (int i = 0; i < map->num_walls; i++) {  
-        WLD_Wall *wall = map->walls[i];  
-        if (!wall || wall->back_region < 0) continue;  
-          
-        if (wall->type == 1) { // Portal  
-            // Validar texturas top/bot (secciones superior/inferior)  
-            if (wall->texture_top == 0 || wall->texture_bot == 0) {  
-                portals_invalidos++;  
-                  
-                // Asignar texturas por defecto si faltan  
-                if (map->regions[wall->front_region]) {  
-                    if (wall->texture_top == 0) {  
-                        wall->texture_top = map->regions[wall->front_region]->ceil_tex;  
-                    }  
-                    if (wall->texture_bot == 0) {  
-                        wall->texture_bot = map->regions[wall->front_region]->floor_tex;  
-                    }  
-                }  
-            } else {  
-                portals_validos++;  
-            }  
-              
-            // Asegurar que la sección media sea transparente  
-            wall->texture = 0;  
-        }  
-    }  
-      
-    printf("DEBUG: back_region calculado - %d portales encontrados (%d válidos, %d inválidos)\n",     
-           portals_validos + portals_invalidos, portals_validos, portals_invalidos);  
+    printf("DEBUG: Portales detectados y configurados como transparentes\n");  
 }
 
 void debug_complex_wall_detection(WLD_Map *map, int region_idx, int adjacent_idx)  
@@ -5204,5 +5167,102 @@ int64_t libmod_heightmap_set_wld_fov(INSTANCE *my, int64_t *params) {
     return 1;  
 }
 
+void validate_and_fix_portals(WLD_Map *map) {  
+    if (!map) return;  
+      
+    int fixed_count = 0;  
+    for (int i = 0; i < map->num_walls; i++) {  
+        WLD_Wall *wall = map->walls[i];  
+        if (!wall) continue;  
+          
+        // Si es portal pero tiene textura en medio, corregir  
+        if (wall->type == 1 && wall->texture > 0) {  
+            printf("CORRECCIÓN: Portal[%d] tenía texture=%d, estableciendo a 0\n",   
+                   i, wall->texture);  
+            wall->texture = 0;  
+            fixed_count++;  
+        }  
+          
+        // Asegurar que portales tengan texturas top/bot  
+        if (wall->type == 1 && wall->back_region >= 0) {  
+            if (wall->texture_top == 0 && map->regions[wall->front_region]) {  
+                wall->texture_top = map->regions[wall->front_region]->ceil_tex;  
+            }  
+            if (wall->texture_bot == 0 && map->regions[wall->front_region]) {  
+                wall->texture_bot = map->regions[wall->front_region]->floor_tex;  
+            }  
+        }  
+    }  
+      
+    if (fixed_count > 0) {  
+        printf("DEBUG: Se corrigieron %d portales con textura incorrecta\n", fixed_count);  
+    }  
+}
+
+void export_map_to_text(WLD_Map *map, const char *filename) {  
+    FILE *f = fopen(filename, "w");  
+    if (!f) return;  
+      
+    fprintf(f, "PUNTOS:\n");  
+    for (int i = 0; i < map->num_points; i++) {  
+        fprintf(f, "  %d: (%d,%d)\n", i,   
+                map->points[i]->x, map->points[i]->y);  
+    }  
+      
+    fprintf(f, "\nPAREDES:\n");  
+    for (int i = 0; i < map->num_walls; i++) {  
+        WLD_Wall *wall = map->walls[i];  
+        fprintf(f, "  %d: p1=%d, p2=%d, front=%d, back=%d, type=%d\n",  
+                i, wall->p1, wall->p2, wall->front_region,   
+                wall->back_region, wall->type);  
+    }  
+      
+    fclose(f);  
+}
+
+// Añade este código para analizar las coordenadas  
+void analyze_wall_coordinates(WLD_Map *map) {  
+    printf("DEBUG: Analizando coordenadas de paredes...\n");  
+    for (int i = 0; i < 10 && i < map->num_walls; i++) {  
+        WLD_Wall *wall = map->walls[i];  
+        if (!wall) continue;  
+          
+        printf("Pared[%d]: p1=(%d,%d), p2=(%d,%d)\n",  
+               i,   
+               map->points[wall->p1]->x, map->points[wall->p1]->y,  
+               map->points[wall->p2]->x, map->points[wall->p2]->y);  
+    }  
+}
+
+// Función para calcular distancia entre dos puntos  
+static float distance_between_points(int32_t x1, int32_t y1, int32_t x2, int32_t y2) {  
+    float dx = (float)(x2 - x1);  
+    float dy = (float)(y2 - y1);  
+    return sqrtf(dx * dx + dy * dy);  
+}  
+  
+// Función para encontrar la distancia mínima entre dos segmentos  
+static float min_distance_between_segments(  
+    int32_t ax1, int32_t ay1, int32_t ax2, int32_t ay2,  
+    int32_t bx1, int32_t by1, int32_t bx2, int32_t by2) {  
+      
+    // Probar múltiples puntos en ambos segmentos  
+    float min_dist = 999999.0f;  
+      
+    for (float t = 0.0f; t <= 1.0f; t += 0.25f) {  
+        float ax = ax1 + (ax2 - ax1) * t;  
+        float ay = ay1 + (ay2 - ay1) * t;  
+          
+        for (float s = 0.0f; s <= 1.0f; s += 0.25f) {  
+            float bx = bx1 + (bx2 - bx1) * s;  
+            float by = by1 + (by2 - by1) * s;  
+              
+            float dist = distance_between_points((int32_t)ax, (int32_t)ay, (int32_t)bx, (int32_t)by);  
+            if (dist < min_dist) min_dist = dist;  
+        }  
+    }  
+      
+    return min_dist;  
+}
 
 #include "libmod_heightmap_exports.h"
