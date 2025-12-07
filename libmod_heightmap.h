@@ -133,7 +133,13 @@ typedef struct {
     WLD_Wall **walls;  
     int *neighbors;  // Regiones adyacentes (portales)  
 } WLD_Sector;  
-  
+
+typedef struct {  
+    int region_idx;  
+    float distance_offset;  
+    int depth;  
+} RaySegment;
+
 static WLD_Sector *sectors = NULL;
   
 // Variables globales para el sistema WLD  

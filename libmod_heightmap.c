@@ -18,6 +18,10 @@
 // Agregar después de las variables globales WLD (línea ~125)  
 static WLD_Region_Optimized optimized_regions[MAX_REGIONS];  
 static WLD_Wall *wall_ptrs[MAX_WALLS];
+
+// fov configurable WLD
+static float wld_angle_step = 0.003f;
+
 // Caché espacial para point_in_region()  
 #define CACHE_SIZE 1024  
 #define CACHE_SCALE 0.1f  // 1 unidad = 10 unidades del mundo  
@@ -4025,7 +4029,7 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
     // Encontrar región actual  
     int current_region = -1;  
     for (int i = 0; i < map->num_regions; i++) {  
-        if (map->regions[i] && map->regions[i]->active &&     
+        if (map->regions[i] && map->regions[i]->active &&      
             point_in_region(camera.x, camera.y, i, map)) {  
             current_region = i;  
             break;  
@@ -4037,10 +4041,24 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         return;  
     }  
       
-    int walls_found = 0;  
-    int complex_walls = 0;  
-    int simple_walls = 0;  
-    int solid_walls = 0;  
+    // Estructura para rastrear rayos pendientes  
+    typedef struct {  
+        int region_idx;  
+        float distance_offset;  
+        int depth;  
+        float entry_x, entry_y;  // Punto de entrada al rayo  
+    } RaySegment;  
+      
+    // Estructura para almacenar paredes a renderizar  
+    typedef struct {  
+        WLD_Wall *wall;  
+        int region_idx;  
+        int adjacent_region;  
+        float total_distance;  
+        float wall_u;  
+        float fog_factor;  
+        int depth;  
+    } WallRenderData;  
       
     // Renderizar cada columna  
     for (int col = 0; col < screen_w; col++) {  
@@ -4048,117 +4066,134 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         float ray_dir_x = cos(camera.angle + angle_offset);  
         float ray_dir_y = sin(camera.angle + angle_offset);  
           
-        WLD_Wall *hit_wall;  
-        int hit_region, adjacent_region;  
-        float hit_distance;  
+        // Cola de rayos a procesar (profundidad limitada)  
+        RaySegment ray_queue[8];  
+        int queue_size = 1;  
+        ray_queue[0].region_idx = current_region;  
+        ray_queue[0].distance_offset = 0.0f;  
+        ray_queue[0].depth = 0;  
+        ray_queue[0].entry_x = camera.x;  
+        ray_queue[0].entry_y = camera.y;  
           
-        // Escanear paredes  
-        scan_walls_from_region(map, current_region, camera.x, camera.y,  
-                              ray_dir_x, ray_dir_y, &hit_distance,  
-                              &hit_wall, &hit_region, &adjacent_region);  
+        // Array de paredes encontradas  
+        WallRenderData walls_found[8];  
+        int wall_count = 0;  
           
-        if (hit_wall && hit_distance < 999999.0f) {  
-            walls_found++;  
+        // Procesar rayos recursivamente  
+        while (queue_size > 0 && wall_count < 8) {  
+            RaySegment current_seg = ray_queue[--queue_size];  
               
-            // Calcular wall_u  
-            int p1 = hit_wall->p1;  
-            int p2 = hit_wall->p2;  
-            float wall_u = 0.0f;  
-            if (p1 >= 0 && p1 < map->num_points && p2 >= 0 && p2 < map->num_points) {  
-                float x1 = map->points[p1]->x;  
-                float y1 = map->points[p1]->y;  
-                float x2 = map->points[p2]->x;  
-                float y2 = map->points[p2]->y;  
+            WLD_Wall *hit_wall;  
+            int hit_region, adjacent_region;  
+            float hit_distance;  
+              
+            // CORRECCIÓN: Llamada correcta con 8 parámetros  
+            scan_walls_from_region(map, current_seg.region_idx, current_seg.entry_x, current_seg.entry_y,  
+                                  ray_dir_x, ray_dir_y, &hit_distance,  
+                                  &hit_wall, &hit_region, &adjacent_region);  
+              
+            if (hit_wall && hit_distance < 999999.0f) {  
+                // Calcular wall_u  
+                int p1 = hit_wall->p1;  
+                int p2 = hit_wall->p2;  
+                float wall_u = 0.0f;  
+                if (p1 >= 0 && p1 < map->num_points && p2 >= 0 && p2 < map->num_points) {  
+                    float x1 = map->points[p1]->x;  
+                    float y1 = map->points[p1]->y;  
+                    float x2 = map->points[p2]->x;  
+                    float y2 = map->points[p2]->y;  
+                      
+                    float hit_x = current_seg.entry_x + ray_dir_x * hit_distance;  
+                    float hit_y = current_seg.entry_y + ray_dir_y * hit_distance;  
+                      
+                    float wall_dx = x2 - x1;  
+                    float wall_dy = y2 - y1;  
+                    float wall_len = sqrtf(wall_dx * wall_dx + wall_dy * wall_dy);  
+                      
+                    if (wall_len > 0.001f) {  
+                        float t = ((hit_x - x1) * wall_dx + (hit_y - y1) * wall_dy) / (wall_len * wall_len);  
+                        wall_u = (t < 0.0f) ? 0.0f : (t > 1.0f) ? 1.0f : t;  
+                    }  
+                }  
                   
-                float hit_x = camera.x + ray_dir_x * hit_distance;  
-                float hit_y = camera.y + ray_dir_y * hit_distance;  
+                // Calcular distancia total y fog  
+                float total_distance = current_seg.distance_offset + hit_distance;  
+                float fog_factor = 1.0f - (total_distance / 10000.0f);  
+                if (fog_factor < 0.1f) fog_factor = 0.1f;  
+                if (fog_factor > 1.0f) fog_factor = 1.0f;  
                   
-                float wall_dx = x2 - x1;  
-                float wall_dy = y2 - y1;  
-                float wall_len = sqrtf(wall_dx * wall_dx + wall_dy * wall_dy);  
+                // Guardar pared encontrada  
+                walls_found[wall_count].wall = hit_wall;  
+                walls_found[wall_count].region_idx = hit_region;  
+                walls_found[wall_count].adjacent_region = adjacent_region;  
+                walls_found[wall_count].total_distance = total_distance;  
+                walls_found[wall_count].wall_u = wall_u;  
+                walls_found[wall_count].fog_factor = fog_factor;  
+                walls_found[wall_count].depth = current_seg.depth;  
+                wall_count++;  
                   
-                if (wall_len > 0.001f) {  
-                    float t = ((hit_x - x1) * wall_dx + (hit_y - y1) * wall_dy) / (wall_len * wall_len);  
-                    wall_u = (t < 0.0f) ? 0.0f : (t > 1.0f) ? 1.0f : t;  
+                // Si es un portal, continuar raycasting en región adyacente  
+                if (adjacent_region >= 0 && adjacent_region < map->num_regions &&   
+                    current_seg.depth < 3 && queue_size < 8) {  
+                      
+                    // Calcular punto de entrada a la región adyacente  
+                    float entry_x = current_seg.entry_x + ray_dir_x * hit_distance;  
+                    float entry_y = current_seg.entry_y + ray_dir_y * hit_distance;  
+                      
+                    // Añadir nuevo segmento de rayo  
+                    ray_queue[queue_size].region_idx = adjacent_region;  
+                    ray_queue[queue_size].distance_offset = total_distance;  
+                    ray_queue[queue_size].depth = current_seg.depth + 1;  
+                    ray_queue[queue_size].entry_x = entry_x;  
+                    ray_queue[queue_size].entry_y = entry_y;  
+                    queue_size++;  
                 }  
             }  
-              
-            // Calcular fog factor  
-            float fog_factor = 1.0f - (hit_distance / 10000.0f);  
-            if (fog_factor < 0.1f) fog_factor = 0.1f;  
-            if (fog_factor > 1.0f) fog_factor = 1.0f;  
-              
-            // CORRECCIÓN: Debug mejorado para diagnóstico  
-            if (col == 160) { // Columna central para debug  
-               // printf("DEBUG COL160: hit_region=%d, adjacent_region=%d, wall_type=%d\n",  
-                   //    hit_region, adjacent_region, hit_wall->type);  
-               // printf("DEBUG COL160: wall front=%d, back=%d, distance=%.2f\n",  
-                 //      hit_wall->front_region, hit_wall->back_region, hit_distance);  
+        }  
+          
+        // Ordenar paredes por distancia (de atrás hacia adelante para painter's algorithm)  
+        for (int i = 0; i < wall_count - 1; i++) {  
+            for (int j = i + 1; j < wall_count; j++) {  
+                if (walls_found[i].total_distance < walls_found[j].total_distance) {  
+                    WallRenderData temp = walls_found[i];  
+                    walls_found[i] = walls_found[j];  
+                    walls_found[j] = temp;  
+                }  
             }  
+        }  
+          
+        // Renderizar paredes de atrás hacia adelante  
+        for (int i = 0; i < wall_count; i++) {  
+            WLD_Wall *wall = walls_found[i].wall;  
+            int region_idx = walls_found[i].region_idx;  
+            int adjacent_region = walls_found[i].adjacent_region;  
               
-            // Detectar geometría compleja  
+            // Detectar si es geometría compleja (portal)  
             bool is_complex = false;  
             if (adjacent_region >= 0 && adjacent_region < map->num_regions) {  
-                WLD_Region *current = map->regions[hit_region];  
+                WLD_Region *current = map->regions[region_idx];  
                 WLD_Region *adjacent = map->regions[adjacent_region];  
                   
                 if (current && adjacent && current->active && adjacent->active) {  
-                    // Debug detallado de alturas  
-                    if (col == 160) {  
-                        printf("DEBUG COL160: región[%d] floor=%d ceil=%d -> región[%d] floor=%d ceil=%d\n",  
-                              hit_region, current->floor_height, current->ceil_height,  
-                             adjacent_region, adjacent->floor_height, adjacent->ceil_height);  
-                    }  
-                      
-                    if (current->floor_height != adjacent->floor_height ||     
+                    if (current->floor_height != adjacent->floor_height ||      
                         current->ceil_height != adjacent->ceil_height) {  
                         is_complex = true;  
-                        complex_walls++;  
-                          
-                        if (col == 160) {  
-                        //    printf("DEBUG COL160: ¡Geometría compleja detectada!\n");  
-                         //   printf("DEBUG COL160: floor_diff=%d, ceil_diff=%d\n",  
-                                 //  current->floor_height - adjacent->floor_height,  
-                                 //  current->ceil_height - adjacent->ceil_height);  
-                        }  
-                    } else {  
-                        simple_walls++;  
-                        if (col == 160) {  
-                          //  printf("DEBUG COL160: Geometría simple (alturas iguales)\n");  
-                        }  
                     }  
-                } else {  
-                  //  printf("DEBUG: Región nula o inactiva - current=%p adjacent=%p\n", current, adjacent);  
-                    simple_walls++;  
-                }  
-            } else {  
-                solid_walls++;  
-                if (col == 160) {  
-                  //  printf("DEBUG COL160: Pared sólida (adjacent_region=%d)\n", adjacent_region);  
                 }  
             }  
               
             // Renderizar según tipo  
             if (is_complex) {  
-                if (col == 160) {  
-                    printf("DEBUG COL160: Renderizando como geometría compleja\n");  
-                }  
-                render_complex_wall_section(map, hit_wall, map->regions[hit_region],   
-                                           hit_region, col, screen_w, screen_h,  
-                                           0, screen_h, wall_u, fog_factor,  
-                                           camera.x, camera.y, camera.z, hit_distance);  
+                render_complex_wall_section(map, wall, map->regions[region_idx],     
+                                           region_idx, col, screen_w, screen_h,  
+                                           0, screen_h, walls_found[i].wall_u, walls_found[i].fog_factor,  
+                                           camera.x, camera.y, camera.z, walls_found[i].total_distance);  
             } else {  
-                if (col == 160) {  
-                    printf("DEBUG COL160: Renderizando como pared simple\n");  
-                }  
-                render_wall_column(map, hit_wall, hit_region, col, screen_w, screen_h,  
-                                  camera.x, camera.y, camera.z, hit_distance);  
+                render_wall_column(map, wall, region_idx, col, screen_w, screen_h,  
+                                  camera.x, camera.y, camera.z, walls_found[i].total_distance);  
             }  
         }  
     }  
-      
-    printf("DEBUG: Raycasting completado - %d paredes encontradas (%d complejas, %d simples, %d sólidas)\n",   
-           walls_found, complex_walls, simple_walls, solid_walls);  
 }
   
 // Función auxiliar para verificar si punto está en región  
@@ -4731,18 +4766,24 @@ float intersect_ray_segment(float ray_dir_x, float ray_dir_y, float cam_x, float
 }
 
 // Función exportada para BennuGD2 - similar a libmod_heightmap_render_wld_2d()  
-int64_t libmod_heightmap_render_wld_3d(INSTANCE *my, int64_t *params)  
-{  
+int64_t libmod_heightmap_render_wld_3d(INSTANCE *my, int64_t *params) {  
     int width = params[0];  
     int height = params[1];  
+      
+    // Si hay un tercer parámetro, es el FOV  
+    if (params[2] != 0) {  
+        float new_fov = *(float*)&params[2];  
+        if (new_fov >= 0.001f && new_fov <= 0.01f) {  
+            wld_angle_step = new_fov;  
+        }  
+    }  
       
     if (!wld_map.loaded) {  
         printf("ERROR: No hay mapa WLD cargado\n");  
         return 0;  
-    }    
-    // Llamar a render_wld sin parámetros de cámara (usa cámara global)  
-    render_wld(&wld_map, width, height);  
+    }  
       
+    render_wld(&wld_map, width, height);  
     return render_buffer ? render_buffer->code : 0;  
 }
 
@@ -5181,6 +5222,18 @@ void debug_complex_wall_detection(WLD_Map *map, int region_idx, int adjacent_idx
     }  
       
     printf("=== FIN DEBUG ===\n\n");  
+}
+
+int64_t libmod_heightmap_set_wld_fov(INSTANCE *my, int64_t *params) {  
+    float new_fov = *(float*)&params[0];  
+      
+    if (new_fov < 0.001f || new_fov > 0.01f) {  
+        fprintf(stderr, "Error: wld_fov debe estar entre 0.001 y 0.01\n");  
+        return 0;  
+    }  
+      
+    wld_angle_step = new_fov;  
+    return 1;  
 }
 
 
