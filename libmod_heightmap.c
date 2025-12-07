@@ -215,7 +215,7 @@ static float calculated_bridge_height = -1.0f;
 #define RGBA32_A(color) ((color >> 24) & 0xFF)
 
 // Variables globales para configuración de renderizado
-static float max_render_distance = 8000.0f;
+static float max_render_distance = 12000.0f;
 static int chunk_size = 512;
 static int chunk_radius = 15;
 
@@ -316,6 +316,8 @@ extern void render_complex_wall_section(WLD_Map *map, WLD_Wall *wall, WLD_Region
                                         float camera_x, float camera_y, float camera_z,   
                                         float hit_distance);  
 extern void wld_build_wall_ptrs(WLD_Map *map);
+
+
 
 
 static void cleanup_gpu_resources(void) {  
@@ -4041,161 +4043,100 @@ void render_wld(WLD_Map *map, int screen_w, int screen_h)
         return;  
     }  
       
-    // Estructura para rastrear rayos pendientes  
-    typedef struct {  
-        int region_idx;  
-        float distance_offset;  
-        int depth;  
-        float entry_x, entry_y;  // Punto de entrada al rayo  
-    } RaySegment;  
-      
-    // Estructura para almacenar paredes a renderizar  
-    typedef struct {  
-        WLD_Wall *wall;  
-        int region_idx;  
-        int adjacent_region;  
-        float total_distance;  
-        float wall_u;  
-        float fog_factor;  
-        int depth;  
-    } WallRenderData;  
-      
-    // Renderizar cada columna  
+    // Renderizar cada columna con raycasting continuo  
     for (int col = 0; col < screen_w; col++) {  
         float angle_offset = ((float)col - screen_w/2.0f) * 0.003f;  
         float ray_dir_x = cos(camera.angle + angle_offset);  
         float ray_dir_y = sin(camera.angle + angle_offset);  
           
-        // Cola de rayos a procesar (profundidad limitada)  
-        RaySegment ray_queue[8];  
-        int queue_size = 1;  
-        ray_queue[0].region_idx = current_region;  
-        ray_queue[0].distance_offset = 0.0f;  
-        ray_queue[0].depth = 0;  
-        ray_queue[0].entry_x = camera.x;  
-        ray_queue[0].entry_y = camera.y;  
+        // Raycasting continuo a través de portales  
+        float total_distance = 0.0f;  
+        int current_sector = current_region;  
+        int max_depth = 4; // Máximo 4 portales de profundidad  
+        int depth = 0;  
           
-        // Array de paredes encontradas  
-        WallRenderData walls_found[8];  
-        int wall_count = 0;  
-          
-        // Procesar rayos recursivamente  
-        while (queue_size > 0 && wall_count < 8) {  
-            RaySegment current_seg = ray_queue[--queue_size];  
-              
+        while (depth < max_depth && total_distance < max_render_distance) {  
             WLD_Wall *hit_wall;  
             int hit_region, adjacent_region;  
             float hit_distance;  
               
-            // CORRECCIÓN: Llamada correcta con 8 parámetros  
-            scan_walls_from_region(map, current_seg.region_idx, current_seg.entry_x, current_seg.entry_y,  
+            scan_walls_from_region(map, current_sector,   
+                                  camera.x + ray_dir_x * total_distance,  
+                                  camera.y + ray_dir_y * total_distance,  
                                   ray_dir_x, ray_dir_y, &hit_distance,  
                                   &hit_wall, &hit_region, &adjacent_region);  
               
             if (hit_wall && hit_distance < 999999.0f) {  
-                // Calcular wall_u  
-                int p1 = hit_wall->p1;  
-                int p2 = hit_wall->p2;  
-                float wall_u = 0.0f;  
-                if (p1 >= 0 && p1 < map->num_points && p2 >= 0 && p2 < map->num_points) {  
-                    float x1 = map->points[p1]->x;  
-                    float y1 = map->points[p1]->y;  
-                    float x2 = map->points[p2]->x;  
-                    float y2 = map->points[p2]->y;  
+                total_distance += hit_distance;  
+                  
+                // Si es pared sólida, renderizar y terminar  
+                if (adjacent_region == -1) {  
+                    render_wall_column(map, hit_wall, hit_region, col, screen_w, screen_h,  
+                                      camera.x, camera.y, camera.z, total_distance);  
+                    break;  
+                }  
+                  
+                // Si es portal, verificar si tiene geometría compleja  
+                bool is_complex = false;  
+                if (adjacent_region >= 0 && adjacent_region < map->num_regions) {  
+                    WLD_Region *current = map->regions[hit_region];  
+                    WLD_Region *adjacent = map->regions[adjacent_region];  
                       
-                    float hit_x = current_seg.entry_x + ray_dir_x * hit_distance;  
-                    float hit_y = current_seg.entry_y + ray_dir_y * hit_distance;  
-                      
-                    float wall_dx = x2 - x1;  
-                    float wall_dy = y2 - y1;  
-                    float wall_len = sqrtf(wall_dx * wall_dx + wall_dy * wall_dy);  
-                      
-                    if (wall_len > 0.001f) {  
-                        float t = ((hit_x - x1) * wall_dx + (hit_y - y1) * wall_dy) / (wall_len * wall_len);  
-                        wall_u = (t < 0.0f) ? 0.0f : (t > 1.0f) ? 1.0f : t;  
+                    if (current && adjacent && current->active && adjacent->active) {  
+                        if (current->floor_height != adjacent->floor_height ||      
+                            current->ceil_height != adjacent->ceil_height) {  
+                            is_complex = true;  
+                        }  
                     }  
                 }  
                   
-                // Calcular distancia total y fog  
-                float total_distance = current_seg.distance_offset + hit_distance;  
-                float fog_factor = 1.0f - (total_distance / 10000.0f);  
-                if (fog_factor < 0.1f) fog_factor = 0.1f;  
-                if (fog_factor > 1.0f) fog_factor = 1.0f;  
-                  
-                // Guardar pared encontrada  
-                walls_found[wall_count].wall = hit_wall;  
-                walls_found[wall_count].region_idx = hit_region;  
-                walls_found[wall_count].adjacent_region = adjacent_region;  
-                walls_found[wall_count].total_distance = total_distance;  
-                walls_found[wall_count].wall_u = wall_u;  
-                walls_found[wall_count].fog_factor = fog_factor;  
-                walls_found[wall_count].depth = current_seg.depth;  
-                wall_count++;  
-                  
-                // Si es un portal, continuar raycasting en región adyacente  
-                if (adjacent_region >= 0 && adjacent_region < map->num_regions &&   
-                    current_seg.depth < 3 && queue_size < 8) {  
-                      
-                    // Calcular punto de entrada a la región adyacente  
-                    float entry_x = current_seg.entry_x + ray_dir_x * hit_distance;  
-                    float entry_y = current_seg.entry_y + ray_dir_y * hit_distance;  
-                      
-                    // Añadir nuevo segmento de rayo  
-                    ray_queue[queue_size].region_idx = adjacent_region;  
-                    ray_queue[queue_size].distance_offset = total_distance;  
-                    ray_queue[queue_size].depth = current_seg.depth + 1;  
-                    ray_queue[queue_size].entry_x = entry_x;  
-                    ray_queue[queue_size].entry_y = entry_y;  
-                    queue_size++;  
-                }  
-            }  
-        }  
-          
-        // Ordenar paredes por distancia (de atrás hacia adelante para painter's algorithm)  
-        for (int i = 0; i < wall_count - 1; i++) {  
-            for (int j = i + 1; j < wall_count; j++) {  
-                if (walls_found[i].total_distance < walls_found[j].total_distance) {  
-                    WallRenderData temp = walls_found[i];  
-                    walls_found[i] = walls_found[j];  
-                    walls_found[j] = temp;  
-                }  
-            }  
-        }  
-          
-        // Renderizar paredes de atrás hacia adelante  
-        for (int i = 0; i < wall_count; i++) {  
-            WLD_Wall *wall = walls_found[i].wall;  
-            int region_idx = walls_found[i].region_idx;  
-            int adjacent_region = walls_found[i].adjacent_region;  
-              
-            // Detectar si es geometría compleja (portal)  
-            bool is_complex = false;  
-            if (adjacent_region >= 0 && adjacent_region < map->num_regions) {  
-                WLD_Region *current = map->regions[region_idx];  
-                WLD_Region *adjacent = map->regions[adjacent_region];  
-                  
-                if (current && adjacent && current->active && adjacent->active) {  
-                    if (current->floor_height != adjacent->floor_height ||      
-                        current->ceil_height != adjacent->ceil_height) {  
-                        is_complex = true;  
+                // Renderizar portal complejo o continuar  
+                if (is_complex) {  
+                    // Calcular wall_u y fog  
+                    int p1 = hit_wall->p1;  
+                    int p2 = hit_wall->p2;  
+                    float wall_u = 0.0f;  
+                    if (p1 >= 0 && p1 < map->num_points && p2 >= 0 && p2 < map->num_points) {  
+                        float x1 = map->points[p1]->x;  
+                        float y1 = map->points[p1]->y;  
+                        float x2 = map->points[p2]->x;  
+                        float y2 = map->points[p2]->y;  
+                          
+                        float hit_x = camera.x + ray_dir_x * total_distance;  
+                        float hit_y = camera.y + ray_dir_y * total_distance;  
+                          
+                        float wall_dx = x2 - x1;  
+                        float wall_dy = y2 - y1;  
+                        float wall_len = sqrtf(wall_dx * wall_dx + wall_dy * wall_dy);  
+                          
+                        if (wall_len > 0.001f) {  
+                            float t = ((hit_x - x1) * wall_dx + (hit_y - y1) * wall_dy) / (wall_len * wall_len);  
+                            wall_u = (t < 0.0f) ? 0.0f : (t > 1.0f) ? 1.0f : t;  
+                        }  
                     }  
+                      
+                    float fog_factor = 1.0f - (total_distance / (max_render_distance * 2.0f));  
+                    if (fog_factor < 0.3f) fog_factor = 0.3f;  
+                    if (fog_factor > 1.0f) fog_factor = 1.0f;  
+                      
+                    render_complex_wall_section(map, hit_wall, map->regions[hit_region],     
+                                               hit_region, col, screen_w, screen_h,  
+                                               0, screen_h, wall_u, fog_factor,  
+                                               camera.x, camera.y, camera.z, total_distance);  
+                    break;  
+                } else {  
+                    // Portal simple - continuar al siguiente sector  
+                    current_sector = adjacent_region;  
+                    depth++;  
                 }  
-            }  
-              
-            // Renderizar según tipo  
-            if (is_complex) {  
-                render_complex_wall_section(map, wall, map->regions[region_idx],     
-                                           region_idx, col, screen_w, screen_h,  
-                                           0, screen_h, walls_found[i].wall_u, walls_found[i].fog_factor,  
-                                           camera.x, camera.y, camera.z, walls_found[i].total_distance);  
             } else {  
-                render_wall_column(map, wall, region_idx, col, screen_w, screen_h,  
-                                  camera.x, camera.y, camera.z, walls_found[i].total_distance);  
+                break; // No hay más paredes  
             }  
         }  
     }  
+
 }
-  
+ 
 // Función auxiliar para verificar si punto está en región  
 static int last_region_x = -999999, last_region_y = -999999;  
 static int last_region_result = -1;  
@@ -4287,7 +4228,7 @@ void scan_walls_from_region(WLD_Map *map, int region_idx, float cam_x, float cam
             float t = intersect_ray_segment(ray_dir_x, ray_dir_y, cam_x, cam_y,  
                                            x1, y1, x2, y2);  
               
-            if (t > 0.1f && t < *hit_distance) {  
+            if (t > 0.001f && t < *hit_distance) {  
                 *hit_distance = t;  
                 *hit_wall = wall;  
                 int adjacent = (front == current) ? back : front;  
@@ -4519,95 +4460,119 @@ void render_wall_section(WLD_Map *map, int texture_index, int col,
     // }  
 }
 
-void render_complex_wall_section(WLD_Map *map, WLD_Wall *wall, WLD_Region *region,  
-                                int region_idx, int col, int screen_w, int screen_h,  
-                                int y_start, int y_end, float wall_u, float fog_factor,  
-                                float cam_x, float cam_y, float cam_z, float hit_distance)  
-{  
-    // Validar región adyacente  
-    WLD_Region *adjacent_region = NULL;  
-    int adjacent_idx = -1;  
-      
-    if (wall->front_region == region_idx) {  
-        adjacent_idx = wall->back_region;  
-    } else if (wall->back_region == region_idx) {  
-        adjacent_idx = wall->front_region;  
-    }  
-      
-    if (adjacent_idx < 0 || adjacent_idx >= map->num_regions) {  
-        printf("DEBUG: Región adyacente inválida %d\n", adjacent_idx);  
-        render_wall_column(map, wall, region_idx, col, screen_w, screen_h,  
-                          cam_x, cam_y, cam_z, hit_distance);  
-        return;  
-    }  
-      
-    adjacent_region = map->regions[adjacent_idx];  
-    if (!adjacent_region || !adjacent_region->active) {  
-        printf("DEBUG: Región adyacente nula o inactiva %d\n", adjacent_idx);  
-        render_wall_column(map, wall, region_idx, col, screen_w, screen_h,  
-                          cam_x, cam_y, cam_z, hit_distance);  
-        return;  
-    }  
-      
-    // Factor de proyección VPE  
-    float t1 = 300.0f / hit_distance;  
-      
-    // CORRECCIÓN: Calcular alturas proyectadas correctamente (Y=0 arriba)  
-    float curr_floor_t = (cam_z - region->floor_height);  
-    float curr_ceil_t = (cam_z - region->ceil_height);  
-    float adj_floor_t = (cam_z - adjacent_region->floor_height);  
-    float adj_ceil_t = (cam_z - adjacent_region->ceil_height);  
-      
-    // CORRECCIÓN: Usar fórmula consistente con render_wall_column  
-    int cf_y = (screen_h/2.0f) + curr_floor_t * t1;  // Y positivo = abajo  
-    int cc_y = (screen_h/2.0f) + curr_ceil_t * t1;   // Y positivo = abajo  
-    int af_y = (screen_h/2.0f) + adj_floor_t * t1;  
-    int ac_y = (screen_h/2.0f) + adj_ceil_t * t1;  
-      
-    // Asegurar orden correcto (techo arriba, piso abajo)  
-    if (cf_y < cc_y) {  
-        int temp = cf_y; cf_y = cc_y; cc_y = temp;  
-    }  
-    if (af_y < ac_y) {  
-        int temp = af_y; af_y = ac_y; ac_y = temp;  
-    }  
-      
-    // Limitar a pantalla  
-    cf_y = (cf_y < 0) ? 0 : (cf_y >= screen_h) ? screen_h-1 : cf_y;  
-    cc_y = (cc_y < 0) ? 0 : (cc_y >= screen_h) ? screen_h-1 : cc_y;  
-    af_y = (af_y < 0) ? 0 : (af_y >= screen_h) ? screen_h-1 : af_y;  
-    ac_y = (ac_y < 0) ? 0 : (ac_y >= screen_h) ? screen_h-1 : ac_y;  
-      
-    // Debug para verificar coordenadas  
-    if (col == 160) {  
-        printf("DEBUG COMPLEX: cf_y=%d, cc_y=%d, af_y=%d, ac_y=%d\n",  
-               cf_y, cc_y, af_y, ac_y);  
-    }  
-      
-    // Renderizar sección superior (techo más bajo)  
-    if (cc_y < ac_y) {  
-        render_wall_section(map, wall->texture_top, col, cc_y, ac_y,  
-                           wall_u, fog_factor, "SUPERIOR");  
-    }  
-      
-    // Renderizar sección media (portal visible)  
-    int mid_top = (cc_y > ac_y) ? cc_y : ac_y;  
-    int mid_bot = (cf_y < af_y) ? cf_y : af_y;  
-    if (mid_top < mid_bot) {  
-        render_wall_section(map, wall->texture, col, mid_top, mid_bot,  
-                           wall_u, fog_factor, "MEDIO");  
-    }  
-      
-    // Renderizar sección inferior (piso más alto)  
-    if (af_y < cf_y) {  
-        render_wall_section(map, wall->texture_bot, col, af_y, cf_y,  
-                           wall_u, fog_factor, "INFERIOR");  
-    }  
-      
-    // Renderizar piso y techo de región adyacente  
-    render_floor_and_ceiling(map, adjacent_region, col, screen_w, screen_h,  
-                            mid_top, mid_bot, cam_x, cam_y, cam_z,  
-                            hit_distance, fog_factor);  
+void render_complex_wall_section(WLD_Map *map, WLD_Wall *wall, WLD_Region *region,    
+                                int region_idx, int col, int screen_w, int screen_h,    
+                                int y_start, int y_end, float wall_u, float fog_factor,    
+                                float cam_x, float cam_y, float cam_z, float hit_distance)    
+{    
+    // Validar región adyacente    
+    WLD_Region *adjacent_region = NULL;    
+    int adjacent_idx = -1;    
+        
+    if (wall->front_region == region_idx) {    
+        adjacent_idx = wall->back_region;    
+    } else if (wall->back_region == region_idx) {    
+        adjacent_idx = wall->front_region;    
+    }    
+        
+    if (adjacent_idx < 0 || adjacent_idx >= map->num_regions) {    
+        printf("DEBUG: Región adyacente inválida %d\n", adjacent_idx);    
+        render_wall_column(map, wall, region_idx, col, screen_w, screen_h,    
+                          cam_x, cam_y, cam_z, hit_distance);    
+        return;    
+    }    
+        
+    adjacent_region = map->regions[adjacent_idx];    
+    if (!adjacent_region || !adjacent_region->active) {    
+        printf("DEBUG: Región adyacente nula o inactiva %d\n", adjacent_idx);    
+        render_wall_column(map, wall, region_idx, col, screen_w, screen_h,    
+                          cam_x, cam_y, cam_z, hit_distance);    
+        return;    
+    }    
+        
+    // Factor de proyección VPE    
+    float t1 = 300.0f / hit_distance;    
+        
+    // Calcular alturas proyectadas correctamente (Y=0 arriba)    
+    float curr_floor_t = (cam_z - region->floor_height);    
+    float curr_ceil_t = (cam_z - region->ceil_height);    
+    float adj_floor_t = (cam_z - adjacent_region->floor_height);    
+    float adj_ceil_t = (cam_z - adjacent_region->ceil_height);    
+        
+    // Usar fórmula consistente con render_wall_column    
+    int cf_y = (screen_h/2.0f) + curr_floor_t * t1;  // Y positivo = abajo    
+    int cc_y = (screen_h/2.0f) + curr_ceil_t * t1;   // Y positivo = abajo    
+    int af_y = (screen_h/2.0f) + adj_floor_t * t1;    
+    int ac_y = (screen_h/2.0f) + adj_ceil_t * t1;    
+        
+    // Asegurar orden correcto (techo arriba, piso abajo)    
+    if (cf_y < cc_y) {    
+        int temp = cf_y; cf_y = cc_y; cc_y = temp;    
+    }    
+    if (af_y < ac_y) {    
+        int temp = af_y; af_y = ac_y; ac_y = temp;    
+    }    
+        
+    // Limitar a pantalla    
+    cf_y = (cf_y < 0) ? 0 : (cf_y >= screen_h) ? screen_h-1 : cf_y;    
+    cc_y = (cc_y < 0) ? 0 : (cc_y >= screen_h) ? screen_h-1 : cc_y;    
+    af_y = (af_y < 0) ? 0 : (af_y >= screen_h) ? screen_h-1 : af_y;    
+    ac_y = (ac_y < 0) ? 0 : (ac_y >= screen_h) ? screen_h-1 : ac_y;    
+        
+    // CORRECCIÓN: Calcular wall_u si no se proporcionó    
+    if (wall_u == 0.0f) {    
+        int p1 = wall->p1;    
+        int p2 = wall->p2;    
+        if (p1 >= 0 && p1 < map->num_points && p2 >= 0 && p2 < map->num_points) {    
+            float x1 = map->points[p1]->x;    
+            float y1 = map->points[p1]->y;    
+            float x2 = map->points[p2]->x;    
+            float y2 = map->points[p2]->y;    
+                
+            // Calcular punto de impacto del rayo    
+            float angle_offset = ((float)col - screen_w/2.0f) * 0.003f;    
+            float ray_dir_x = cos(camera.angle + angle_offset);    
+            float ray_dir_y = sin(camera.angle + angle_offset);    
+                
+            float hit_x = cam_x + ray_dir_x * hit_distance;    
+            float hit_y = cam_y + ray_dir_y * hit_distance;    
+                
+            // Calcular wall_u como distancia normalizada desde p1    
+            float wall_dx = x2 - x1;    
+            float wall_dy = y2 - y1;    
+            float wall_len = sqrtf(wall_dx * wall_dx + wall_dy * wall_dy);    
+                
+            if (wall_len > 0.001f) {    
+                float t = ((hit_x - x1) * wall_dx + (hit_y - y1) * wall_dy) / (wall_len * wall_len);    
+                wall_u = (t < 0.0f) ? 0.0f : (t > 1.0f) ? 1.0f : t;    
+            }    
+        }    
+    }    
+        
+    // Renderizar sección superior (techo más bajo)    
+    if (cc_y < ac_y) {    
+        render_wall_section(map, wall->texture_top, col, cc_y, ac_y,    
+                           wall_u, fog_factor, "SUPERIOR");    
+    }    
+        
+    // Renderizar sección media (portal visible) SOLO si tiene textura    
+    int mid_top = (cc_y > ac_y) ? cc_y : ac_y;    
+    int mid_bot = (cf_y < af_y) ? cf_y : af_y;    
+    if (mid_top < mid_bot && wall->texture > 0) {  // Solo si texture > 0  
+    render_wall_section(map, wall->texture, col, mid_top, mid_bot,  
+                       wall_u, fog_factor, "MEDIO");  
+    }    
+        
+    // Renderizar sección inferior (piso más alto)    
+    if (af_y < cf_y) {    
+        render_wall_section(map, wall->texture_bot, col, af_y, cf_y,    
+                           wall_u, fog_factor, "INFERIOR");    
+    }    
+        
+    // Renderizar piso y techo de región adyacente    
+    render_floor_and_ceiling(map, adjacent_region, col, screen_w, screen_h,    
+                            mid_top, mid_bot, cam_x, cam_y, cam_z,    
+                            hit_distance, fog_factor);    
 }
   
 void render_floor_and_ceiling(WLD_Map *map, WLD_Region *region, int col,   
@@ -5045,22 +5010,23 @@ void wld_build_sectors(WLD_Map *map)
                     wall1->type = 1; // Portal  
                     wall2->type = 1; // Portal  
                       
-                    // CORRECCIÓN: Validar y asignar texturas de portal  
+                    // CORRECCIÓN: Portal transparente en medio  
+                    wall1->texture = 0; // Sin textura en sección media (transparente)  
+                    wall2->texture = 0; // Sin textura en sección media (transparente)  
+                      
                     if (map->regions[wall1->front_region]) {  
                         wall1->texture_top = map->regions[wall1->front_region]->ceil_tex;  
                         wall1->texture_bot = map->regions[wall1->front_region]->floor_tex;  
-                        wall1->texture = 0; // Sin textura principal  
                     } else {  
-                        printf("DEBUG: Región front %d no encontrada para pared %d\n",   
+                        printf("DEBUG: Región front %d no encontrada para pared %d\n",     
                                wall1->front_region, i);  
                     }  
                       
                     if (map->regions[wall2->front_region]) {  
                         wall2->texture_top = map->regions[wall2->front_region]->ceil_tex;  
                         wall2->texture_bot = map->regions[wall2->front_region]->floor_tex;  
-                        wall2->texture = 0; // Sin textura principal  
                     } else {  
-                        printf("DEBUG: Región front %d no encontrada para pared %d\n",   
+                        printf("DEBUG: Región front %d no encontrada para pared %d\n",     
                                wall2->front_region, j);  
                     }  
                 }  
@@ -5082,20 +5048,21 @@ void wld_build_sectors(WLD_Map *map)
                 wall->back_region = region_back;  
                 wall->type = 1; // Portal  
                   
-                // CORRECCIÓN: Validar y asignar texturas  
+                // CORRECCIÓN: Portal transparente en medio  
+                wall->texture = 0; // Sin textura en sección media (transparente)  
+                  
                 if (map->regions[wall->front_region]) {  
                     wall->texture_top = map->regions[wall->front_region]->ceil_tex;  
                     wall->texture_bot = map->regions[wall->front_region]->floor_tex;  
-                    wall->texture = 0;  
                 } else {  
-                    printf("DEBUG: Región front %d no encontrada para pared %d\n",   
+                    printf("DEBUG: Región front %d no encontrada para pared %d\n",     
                            wall->front_region, i);  
                 }  
             }  
         }  
     }  
       
-    // 4. CORRECCIÓN: Validar asignación de texturas para todos los portales  
+    // 4. Validar asignación de texturas para portales  
     int portals_validos = 0;  
     int portals_invalidos = 0;  
       
@@ -5104,9 +5071,8 @@ void wld_build_sectors(WLD_Map *map)
         if (!wall || wall->back_region < 0) continue;  
           
         if (wall->type == 1) { // Portal  
-            // Validar que las texturas de portal estén asignadas  
+            // Validar texturas top/bot (secciones superior/inferior)  
             if (wall->texture_top == 0 || wall->texture_bot == 0) {  
-               // printf("DEBUG: Pared[%d] portal sin texturas top/bot asignadas\n", i);  
                 portals_invalidos++;  
                   
                 // Asignar texturas por defecto si faltan  
@@ -5117,15 +5083,17 @@ void wld_build_sectors(WLD_Map *map)
                     if (wall->texture_bot == 0) {  
                         wall->texture_bot = map->regions[wall->front_region]->floor_tex;  
                     }  
-                  //  printf("DEBUG: Texturas asignadas por defecto a pared[%d]\n", i);  
                 }  
             } else {  
                 portals_validos++;  
             }  
+              
+            // Asegurar que la sección media sea transparente  
+            wall->texture = 0;  
         }  
     }  
       
-    printf("DEBUG: back_region calculado - %d portales encontrados (%d válidos, %d inválidos)\n",   
+    printf("DEBUG: back_region calculado - %d portales encontrados (%d válidos, %d inválidos)\n",     
            portals_validos + portals_invalidos, portals_validos, portals_invalidos);  
 }
 

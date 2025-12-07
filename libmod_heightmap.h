@@ -140,6 +140,14 @@ typedef struct {
     int depth;  
 } RaySegment;
 
+typedef struct {  
+    int sector_idx;  
+    float min_distance;  
+    float max_distance;  
+    int visible;  
+} SectorVisibility;  
+  
+
 static WLD_Sector *sectors = NULL;
   
 // Variables globales para el sistema WLD  
